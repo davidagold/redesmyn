@@ -91,6 +91,107 @@ impl SessionSettingsCategory {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionSettingsMenuFocus {
+    Primary,
+    Secondary,
+}
+
+impl Default for SessionSettingsMenuFocus {
+    fn default() -> Self {
+        Self::Primary
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionSettingsSandboxOption {
+    Default,
+    ReadOnly,
+    WorkspaceWrite,
+    DangerFullAccess,
+}
+
+impl SessionSettingsSandboxOption {
+    const ALL: [Self; 4] = [
+        Self::Default,
+        Self::ReadOnly,
+        Self::WorkspaceWrite,
+        Self::DangerFullAccess,
+    ];
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Default => "Default",
+            Self::ReadOnly => "Read-only",
+            Self::WorkspaceWrite => "Workspace write",
+            Self::DangerFullAccess => "Danger: full access",
+        }
+    }
+
+    fn policy(self) -> Option<CodexSandboxPolicy> {
+        match self {
+            Self::Default => None,
+            Self::ReadOnly => Some(CodexSandboxPolicy::ReadOnly),
+            Self::WorkspaceWrite => Some(default_workspace_write_policy()),
+            Self::DangerFullAccess => Some(CodexSandboxPolicy::DangerFullAccess),
+        }
+    }
+
+    const fn is_selected(self, displayed: Option<&CodexSandboxPolicy>) -> bool {
+        match (self, displayed) {
+            (Self::Default, None) => true,
+            (Self::ReadOnly, Some(CodexSandboxPolicy::ReadOnly)) => true,
+            (Self::WorkspaceWrite, Some(CodexSandboxPolicy::WorkspaceWrite { .. })) => true,
+            (Self::DangerFullAccess, Some(CodexSandboxPolicy::DangerFullAccess)) => true,
+            _ => false,
+        }
+    }
+}
+
+fn default_workspace_write_policy() -> CodexSandboxPolicy {
+    CodexSandboxPolicy::WorkspaceWrite {
+        writable_roots: Vec::new(),
+        network_access: false,
+        exclude_tmpdir_env_var: false,
+        exclude_slash_tmp: false,
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SessionSettingsApprovalOption {
+    policy: Option<CodexApprovalPolicy>,
+    label: &'static str,
+    _tooltip: &'static str,
+}
+
+const SESSION_SETTINGS_APPROVAL_OPTIONS: [SessionSettingsApprovalOption; 5] = [
+    SessionSettingsApprovalOption {
+        policy: None,
+        label: "Default",
+        _tooltip: "Use the agent default approvals",
+    },
+    SessionSettingsApprovalOption {
+        policy: Some(CodexApprovalPolicy::UnlessTrusted),
+        label: "Unless trusted",
+        _tooltip: "Ask unless the environment is trusted",
+    },
+    SessionSettingsApprovalOption {
+        policy: Some(CodexApprovalPolicy::OnRequest),
+        label: "On request",
+        _tooltip: "Ask when the agent requests permission",
+    },
+    SessionSettingsApprovalOption {
+        policy: Some(CodexApprovalPolicy::OnFailure),
+        label: "On failure",
+        _tooltip: "Only ask if a command fails (dangerous)",
+    },
+    SessionSettingsApprovalOption {
+        policy: Some(CodexApprovalPolicy::Never),
+        label: "Never",
+        _tooltip: "Deny all requests",
+    },
+];
+
 fn ease_out_cubic(t: f32) -> f32 {
     1.0 - (1.0 - t).powi(3)
 }
@@ -912,6 +1013,8 @@ pub struct SessionView {
     codex_sandbox_policy_timeout_task: Option<Task<()>>,
     session_settings_open: bool,
     session_settings_hovered: Option<SessionSettingsCategory>,
+    session_settings_focus: SessionSettingsMenuFocus,
+    session_settings_submenu_index: usize,
     policies_fetch_generation: u64,
     policies_fetch_in_flight: bool,
     policies_fetch_error: Option<SharedString>,
@@ -957,7 +1060,7 @@ impl SessionView {
             TextArea::new(cx)
                 .placeholder("Message…")
                 .min_rows(1)
-                .reserved_bottom(px(36.0))
+                .reserved_bottom(px(44.0))
         });
 
         let mut subscriptions = Vec::new();
@@ -1054,6 +1157,8 @@ impl SessionView {
             codex_sandbox_policy_timeout_task: None,
             session_settings_open: false,
             session_settings_hovered: None,
+            session_settings_focus: SessionSettingsMenuFocus::default(),
+            session_settings_submenu_index: 0,
             policies_fetch_generation: 0,
             policies_fetch_in_flight: false,
             policies_fetch_error: None,
@@ -1404,6 +1509,8 @@ impl SessionView {
             self.codex_sandbox_policy_timeout_task = None;
             self.session_settings_open = false;
             self.session_settings_hovered = None;
+            self.session_settings_focus = SessionSettingsMenuFocus::Primary;
+            self.session_settings_submenu_index = 0;
             self.permission_request_ids = Rc::new(HashSet::new());
             self.permission_decisions_by_request_id = Rc::new(HashMap::new());
             self.expanded_permission_requests.clear();
@@ -1512,6 +1619,8 @@ impl SessionView {
         self.codex_sandbox_policy_timeout_task = None;
         self.session_settings_open = false;
         self.session_settings_hovered = None;
+        self.session_settings_focus = SessionSettingsMenuFocus::Primary;
+        self.session_settings_submenu_index = 0;
         self.policies_fetch_generation = self.policies_fetch_generation.wrapping_add(1);
         self.policies_fetch_in_flight = true;
         self.policies_fetch_error = None;
@@ -1639,6 +1748,10 @@ impl SessionView {
         let closed_menu = self.session_settings_open;
         self.session_settings_open = false;
         self.session_settings_hovered = None;
+        self.session_settings_focus = SessionSettingsMenuFocus::Primary;
+        self.session_settings_submenu_index = 0;
+        self.session_settings_focus = SessionSettingsMenuFocus::Primary;
+        self.session_settings_submenu_index = 0;
 
         let displayed = self
             .pending_codex_approval_policy
@@ -1855,6 +1968,195 @@ impl SessionView {
         self.pending_codex_sandbox_policy = None;
         self.codex_sandbox_policy_timeout_task = None;
         cx.notify();
+    }
+
+    fn close_session_settings_menu(&mut self, cx: &mut Context<Self>) {
+        if !self.session_settings_open {
+            return;
+        }
+
+        self.session_settings_open = false;
+        self.session_settings_hovered = None;
+        self.session_settings_focus = SessionSettingsMenuFocus::Primary;
+        self.session_settings_submenu_index = 0;
+        cx.notify();
+    }
+
+    fn session_settings_active_category(&self) -> SessionSettingsCategory {
+        self.session_settings_hovered
+            .unwrap_or(SessionSettingsCategory::Permissions)
+    }
+
+    fn session_settings_submenu_len(&self, category: SessionSettingsCategory) -> usize {
+        match category {
+            SessionSettingsCategory::Permissions => SESSION_SETTINGS_APPROVAL_OPTIONS.len(),
+            SessionSettingsCategory::Sandbox => SessionSettingsSandboxOption::ALL.len(),
+        }
+    }
+
+    fn session_settings_move_primary(&mut self, delta: i32, cx: &mut Context<Self>) {
+        let current = self.session_settings_active_category().index() as i32;
+        let len = SessionSettingsCategory::ALL.len() as i32;
+        if len == 0 {
+            return;
+        }
+
+        let next = (current + delta).clamp(0, len - 1) as usize;
+        let next_category = SessionSettingsCategory::ALL[next];
+        let mut changed = false;
+
+        if self.session_settings_hovered != Some(next_category) {
+            self.session_settings_hovered = Some(next_category);
+            changed = true;
+        }
+        if self.session_settings_focus != SessionSettingsMenuFocus::Primary {
+            self.session_settings_focus = SessionSettingsMenuFocus::Primary;
+            changed = true;
+        }
+        if self.session_settings_submenu_index != 0 {
+            self.session_settings_submenu_index = 0;
+            changed = true;
+        }
+
+        if changed {
+            cx.notify();
+        }
+    }
+
+    fn session_settings_move_secondary(&mut self, delta: i32, cx: &mut Context<Self>) {
+        let category = self.session_settings_active_category();
+        let len = self.session_settings_submenu_len(category) as i32;
+        if len == 0 {
+            return;
+        }
+
+        let current = self.session_settings_submenu_index as i32;
+        let next = (current + delta).clamp(0, len - 1) as usize;
+        let mut changed = false;
+
+        if self.session_settings_hovered.is_none() {
+            self.session_settings_hovered = Some(category);
+            changed = true;
+        }
+        if self.session_settings_focus != SessionSettingsMenuFocus::Secondary {
+            self.session_settings_focus = SessionSettingsMenuFocus::Secondary;
+            changed = true;
+        }
+        if self.session_settings_submenu_index != next {
+            self.session_settings_submenu_index = next;
+            changed = true;
+        }
+
+        if changed {
+            cx.notify();
+        }
+    }
+
+    fn session_settings_open_submenu(&mut self, cx: &mut Context<Self>) {
+        let mut changed = false;
+        if self.session_settings_hovered.is_none() {
+            self.session_settings_hovered = Some(SessionSettingsCategory::Permissions);
+            changed = true;
+        }
+        if self.session_settings_focus != SessionSettingsMenuFocus::Secondary {
+            self.session_settings_focus = SessionSettingsMenuFocus::Secondary;
+            changed = true;
+        }
+        if self.session_settings_submenu_index != 0 {
+            self.session_settings_submenu_index = 0;
+            changed = true;
+        }
+        if changed {
+            cx.notify();
+        }
+    }
+
+    fn session_settings_apply_selection(&mut self, cx: &mut Context<Self>) {
+        let category = self.session_settings_active_category();
+
+        match category {
+            SessionSettingsCategory::Permissions => {
+                if self.codex_approval_policy_action.in_flight {
+                    return;
+                }
+
+                let idx = self
+                    .session_settings_submenu_index
+                    .min(SESSION_SETTINGS_APPROVAL_OPTIONS.len().saturating_sub(1));
+                let policy = SESSION_SETTINGS_APPROVAL_OPTIONS[idx].policy;
+                self.set_codex_approval_policy(policy, cx);
+            }
+            SessionSettingsCategory::Sandbox => {
+                if self.codex_sandbox_policy_action.in_flight {
+                    return;
+                }
+
+                let idx = self
+                    .session_settings_submenu_index
+                    .min(SessionSettingsSandboxOption::ALL.len().saturating_sub(1));
+                let option = SessionSettingsSandboxOption::ALL[idx];
+                self.set_codex_sandbox_policy(option.policy(), cx);
+            }
+        }
+    }
+
+    fn handle_session_settings_key(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
+        if !self.session_settings_open {
+            return false;
+        }
+
+        match key {
+            "escape" => {
+                self.close_session_settings_menu(cx);
+                true
+            }
+            "up" => {
+                match self.session_settings_focus {
+                    SessionSettingsMenuFocus::Primary => self.session_settings_move_primary(-1, cx),
+                    SessionSettingsMenuFocus::Secondary => {
+                        self.session_settings_move_secondary(-1, cx);
+                    }
+                }
+                true
+            }
+            "down" => {
+                match self.session_settings_focus {
+                    SessionSettingsMenuFocus::Primary => self.session_settings_move_primary(1, cx),
+                    SessionSettingsMenuFocus::Secondary => {
+                        self.session_settings_move_secondary(1, cx)
+                    }
+                }
+                true
+            }
+            "left" => {
+                if self.session_settings_focus == SessionSettingsMenuFocus::Secondary {
+                    self.session_settings_focus = SessionSettingsMenuFocus::Primary;
+                    cx.notify();
+                    true
+                } else {
+                    false
+                }
+            }
+            "right" => {
+                if self.session_settings_focus == SessionSettingsMenuFocus::Primary {
+                    self.session_settings_open_submenu(cx);
+                    true
+                } else {
+                    false
+                }
+            }
+            "enter" => match self.session_settings_focus {
+                SessionSettingsMenuFocus::Primary => {
+                    self.session_settings_open_submenu(cx);
+                    true
+                }
+                SessionSettingsMenuFocus::Secondary => {
+                    self.session_settings_apply_selection(cx);
+                    true
+                }
+            },
+            _ => false,
+        }
     }
 
     fn respond_permission_request(
@@ -5577,42 +5879,82 @@ impl Render for SessionView {
             None
         };
 
-        let workspace_write_policy = CodexSandboxPolicy::WorkspaceWrite {
-            writable_roots: Vec::new(),
-            network_access: false,
-            exclude_tmpdir_env_var: false,
-            exclude_slash_tmp: false,
-        };
-
         let settings_disabled = self.client.is_none() || self.feed.is_none();
-        let mut settings_button =
-            TextButton::new(("session_settings_button", entity_id), "Settings")
-                .kind(ButtonKind::Secondary)
-                .compact()
-                .disabled(settings_disabled);
-        if settings_disabled {
-            settings_button = settings_button.disabled_reason("Chat is unavailable");
-        }
+        let settings_open = self.session_settings_open;
+        let settings_hover_bg = theme.colors.accent;
+        let settings_open_hover_bg = theme.colors.accent.opacity(0.65);
+        let settings_open_border = theme.colors.ring.opacity(0.5);
+        let settings_foreground = theme.colors.foreground;
+        let settings_border_transparent = theme.colors.border.opacity(0.0);
 
-        let settings_button = settings_button
-            .trailing(
+        let mut settings_button = div()
+            .id(("session_settings_button", entity_id))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(theme.spacing.xs)
+            .px(theme.spacing.sm)
+            .py(theme.spacing.xs)
+            .rounded(theme.radius.sm)
+            .border_1()
+            .border_color(theme.colors.border.opacity(0.0))
+            .text_size(theme.typography.caption.size)
+            .text_color(theme.colors.foreground_muted)
+            .focusable()
+            .focus(|mut style| {
+                style.border_color = Some(theme.colors.ring);
+                style
+            })
+            .when(self.session_settings_open, |this| {
+                this.bg(theme.colors.accent.opacity(0.55))
+                    .border_color(settings_open_border)
+                    .text_color(settings_foreground)
+            })
+            .when(!settings_disabled, move |this| {
+                this.cursor_pointer().hover(move |this| {
+                    if settings_open {
+                        this.bg(settings_open_hover_bg)
+                            .border_color(settings_open_border)
+                            .text_color(settings_foreground)
+                    } else {
+                        this.bg(settings_hover_bg)
+                            .border_color(settings_border_transparent)
+                            .text_color(settings_foreground)
+                    }
+                })
+            })
+            .when(settings_disabled, |this| {
+                this.opacity(0.55).cursor_not_allowed()
+            })
+            .child("Settings")
+            .child(
                 div()
-                    .text_color(theme.colors.foreground_muted)
                     .text_size(theme.typography.caption.size)
+                    .text_color(theme.colors.foreground_muted)
                     .child("▾"),
-            )
-            .on_click({
+            );
+
+        if !settings_disabled {
+            settings_button = settings_button.on_mouse_down(gpui::MouseButton::Left, {
                 let view = view.clone();
                 move |_, _, cx| {
                     view.update(cx, |this, cx| {
-                        this.session_settings_open = !this.session_settings_open;
-                        if !this.session_settings_open {
+                        if this.session_settings_open {
+                            this.session_settings_open = false;
                             this.session_settings_hovered = None;
+                            this.session_settings_focus = SessionSettingsMenuFocus::Primary;
+                            this.session_settings_submenu_index = 0;
+                        } else {
+                            this.session_settings_open = true;
+                            this.session_settings_hovered = None;
+                            this.session_settings_focus = SessionSettingsMenuFocus::Primary;
+                            this.session_settings_submenu_index = 0;
                         }
                         cx.notify();
                     });
                 }
             });
+        }
 
         let settings_menu = if self.session_settings_open && !settings_disabled {
             let primary_width = px(220.0);
@@ -5631,27 +5973,39 @@ impl Render for SessionView {
                     SessionSettingsCategory::Sandbox => sandbox_label,
                 };
 
+                let active_bg = if self.session_settings_focus == SessionSettingsMenuFocus::Primary
+                {
+                    theme.colors.accent.opacity(0.55)
+                } else {
+                    theme.colors.accent.opacity(0.25)
+                };
+
                 let row = div()
                     .flex()
                     .flex_row()
                     .items_center()
-                    .justify_between()
+                    .gap(theme.spacing.sm)
                     .h(row_height)
                     .px(theme.spacing.sm)
                     .rounded(theme.radius.md)
                     .cursor_pointer()
-                    .when(hovered, |this| this.bg(theme.colors.accent.opacity(0.55)))
+                    .when(hovered, move |this| this.bg(active_bg))
                     .when(!hovered, |this| {
                         this.hover(|this| this.bg(theme.colors.accent))
                     })
                     .on_mouse_move(cx.listener(move |this, _, _, cx| {
-                        if this.session_settings_hovered != Some(category) {
+                        if this.session_settings_hovered != Some(category)
+                            || this.session_settings_focus != SessionSettingsMenuFocus::Primary
+                        {
                             this.session_settings_hovered = Some(category);
+                            this.session_settings_focus = SessionSettingsMenuFocus::Primary;
+                            this.session_settings_submenu_index = 0;
                             cx.notify();
                         }
                     }))
                     .child(
                         div()
+                            .flex_shrink_0()
                             .text_color(theme.colors.foreground)
                             .text_size(theme.typography.caption.size)
                             .child(category.label()),
@@ -5661,6 +6015,8 @@ impl Render for SessionView {
                             .flex()
                             .flex_row()
                             .items_center()
+                            .justify_end()
+                            .flex_1()
                             .gap(theme.spacing.xs)
                             .min_w_0()
                             .child(
@@ -5691,40 +6047,41 @@ impl Render for SessionView {
                 .occlude()
                 .child(primary_list);
 
-            let submenu_top = self
-                .session_settings_hovered
-                .map(|category| padding_y + (row_height + row_gap) * category.index() as f32);
+            let approval_options = &SESSION_SETTINGS_APPROVAL_OPTIONS;
+
+            let primary_row_count = SessionSettingsCategory::ALL.len();
+            let primary_height = padding_y * 2.0
+                + row_height * primary_row_count as f32
+                + row_gap * primary_row_count.saturating_sub(1) as f32;
+
+            let submenu_top = self.session_settings_hovered.map(|category| {
+                let base_top = padding_y + (row_height + row_gap) * category.index() as f32;
+                let rows = match category {
+                    SessionSettingsCategory::Permissions => approval_options.len(),
+                    SessionSettingsCategory::Sandbox => SessionSettingsSandboxOption::ALL.len(),
+                };
+
+                let height = padding_y * 2.0
+                    + row_height * rows as f32
+                    + row_gap * rows.saturating_sub(1) as f32;
+
+                let mut top = base_top;
+                if top + height > primary_height {
+                    top = primary_height - height;
+                }
+                top
+            });
 
             let submenu: Option<AnyElement> = match self.session_settings_hovered {
                 Some(SessionSettingsCategory::Permissions) => {
                     let mut list = div().flex().flex_col().gap(row_gap);
 
-                    let approval_options: &[(Option<CodexApprovalPolicy>, &str, &str)] = &[
-                        (None, "Default", "Use the agent default approvals"),
-                        (
-                            Some(CodexApprovalPolicy::UnlessTrusted),
-                            "Unless trusted",
-                            "Ask unless the environment is trusted",
-                        ),
-                        (
-                            Some(CodexApprovalPolicy::OnRequest),
-                            "On request",
-                            "Ask when the agent requests permission",
-                        ),
-                        (
-                            Some(CodexApprovalPolicy::OnFailure),
-                            "On failure",
-                            "Only ask if a command fails (dangerous)",
-                        ),
-                        (
-                            Some(CodexApprovalPolicy::Never),
-                            "Never",
-                            "Deny all requests",
-                        ),
-                    ];
-
-                    for (value, label, _tooltip) in approval_options {
-                        let selected = displayed_codex_approval_policy == *value;
+                    for (idx, option) in approval_options.iter().enumerate() {
+                        let value = option.policy;
+                        let selected = displayed_codex_approval_policy == value;
+                        let active = self.session_settings_focus
+                            == SessionSettingsMenuFocus::Secondary
+                            && self.session_settings_submenu_index == idx;
 
                         let indicator = div()
                             .flex_shrink_0()
@@ -5744,6 +6101,7 @@ impl Render for SessionView {
                             .h(row_height)
                             .px(theme.spacing.sm)
                             .rounded(theme.radius.md)
+                            .when(active, |this| this.bg(theme.colors.accent.opacity(0.55)))
                             .child(indicator)
                             .child(
                                 div()
@@ -5752,7 +6110,7 @@ impl Render for SessionView {
                                     .text_color(theme.colors.foreground)
                                     .text_size(theme.typography.caption.size)
                                     .truncate()
-                                    .child(*label),
+                                    .child(option.label),
                             );
 
                         if approvals_disabled {
@@ -5761,10 +6119,23 @@ impl Render for SessionView {
                             let view = view.clone();
                             row = row
                                 .cursor_pointer()
-                                .hover(|this| this.bg(theme.colors.accent))
+                                .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                                    if this.session_settings_focus
+                                        != SessionSettingsMenuFocus::Secondary
+                                        || this.session_settings_submenu_index != idx
+                                    {
+                                        this.session_settings_focus =
+                                            SessionSettingsMenuFocus::Secondary;
+                                        this.session_settings_submenu_index = idx;
+                                        cx.notify();
+                                    }
+                                }))
+                                .when(!active, |this| {
+                                    this.hover(|this| this.bg(theme.colors.accent))
+                                })
                                 .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
                                     view.update(cx, |this, cx| {
-                                        this.set_codex_approval_policy(*value, cx);
+                                        this.set_codex_approval_policy(value, cx);
                                     });
                                 });
                         }
@@ -5786,22 +6157,17 @@ impl Render for SessionView {
                 }
                 Some(SessionSettingsCategory::Sandbox) => {
                     let mut list = div().flex().flex_col().gap(row_gap);
+                    let displayed = displayed_codex_sandbox_policy.as_ref();
 
-                    let sandbox_options: &[(Option<&CodexSandboxPolicy>, &str)] = &[
-                        (None, "Default"),
-                        (Some(&CodexSandboxPolicy::ReadOnly), "Read-only"),
-                        (Some(&workspace_write_policy), "Workspace write"),
-                        (
-                            Some(&CodexSandboxPolicy::DangerFullAccess),
-                            "Danger: full access",
-                        ),
-                    ];
-
-                    for (value, label) in sandbox_options {
-                        let selected = match value {
-                            None => displayed_codex_sandbox_policy.is_none(),
-                            Some(value) => displayed_codex_sandbox_policy.as_ref() == Some(*value),
-                        };
+                    for (idx, option) in SessionSettingsSandboxOption::ALL
+                        .iter()
+                        .copied()
+                        .enumerate()
+                    {
+                        let selected = option.is_selected(displayed);
+                        let active = self.session_settings_focus
+                            == SessionSettingsMenuFocus::Secondary
+                            && self.session_settings_submenu_index == idx;
 
                         let indicator = div()
                             .flex_shrink_0()
@@ -5813,8 +6179,8 @@ impl Render for SessionView {
                                 this.bg(theme.colors.ring).border_color(theme.colors.ring)
                             });
 
-                        let label_color = match value {
-                            Some(CodexSandboxPolicy::DangerFullAccess) => theme.colors.danger,
+                        let label_color = match option {
+                            SessionSettingsSandboxOption::DangerFullAccess => theme.colors.danger,
                             _ => theme.colors.foreground,
                         };
 
@@ -5826,6 +6192,7 @@ impl Render for SessionView {
                             .h(row_height)
                             .px(theme.spacing.sm)
                             .rounded(theme.radius.md)
+                            .when(active, |this| this.bg(theme.colors.accent.opacity(0.55)))
                             .child(indicator)
                             .child(
                                 div()
@@ -5834,20 +6201,32 @@ impl Render for SessionView {
                                     .text_color(label_color)
                                     .text_size(theme.typography.caption.size)
                                     .truncate()
-                                    .child(*label),
+                                    .child(option.label()),
                             );
 
                         if sandbox_disabled {
                             row = row.opacity(0.55);
                         } else {
-                            let policy = value.cloned();
                             let view = view.clone();
                             row = row
                                 .cursor_pointer()
-                                .hover(|this| this.bg(theme.colors.accent))
+                                .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                                    if this.session_settings_focus
+                                        != SessionSettingsMenuFocus::Secondary
+                                        || this.session_settings_submenu_index != idx
+                                    {
+                                        this.session_settings_focus =
+                                            SessionSettingsMenuFocus::Secondary;
+                                        this.session_settings_submenu_index = idx;
+                                        cx.notify();
+                                    }
+                                }))
+                                .when(!active, |this| {
+                                    this.hover(|this| this.bg(theme.colors.accent))
+                                })
                                 .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
                                     view.update(cx, |this, cx| {
-                                        this.set_codex_sandbox_policy(policy.clone(), cx);
+                                        this.set_codex_sandbox_policy(option.policy(), cx);
                                     });
                                 });
                         }
@@ -5957,32 +6336,17 @@ impl Render for SessionView {
             let view = cx.entity();
             root = root.on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
                 view.update(cx, |this, cx| {
-                    if !this.session_settings_open {
-                        return;
-                    }
-                    this.session_settings_open = false;
-                    this.session_settings_hovered = None;
-                    cx.notify();
+                    this.close_session_settings_menu(cx);
                 });
             });
 
             let view = cx.entity();
             root = root.capture_key_down(move |event, _window, cx| {
-                if event.keystroke.key != "escape" {
-                    return;
-                }
-
-                let did_close = view.update(cx, |this, cx| {
-                    if !this.session_settings_open {
-                        return false;
-                    }
-                    this.session_settings_open = false;
-                    this.session_settings_hovered = None;
-                    cx.notify();
-                    true
+                let handled = view.update(cx, |this, cx| {
+                    this.handle_session_settings_key(event.keystroke.key.as_str(), cx)
                 });
 
-                if did_close {
+                if handled {
                     cx.stop_propagation();
                 }
             });
