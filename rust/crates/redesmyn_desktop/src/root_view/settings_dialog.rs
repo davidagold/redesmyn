@@ -106,6 +106,21 @@ impl SettingsDialog {
         self.prelude_input.clone()
     }
 
+    pub fn set_section_for_ui_driver(
+        &mut self,
+        section: redesmyn_protocol::ui_driver::SettingsDialogSection,
+        cx: &mut Context<RootView>,
+    ) {
+        let next = match section {
+            redesmyn_protocol::ui_driver::SettingsDialogSection::Appearance => {
+                SettingsSection::Appearance
+            }
+            redesmyn_protocol::ui_driver::SettingsDialogSection::Agents => SettingsSection::Agents,
+        };
+
+        self.set_section(next, cx);
+    }
+
     pub fn sync_visibility(
         &mut self,
         visible: bool,
@@ -137,6 +152,16 @@ impl SettingsDialog {
         self.draft.harness.prelude = (!value.trim().is_empty()).then(|| value.to_string());
         self.notice = None;
         self.save.clear_error();
+        cx.notify();
+    }
+
+    fn set_section(&mut self, section: SettingsSection, cx: &mut Context<RootView>) {
+        if self.section == section {
+            return;
+        }
+
+        self.section = section;
+        self.scroll.set_offset(gpui::point(px(0.0), px(0.0)));
         cx.notify();
     }
 
@@ -395,8 +420,7 @@ impl SettingsDialog {
                     let root = root.clone();
                     move |_, _, cx| {
                         root.update(cx, |this, cx| {
-                            this.settings_dialog.section = section;
-                            cx.notify();
+                            this.settings_dialog.set_section(section, cx);
                         });
                     }
                 })

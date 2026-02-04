@@ -1089,6 +1089,37 @@ async fn handle_ui_driver_request(
                 ))
             }
         }
+        UiDriverRequestPayload::SetSettingsDialogSection(req) => {
+            let section = req.section;
+            let ok = cx
+                .update(|cx| {
+                    let Some(root) = root.upgrade() else {
+                        return Err(());
+                    };
+                    root.update(cx, |this, cx| {
+                        if this.chrome.panel != Some(ChromePanel::Settings) {
+                            this.chrome.panel = Some(ChromePanel::Settings);
+                            this.notify_ui_updated(cx);
+                        }
+                        this.settings_dialog.set_section_for_ui_driver(section, cx);
+                    });
+                    Ok::<_, ()>(())
+                })
+                .ok()
+                .and_then(Result::ok)
+                .is_some();
+
+            if ok {
+                UiDriverResponseResult::SetSettingsDialogSection(
+                    redesmyn_protocol::ui_driver::SetSettingsDialogSectionResponse {},
+                )
+            } else {
+                UiDriverResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    "UI is unavailable.",
+                ))
+            }
+        }
         UiDriverRequestPayload::TriggerRefresh(_req) => {
             let ok = cx
                 .update(|cx| {

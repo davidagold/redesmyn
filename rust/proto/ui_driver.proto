@@ -38,6 +38,7 @@ enum UiDriverMethod {
   // Desktop layout actions (Domain 5).
   UI_DRIVER_METHOD_SET_LEFT_PANE_COLLAPSED = 8;
   UI_DRIVER_METHOD_SET_SETTINGS_DIALOG_OPEN = 22;
+  UI_DRIVER_METHOD_SET_SETTINGS_DIALOG_SECTION = 23;
   // User-managed chats (Domain 5).
   UI_DRIVER_METHOD_CREATE_CHAT_SESSION = 9;
   UI_DRIVER_METHOD_CLOSE_CHAT_SESSION = 10;
@@ -76,6 +77,7 @@ message UiDriverRequest {
     CaptureScreenshotRequest capture_screenshot = 16;
     SetLeftPaneCollapsedRequest set_left_pane_collapsed = 17;
     SetSettingsDialogOpenRequest set_settings_dialog_open = 31;
+    SetSettingsDialogSectionRequest set_settings_dialog_section = 32;
     UiDriverCreateChatSessionRequest create_chat_session = 18;
     UiDriverCloseChatSessionRequest close_chat_session = 19;
     PinChatSessionRequest pin_chat_session = 20;
@@ -116,6 +118,7 @@ message UiDriverResponse {
     CaptureScreenshotResponse capture_screenshot = 16;
     SetLeftPaneCollapsedResponse set_left_pane_collapsed = 17;
     SetSettingsDialogOpenResponse set_settings_dialog_open = 31;
+    SetSettingsDialogSectionResponse set_settings_dialog_section = 32;
     UiDriverCreateChatSessionResponse create_chat_session = 18;
     UiDriverCloseChatSessionResponse close_chat_session = 19;
     PinChatSessionResponse pin_chat_session = 20;
@@ -198,6 +201,18 @@ message SetSettingsDialogOpenRequest {
 }
 
 message SetSettingsDialogOpenResponse {}
+
+enum SettingsDialogSection {
+  SETTINGS_DIALOG_SECTION_UNSPECIFIED = 0;
+  SETTINGS_DIALOG_SECTION_APPEARANCE = 1;
+  SETTINGS_DIALOG_SECTION_AGENTS = 2;
+}
+
+message SetSettingsDialogSectionRequest {
+  SettingsDialogSection section = 1;
+}
+
+message SetSettingsDialogSectionResponse {}
 
 message UiDriverCreateChatSessionRequest {
   // Best-effort label used for UI + artifacts.

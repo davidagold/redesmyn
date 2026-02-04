@@ -4948,6 +4948,9 @@ fn encode_ui_driver_method(value: crate::ui_driver::UiDriverMethod) -> i32 {
         crate::ui_driver::UiDriverMethod::SetSettingsDialogOpen => {
             pbv1::UiDriverMethod::SetSettingsDialogOpen as i32
         }
+        crate::ui_driver::UiDriverMethod::SetSettingsDialogSection => {
+            pbv1::UiDriverMethod::SetSettingsDialogSection as i32
+        }
         crate::ui_driver::UiDriverMethod::CreateChatSession => {
             pbv1::UiDriverMethod::CreateChatSession as i32
         }
@@ -5014,6 +5017,9 @@ fn decode_ui_driver_method(value: i32) -> Result<crate::ui_driver::UiDriverMetho
         Ok(pbv1::UiDriverMethod::SetSettingsDialogOpen) => {
             Ok(crate::ui_driver::UiDriverMethod::SetSettingsDialogOpen)
         }
+        Ok(pbv1::UiDriverMethod::SetSettingsDialogSection) => {
+            Ok(crate::ui_driver::UiDriverMethod::SetSettingsDialogSection)
+        }
         Ok(pbv1::UiDriverMethod::CreateChatSession) => {
             Ok(crate::ui_driver::UiDriverMethod::CreateChatSession)
         }
@@ -5057,6 +5063,30 @@ fn decode_ui_driver_method(value: i32) -> Result<crate::ui_driver::UiDriverMetho
         Ok(pbv1::UiDriverMethod::Unspecified) | Err(_) => Err(invalid_field(
             "method",
             format!("unknown enum value for UiDriverMethod: {value}"),
+        )),
+    }
+}
+
+fn encode_settings_dialog_section(value: crate::ui_driver::SettingsDialogSection) -> i32 {
+    match value {
+        crate::ui_driver::SettingsDialogSection::Appearance => {
+            pbv1::SettingsDialogSection::Appearance as i32
+        }
+        crate::ui_driver::SettingsDialogSection::Agents => pbv1::SettingsDialogSection::Agents as i32,
+    }
+}
+
+fn decode_settings_dialog_section(
+    value: i32,
+) -> Result<crate::ui_driver::SettingsDialogSection, ErrorEnvelope> {
+    match pbv1::SettingsDialogSection::try_from(value) {
+        Ok(pbv1::SettingsDialogSection::Appearance) => {
+            Ok(crate::ui_driver::SettingsDialogSection::Appearance)
+        }
+        Ok(pbv1::SettingsDialogSection::Agents) => Ok(crate::ui_driver::SettingsDialogSection::Agents),
+        Ok(pbv1::SettingsDialogSection::Unspecified) | Err(_) => Err(invalid_field(
+            "section",
+            format!("unknown enum value for SettingsDialogSection: {value}"),
         )),
     }
 }
@@ -5208,6 +5238,9 @@ impl crate::ui_driver::UiDriverRequest {
                 crate::ui_driver::UiDriverRequestPayload::SetSettingsDialogOpen(req) => {
                     pbv1::ui_driver_request::Payload::SetSettingsDialogOpen(req.to_protobuf())
                 }
+                crate::ui_driver::UiDriverRequestPayload::SetSettingsDialogSection(req) => {
+                    pbv1::ui_driver_request::Payload::SetSettingsDialogSection(req.to_protobuf())
+                }
                 crate::ui_driver::UiDriverRequestPayload::CreateChatSession(req) => {
                     pbv1::ui_driver_request::Payload::CreateChatSession(req.to_protobuf())
                 }
@@ -5302,6 +5335,11 @@ impl crate::ui_driver::UiDriverRequest {
             pbv1::ui_driver_request::Payload::SetSettingsDialogOpen(req) => {
                 crate::ui_driver::UiDriverRequestPayload::SetSettingsDialogOpen(
                     crate::ui_driver::SetSettingsDialogOpenRequest::from_protobuf(req),
+                )
+            }
+            pbv1::ui_driver_request::Payload::SetSettingsDialogSection(req) => {
+                crate::ui_driver::UiDriverRequestPayload::SetSettingsDialogSection(
+                    crate::ui_driver::SetSettingsDialogSectionRequest::try_from_protobuf(req)?,
                 )
             }
             pbv1::ui_driver_request::Payload::CreateChatSession(req) => {
@@ -5425,6 +5463,9 @@ impl crate::ui_driver::UiDriverResponse {
                 crate::ui_driver::UiDriverResponseResult::SetSettingsDialogOpen(resp) => {
                     pbv1::ui_driver_response::Result::SetSettingsDialogOpen(resp.to_protobuf())
                 }
+                crate::ui_driver::UiDriverResponseResult::SetSettingsDialogSection(resp) => {
+                    pbv1::ui_driver_response::Result::SetSettingsDialogSection(resp.to_protobuf())
+                }
                 crate::ui_driver::UiDriverResponseResult::CreateChatSession(resp) => {
                     pbv1::ui_driver_response::Result::CreateChatSession(resp.to_protobuf())
                 }
@@ -5522,6 +5563,11 @@ impl crate::ui_driver::UiDriverResponse {
             pbv1::ui_driver_response::Result::SetSettingsDialogOpen(resp) => {
                 crate::ui_driver::UiDriverResponseResult::SetSettingsDialogOpen(
                     crate::ui_driver::SetSettingsDialogOpenResponse::from_protobuf(resp),
+                )
+            }
+            pbv1::ui_driver_response::Result::SetSettingsDialogSection(resp) => {
+                crate::ui_driver::UiDriverResponseResult::SetSettingsDialogSection(
+                    crate::ui_driver::SetSettingsDialogSectionResponse::from_protobuf(resp),
                 )
             }
             pbv1::ui_driver_response::Result::CreateChatSession(resp) => {
@@ -5882,6 +5928,35 @@ impl crate::ui_driver::SetSettingsDialogOpenResponse {
 
     #[must_use]
     pub fn from_protobuf(_proto: pbv1::SetSettingsDialogOpenResponse) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::SetSettingsDialogSectionRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SetSettingsDialogSectionRequest {
+        pbv1::SetSettingsDialogSectionRequest {
+            section: encode_settings_dialog_section(self.section),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::SetSettingsDialogSectionRequest,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            section: decode_settings_dialog_section(proto.section)?,
+        })
+    }
+}
+
+impl crate::ui_driver::SetSettingsDialogSectionResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SetSettingsDialogSectionResponse {
+        pbv1::SetSettingsDialogSectionResponse {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::SetSettingsDialogSectionResponse) -> Self {
         Self {}
     }
 }

@@ -34,6 +34,7 @@ pub enum UiDriverMethod {
     CaptureScreenshot,
     SetLeftPaneCollapsed,
     SetSettingsDialogOpen,
+    SetSettingsDialogSection,
     CreateChatSession,
     CloseChatSession,
     PinChatSession,
@@ -76,6 +77,7 @@ pub enum UiDriverRequestPayload {
     CaptureScreenshot(CaptureScreenshotRequest),
     SetLeftPaneCollapsed(SetLeftPaneCollapsedRequest),
     SetSettingsDialogOpen(SetSettingsDialogOpenRequest),
+    SetSettingsDialogSection(SetSettingsDialogSectionRequest),
     CreateChatSession(CreateChatSessionRequest),
     CloseChatSession(CloseChatSessionRequest),
     PinChatSession(PinChatSessionRequest),
@@ -105,6 +107,7 @@ impl UiDriverRequestPayload {
             Self::CaptureScreenshot(_) => UiDriverMethod::CaptureScreenshot,
             Self::SetLeftPaneCollapsed(_) => UiDriverMethod::SetLeftPaneCollapsed,
             Self::SetSettingsDialogOpen(_) => UiDriverMethod::SetSettingsDialogOpen,
+            Self::SetSettingsDialogSection(_) => UiDriverMethod::SetSettingsDialogSection,
             Self::CreateChatSession(_) => UiDriverMethod::CreateChatSession,
             Self::CloseChatSession(_) => UiDriverMethod::CloseChatSession,
             Self::PinChatSession(_) => UiDriverMethod::PinChatSession,
@@ -159,6 +162,7 @@ pub enum UiDriverResponseResult {
     CaptureScreenshot(CaptureScreenshotResponse),
     SetLeftPaneCollapsed(SetLeftPaneCollapsedResponse),
     SetSettingsDialogOpen(SetSettingsDialogOpenResponse),
+    SetSettingsDialogSection(SetSettingsDialogSectionResponse),
     CreateChatSession(CreateChatSessionResponse),
     CloseChatSession(CloseChatSessionResponse),
     PinChatSession(PinChatSessionResponse),
@@ -255,6 +259,21 @@ pub struct SetSettingsDialogOpenRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SetSettingsDialogOpenResponse {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SettingsDialogSection {
+    Appearance,
+    Agents,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SetSettingsDialogSectionRequest {
+    pub section: SettingsDialogSection,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SetSettingsDialogSectionResponse {}
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CreateChatSessionRequest {

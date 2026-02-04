@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 use prost::Message as _;
 use redesmyn_ids::{RequestId, TaskId};
 use redesmyn_protocol::pb::redesmyn::protocol::v1 as pbv1;
@@ -15,9 +15,10 @@ use redesmyn_protocol::ui_driver::{
     CaptureScreenshotRequest, CaptureScreenshotResponse, CreateChatSessionRequest,
     CreateChatSessionResponse, OpenEpicRequest, SelectGraphNodeRequest,
     SessionSettingsMenuSendKeyRequest, SessionSettingsMenuSetOpenRequest,
-    SetSettingsDialogOpenRequest, UiDriverFrame, UiDriverMessage, UiDriverRequest,
-    UiDriverRequestPayload, UiDriverResponseResult, UiPrimaryView, UiScreenshotWindow,
-    UiSnapshotPredicate, WaitForUiIdleRequest, WaitForUiSnapshotRequest,
+    SetSettingsDialogOpenRequest, SetSettingsDialogSectionRequest, SettingsDialogSection,
+    UiDriverFrame, UiDriverMessage, UiDriverRequest, UiDriverRequestPayload, UiDriverResponseResult,
+    UiPrimaryView, UiScreenshotWindow, UiSnapshotPredicate, WaitForUiIdleRequest,
+    WaitForUiSnapshotRequest,
 };
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, ProtocolEnvelope};
 use serde::Serialize;
@@ -165,6 +166,10 @@ pub(crate) struct UiDriverSettingsArgs {
     /// Artifact label for `CaptureScreenshot`.
     #[arg(long, default_value = "settings")]
     label: String,
+
+    /// Settings section to show before capturing artifacts.
+    #[arg(long, value_enum)]
+    section: Option<UiDriverSettingsSection>,
     /// Timeout for wait operations (milliseconds).
     #[arg(long, default_value_t = 20_000)]
     timeout_ms: u64,
@@ -239,6 +244,22 @@ pub(crate) struct UiDriverSettingsMenuSmokeArgs {
     /// Keep the desktop app running after the smoke flow completes (`--launch` mode).
     #[arg(long, default_value_t = false)]
     keep_open: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "lower")]
+enum UiDriverSettingsSection {
+    Appearance,
+    Agents,
+}
+
+impl UiDriverSettingsSection {
+    const fn to_protocol(self) -> SettingsDialogSection {
+        match self {
+            Self::Appearance => SettingsDialogSection::Appearance,
+            Self::Agents => SettingsDialogSection::Agents,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -405,6 +426,22 @@ fn ui_driver_settings(args: UiDriverSettingsArgs, output: &Output) -> CommandOut
         ) {
             shutdown_desktop(&mut desktop_child, args.keep_open);
             return CommandOutcome::Failure(err);
+        }
+
+        if let Some(section) = args.section {
+            if let Err(err) = require_ok_response(
+                send_ui_driver_request(
+                    &mut conn,
+                    UiDriverRequestPayload::SetSettingsDialogSection(SetSettingsDialogSectionRequest {
+                        section: section.to_protocol(),
+                    }),
+                    Duration::from_secs(2),
+                ),
+                "set_settings_dialog_section",
+            ) {
+                shutdown_desktop(&mut desktop_child, args.keep_open);
+                return CommandOutcome::Failure(err);
+            }
         }
 
         if let Err(err) = require_ok_response(
@@ -1462,6 +1499,7 @@ fn require_ok_response(
         UiDriverResponseResult::Error(err) => Err(err),
         UiDriverResponseResult::OpenEpic(_)
         | UiDriverResponseResult::SetSettingsDialogOpen(_)
+        | UiDriverResponseResult::SetSettingsDialogSection(_)
         | UiDriverResponseResult::WaitForSnapshot(_)
         | UiDriverResponseResult::WaitForIdle(_)
         | UiDriverResponseResult::GraphSelectNode(_)
