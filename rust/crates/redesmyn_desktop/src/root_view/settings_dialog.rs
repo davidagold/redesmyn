@@ -8,8 +8,7 @@ use gpui::{
 
 use redesmyn_ui::UiContext;
 use redesmyn_ui::components::{
-    ButtonKind, Callout, CalloutKind, IconButton, ScrollArea, TextArea, TextButton, TextInput,
-    TextInputEvent,
+    ButtonKind, Callout, CalloutKind, IconButton, ScrollArea, TextArea, TextButton, TextInputEvent,
 };
 use redesmyn_ui::settings::ThemePreference;
 use redesmyn_ui::utils::{
@@ -72,7 +71,6 @@ pub struct SettingsDialog {
     baseline: OrchestrationDefaults,
     draft: OrchestrationDefaults,
     show_default_prelude: bool,
-    command_input: Entity<TextInput>,
     prelude_input: Entity<TextArea>,
     save: UserActionState,
     notice: Option<SharedString>,
@@ -80,7 +78,6 @@ pub struct SettingsDialog {
 
 impl SettingsDialog {
     pub fn new(root_focus_handle: FocusHandle, cx: &mut Context<RootView>) -> Self {
-        let command_input = cx.new(|cx| TextInput::new(cx).placeholder("codex"));
         let prelude_input = cx.new(|cx| {
             TextArea::new(cx)
                 .placeholder("Optional. Leave blank to use the built-in prelude.")
@@ -99,15 +96,10 @@ impl SettingsDialog {
             baseline: OrchestrationDefaults::default(),
             draft: OrchestrationDefaults::default(),
             show_default_prelude: false,
-            command_input,
             prelude_input,
             save: UserActionState::default(),
             notice: None,
         }
-    }
-
-    pub fn command_input_entity(&self) -> Entity<TextInput> {
-        self.command_input.clone()
     }
 
     pub fn prelude_input_entity(&self) -> Entity<TextArea> {
@@ -131,22 +123,6 @@ impl SettingsDialog {
         } else {
             window.focus(&self.root_focus_handle);
         }
-    }
-
-    pub fn handle_command_input_event(
-        &mut self,
-        event: TextInputEvent,
-        cx: &mut Context<RootView>,
-    ) {
-        let TextInputEvent::Changed(value) = event else {
-            return;
-        };
-
-        let trimmed = value.trim();
-        self.draft.harness.command = (!trimmed.is_empty()).then(|| trimmed.to_string());
-        self.notice = None;
-        self.save.clear_error();
-        cx.notify();
     }
 
     pub fn handle_prelude_input_event(
@@ -232,10 +208,6 @@ impl SettingsDialog {
                 self.save.fail(err.to_string());
             }
         }
-
-        let command = self.draft.harness.command.clone().unwrap_or_default();
-        self.command_input
-            .update(cx, move |input, cx| input.set_text(command, cx));
 
         let prelude = self.draft.harness.prelude.clone().unwrap_or_default();
         self.prelude_input
@@ -647,13 +619,6 @@ impl SettingsDialog {
                     .text_color(theme.colors.foreground)
                     .child("Agent"),
             )
-            .child(self.labeled_text_input(
-                "Agent command",
-                self.command_input.clone(),
-                "Shell command used to start the agent inside each task’s worktree (e.g. `codex`).",
-                window,
-                cx,
-            ))
             .child(
                 div()
                     .flex()
@@ -1002,43 +967,6 @@ impl SettingsDialog {
             .into_any_element()
     }
 
-    fn labeled_text_input(
-        &mut self,
-        label: &'static str,
-        input: Entity<TextInput>,
-        help: &'static str,
-        window: &mut Window,
-        cx: &mut Context<RootView>,
-    ) -> AnyElement {
-        let theme = theme_for_window(window, cx);
-
-        div()
-            .flex()
-            .flex_col()
-            .gap(theme.spacing.xs)
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(theme.colors.foreground_muted)
-                    .child(label),
-            )
-            .child(
-                div()
-                    .border_1()
-                    .border_color(theme.colors.border.opacity(0.6))
-                    .rounded(theme.radius.md)
-                    .overflow_hidden()
-                    .child(input),
-            )
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(theme.colors.foreground_muted)
-                    .child(help),
-            )
-            .into_any_element()
-    }
-
     fn segmented_bool_setting(
         &mut self,
         root: &Entity<RootView>,
@@ -1296,10 +1224,6 @@ impl SettingsDialog {
         self.show_default_prelude = false;
         self.notice = None;
         self.save.clear_error();
-
-        let command = self.draft.harness.command.clone().unwrap_or_default();
-        self.command_input
-            .update(cx, move |input, cx| input.set_text(command, cx));
 
         let prelude = self.draft.harness.prelude.clone().unwrap_or_default();
         self.prelude_input

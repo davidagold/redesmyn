@@ -192,7 +192,6 @@ impl RootView {
 
         let palette_input = command_palette.input_entity();
         let settings_dialog = SettingsDialog::new(focus_handle.clone(), cx);
-        let settings_command_input = settings_dialog.command_input_entity();
         let settings_prelude_input = settings_dialog.prelude_input_entity();
 
         let mut subscriptions = Vec::new();
@@ -211,12 +210,6 @@ impl RootView {
         subscriptions.push(cx.subscribe(&palette_input, |this, _, event, cx| {
             this.command_palette
                 .handle_text_input_event(event.clone(), cx);
-            this.ui_updates.bump();
-        }));
-
-        subscriptions.push(cx.subscribe(&settings_command_input, |this, _, event, cx| {
-            this.settings_dialog
-                .handle_command_input_event(event.clone(), cx);
             this.ui_updates.bump();
         }));
 
