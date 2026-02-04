@@ -4504,8 +4504,8 @@ impl Render for WorkspacePaneHost {
                     let submenu_overlap = theme.spacing.xs;
                     let menu_item_height = px(34.0);
                     let menu_search_height = menu_item_height;
-                    let row_selected_bg = theme.colors.accent.opacity(0.9);
-                    let row_hover_bg_alpha = 0.55_f32;
+                    let row_selected_bg = theme.colors.accent.opacity(0.95);
+                    let row_hover_bg_alpha = 0.75_f32;
                     let row_hover_duration = ui_test_mode_animation_duration(
                         theme
                             .animation
