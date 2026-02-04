@@ -189,24 +189,34 @@ impl Render for SplitPane {
         let theme = theme_for_window(window, cx);
         let axis = self.axis;
 
-        let (resize_cursor, handle_w, handle_h) = match axis {
-            SplitPaneAxis::Horizontal => (CursorStyle::ResizeLeftRight, px(6.0), px(0.0)),
-            SplitPaneAxis::Vertical => (CursorStyle::ResizeUpDown, px(0.0), px(6.0)),
+        let resize_cursor = match axis {
+            SplitPaneAxis::Horizontal => CursorStyle::ResizeLeftRight,
+            SplitPaneAxis::Vertical => CursorStyle::ResizeUpDown,
         };
 
-        let divider = div()
-            .id(("split_pane_divider", cx.entity_id()))
-            .when(axis == SplitPaneAxis::Horizontal, |this| this.w(handle_w))
-            .when(axis == SplitPaneAxis::Vertical, |this| this.h(handle_h))
-            .bg(theme.colors.border.opacity(0.35))
-            .border_1()
-            .border_color(theme.colors.border.opacity(0.0))
-            .cursor(resize_cursor)
-            .focusable()
-            .focus(|mut style| {
-                style.border_color = Some(theme.colors.ring);
-                style
+        let divider_line_color = theme.colors.ring.opacity(0.25);
+
+        let divider_line_thickness = px(1.0);
+        let divider_hit_inset = px(-3.0);
+
+        let divider_hit = div()
+            .id(("split_pane_divider_hit", cx.entity_id()))
+            .absolute()
+            .when(axis == SplitPaneAxis::Horizontal, |this| {
+                this.top(px(0.0))
+                    .bottom(px(0.0))
+                    .left(divider_hit_inset)
+                    .right(divider_hit_inset)
             })
+            .when(axis == SplitPaneAxis::Vertical, |this| {
+                this.left(px(0.0))
+                    .right(px(0.0))
+                    .top(divider_hit_inset)
+                    .bottom(divider_hit_inset)
+            })
+            .cursor(resize_cursor)
+            .on_any_mouse_down(|_, _, cx| cx.stop_propagation())
+            .focusable()
             .when(!self.state.collapsed, |this| {
                 this.on_mouse_down(MouseButton::Left, cx.listener(Self::on_divider_mouse_down))
                     .on_drag(SplitPaneResizeDrag, |_, _, _, cx| {
@@ -214,6 +224,27 @@ impl Render for SplitPane {
                     })
             })
             .on_click(cx.listener(Self::on_divider_click));
+
+        let divider = div()
+            .id(("split_pane_divider", cx.entity_id()))
+            .relative()
+            .when(axis == SplitPaneAxis::Horizontal, |this| {
+                this.w(divider_line_thickness).h_full()
+            })
+            .when(axis == SplitPaneAxis::Vertical, |this| {
+                this.h(divider_line_thickness).w_full()
+            })
+            .child(divider_hit)
+            .child(
+                div()
+                    .when(axis == SplitPaneAxis::Horizontal, |this| {
+                        this.w(divider_line_thickness).h_full()
+                    })
+                    .when(axis == SplitPaneAxis::Vertical, |this| {
+                        this.h(divider_line_thickness).w_full()
+                    })
+                    .bg(divider_line_color),
+            );
 
         let primary_size = if self.state.collapsed {
             px(0.0)
