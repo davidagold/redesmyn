@@ -23,9 +23,9 @@ use redesmyn_ui_session::SessionView;
 
 use redesmyn_ui::UiContext;
 use redesmyn_ui::components::{
-    ButtonKind, Callout, CalloutKind, IconButton, OverlaySurfaceKind, ProgressPill, ScrollArea,
-    SplitPane, SplitPaneAxis, SplitPaneEvent, SplitPaneState, TextButton, TextInput,
-    TextInputEvent, overlay_surface,
+    ButtonKind, Callout, CalloutKind, CascadingMenu, CascadingMenuMetrics, IconButton,
+    OverlaySurfaceKind, ProgressPill, ScrollArea, SplitPane, SplitPaneAxis, SplitPaneEvent,
+    SplitPaneState, TextButton, TextInput, TextInputEvent, overlay_surface,
 };
 use redesmyn_ui::settings::ThemePreference;
 use redesmyn_ui::task_filters::{
@@ -5124,22 +5124,23 @@ impl Render for WorkspacePaneHost {
                             .child(values_body)
                     });
 
+                    let menu_metrics = CascadingMenuMetrics {
+                        primary_width: primary_menu_width,
+                        secondary_width: submenu_width,
+                        overlap: submenu_overlap,
+                    };
+
+                    let submenu_top = submenu_top.unwrap_or(px(0.0));
+
                     let menu_container = div()
                         .key_context("TaskFilters")
                         .track_focus(&self.task_filters_focus_handle)
                         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .child(primary_menu)
-                        .relative()
-                        .when_some(submenu, move |this, submenu| {
-                            let top = submenu_top.unwrap_or(px(0.0));
-                            this.child(
-                                div()
-                                    .absolute()
-                                    .top(top)
-                                    .left(primary_menu_width - submenu_overlap)
-                                    .child(submenu),
-                            )
-                        });
+                        .child(
+                            CascadingMenu::new(primary_menu)
+                                .metrics(menu_metrics)
+                                .maybe_secondary(Some(submenu_top), submenu),
+                        );
 
                     host = host
                         .on_mouse_down(gpui::MouseButton::Left, {

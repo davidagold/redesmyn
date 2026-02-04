@@ -3,6 +3,7 @@
 mod badge;
 mod button;
 mod callout;
+mod cascading_menu;
 mod expandable;
 mod markdown;
 mod overlay_surface;
@@ -17,6 +18,7 @@ mod tooltip;
 pub use badge::{Badge, BadgeKind, BadgeSize, BadgeStyle};
 pub use button::{ButtonKind, IconButton, TextButton};
 pub use callout::{Callout, CalloutKind};
+pub use cascading_menu::{CascadingMenu, CascadingMenuMetrics};
 pub use expandable::Expandable;
 pub use markdown::{MarkdownInlineSingleLineContent, MarkdownInlineSingleLineView, MarkdownView};
 pub use overlay_surface::{OverlaySurfaceKind, overlay_surface};
