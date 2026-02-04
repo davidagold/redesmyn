@@ -8,6 +8,9 @@ use gpui::{
 
 use crate::utils::{TransitionMap, theme_for_window};
 
+const GUTTER_HITBOX_PADDING_PX: f32 = 10.0;
+const GUTTER_HITBOX_MIN_PX: f32 = 18.0;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScrollbarAxis {
     Vertical,
@@ -163,7 +166,8 @@ fn compute_geometry(target: &ScrollbarTarget, style: ScrollbarStyle) -> Option<S
         ScrollbarAxis::Horizontal => viewport.size.height,
     });
 
-    let gutter_hitbox_thickness = (thickness + px(10.0)).max(px(18.0));
+    let gutter_hitbox_thickness =
+        (thickness + px(GUTTER_HITBOX_PADDING_PX)).max(px(GUTTER_HITBOX_MIN_PX));
     let inset = style.inset;
 
     let (thumb_bounds, gutter_hitbox_bounds) = match style.axis {
@@ -204,6 +208,63 @@ fn compute_geometry(target: &ScrollbarTarget, style: ScrollbarStyle) -> Option<S
         thumb_bounds,
         gutter_hitbox_bounds,
     })
+}
+
+fn axis_origin(axis: ScrollbarAxis, viewport: &Bounds<Pixels>) -> Pixels {
+    match axis {
+        ScrollbarAxis::Vertical => viewport.origin.y,
+        ScrollbarAxis::Horizontal => viewport.origin.x,
+    }
+}
+
+fn axis_len(axis: ScrollbarAxis, viewport: &Bounds<Pixels>) -> Pixels {
+    match axis {
+        ScrollbarAxis::Vertical => viewport.size.height,
+        ScrollbarAxis::Horizontal => viewport.size.width,
+    }
+}
+
+fn axis_position(axis: ScrollbarAxis, pointer: Point<Pixels>) -> Pixels {
+    match axis {
+        ScrollbarAxis::Vertical => pointer.y,
+        ScrollbarAxis::Horizontal => pointer.x,
+    }
+}
+
+fn raw_offset_for_pointer(
+    axis: ScrollbarAxis,
+    geometry: &ScrollbarGeometry,
+    pointer: Point<Pixels>,
+    drag_offset_in_thumb: Pixels,
+) -> Option<Pixels> {
+    let viewport_len = axis_len(axis, &geometry.viewport);
+    let thumb_len = geometry.thumb.length;
+    let track_len = (viewport_len - thumb_len).max(px(0.0));
+    if track_len <= px(0.5) {
+        return None;
+    }
+
+    let track_origin = axis_origin(axis, &geometry.viewport);
+    let pointer_pos = axis_position(axis, pointer);
+    let thumb_top = (pointer_pos - drag_offset_in_thumb - track_origin).clamp(px(0.0), track_len);
+
+    let t = (thumb_top / track_len).clamp(0.0, 1.0);
+    let scroll_pos = geometry.max_offset * t;
+    Some(-scroll_pos)
+}
+
+fn set_raw_offset_from_scrollbar(
+    target: &ScrollbarTarget,
+    axis: ScrollbarAxis,
+    raw_offset: Pixels,
+) {
+    let offset = target.offset();
+    match axis {
+        ScrollbarAxis::Vertical => target.set_offset_from_scrollbar(gpui::point(offset.x, raw_offset)),
+        ScrollbarAxis::Horizontal => {
+            target.set_offset_from_scrollbar(gpui::point(raw_offset, offset.y))
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -458,37 +519,16 @@ impl Element for StyledScrollbar {
                 return;
             };
 
-            let pointer = event.position;
-            let (track_origin, pointer_pos) = match style_for_events.axis {
-                ScrollbarAxis::Vertical => (geometry.viewport.origin.y, pointer.y),
-                ScrollbarAxis::Horizontal => (geometry.viewport.origin.x, pointer.x),
+            let Some(raw_offset) = raw_offset_for_pointer(
+                style_for_events.axis,
+                &geometry,
+                event.position,
+                drag_offset_in_thumb,
+            ) else {
+                return;
             };
 
-            let thumb_len = geometry.thumb.length;
-            let track_len = (match style_for_events.axis {
-                ScrollbarAxis::Vertical => geometry.viewport.size.height,
-                ScrollbarAxis::Horizontal => geometry.viewport.size.width,
-            } - thumb_len)
-                .max(px(0.0));
-            if track_len <= px(0.5) {
-                return;
-            }
-
-            let thumb_top = (pointer_pos - drag_offset_in_thumb - track_origin).clamp(px(0.0), track_len);
-            let t = (thumb_top / track_len).clamp(0.0, 1.0);
-            let scroll_pos = geometry.max_offset * t;
-            let raw_offset = -scroll_pos;
-
-            match style_for_events.axis {
-                ScrollbarAxis::Vertical => {
-                    let offset = target_for_events.offset();
-                    target_for_events.set_offset_from_scrollbar(gpui::point(offset.x, raw_offset));
-                }
-                ScrollbarAxis::Horizontal => {
-                    let offset = target_for_events.offset();
-                    target_for_events.set_offset_from_scrollbar(gpui::point(raw_offset, offset.y));
-                }
-            }
+            set_raw_offset_from_scrollbar(&target_for_events, style_for_events.axis, raw_offset);
 
             cx.notify(current_view);
             cx.stop_propagation();
@@ -540,38 +580,17 @@ impl Element for StyledScrollbar {
 
             if !in_thumb {
                 // Clicking on the track should immediately jump to that scroll position.
-                let pointer = event.position;
-                let (track_origin, pointer_pos) = match style_for_mouse_down.axis {
-                    ScrollbarAxis::Vertical => (geometry.viewport.origin.y, pointer.y),
-                    ScrollbarAxis::Horizontal => (geometry.viewport.origin.x, pointer.x),
-                };
-
-                let thumb_len = geometry.thumb.length;
-                let track_len = (match style_for_mouse_down.axis {
-                    ScrollbarAxis::Vertical => geometry.viewport.size.height,
-                    ScrollbarAxis::Horizontal => geometry.viewport.size.width,
-                } - thumb_len)
-                    .max(px(0.0));
-
-                if track_len > px(0.5) {
-                    let thumb_top = (pointer_pos - drag_offset_in_thumb - track_origin)
-                        .clamp(px(0.0), track_len);
-                    let t = (thumb_top / track_len).clamp(0.0, 1.0);
-                    let scroll_pos = geometry.max_offset * t;
-                    let raw_offset = -scroll_pos;
-
-                    match style_for_mouse_down.axis {
-                        ScrollbarAxis::Vertical => {
-                            let offset = target_for_mouse_down.offset();
-                            target_for_mouse_down
-                                .set_offset_from_scrollbar(gpui::point(offset.x, raw_offset));
-                        }
-                        ScrollbarAxis::Horizontal => {
-                            let offset = target_for_mouse_down.offset();
-                            target_for_mouse_down
-                                .set_offset_from_scrollbar(gpui::point(raw_offset, offset.y));
-                        }
-                    }
+                if let Some(raw_offset) = raw_offset_for_pointer(
+                    style_for_mouse_down.axis,
+                    &geometry,
+                    event.position,
+                    drag_offset_in_thumb,
+                ) {
+                    set_raw_offset_from_scrollbar(
+                        &target_for_mouse_down,
+                        style_for_mouse_down.axis,
+                        raw_offset,
+                    );
                 }
 
                 cx.notify(current_view);
