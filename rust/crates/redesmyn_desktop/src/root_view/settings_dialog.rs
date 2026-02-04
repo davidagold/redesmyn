@@ -428,18 +428,11 @@ impl SettingsDialog {
         div()
             .w(px(220.0))
             .p(theme.spacing.md)
-            .bg(theme.colors.surface_elevated.opacity(0.15))
             .border_r_1()
             .border_color(theme.colors.border.opacity(0.6))
             .flex()
             .flex_col()
             .gap(theme.spacing.xs)
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.colors.foreground_muted)
-                    .child("Sections"),
-            )
             .child(nav_item(
                 "settings_nav_appearance",
                 "Appearance",
@@ -550,6 +543,7 @@ impl SettingsDialog {
         div()
             .flex()
             .flex_col()
+            .items_start()
             .gap(theme.spacing.md)
             .child(
                 div()
