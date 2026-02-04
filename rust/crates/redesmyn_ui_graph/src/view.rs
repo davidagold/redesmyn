@@ -65,8 +65,14 @@ const SELECTION_BAR_SLIDE_PX: f32 = 56.0;
 
 #[derive(Debug, Clone)]
 pub enum GraphViewEvent {
-    /// The user interacted with a task card (selection or multi-select toggle).
-    TaskCardActivated(TaskId),
+    /// The user changed (or re-confirmed) the graph selection state.
+    ///
+    /// This intentionally fires on selection interactions even when the resulting selection
+    /// happens to be unchanged (e.g. clicking the already-selected card), because downstream UI
+    /// may still want to react (close transient overlays, etc.).
+    SelectionChanged {
+        selected_node: Option<GraphNodeId>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -246,7 +252,7 @@ struct CollapsedTitleCacheEntry {
 
 pub struct GraphView {
     focus_handle: FocusHandle,
-    focus_steal_enabled: bool,
+    scroll_focus_enabled: bool,
     scene: GraphScene,
     full_scene: Option<GraphScene>,
     task_filters: TaskFilters,
@@ -316,7 +322,7 @@ impl GraphView {
 
         let mut this = Self {
             focus_handle: cx.focus_handle(),
-            focus_steal_enabled: true,
+            scroll_focus_enabled: true,
             scene,
             full_scene: None,
             task_filters: TaskFilters::default(),
@@ -355,8 +361,8 @@ impl GraphView {
         this
     }
 
-    pub fn set_focus_steal_enabled(&mut self, enabled: bool) {
-        self.focus_steal_enabled = enabled;
+    pub fn set_scroll_focus_enabled(&mut self, enabled: bool) {
+        self.scroll_focus_enabled = enabled;
     }
 
     pub fn set_task_filters(&mut self, filters: TaskFilters, cx: &mut Context<Self>) {
@@ -514,6 +520,9 @@ impl GraphView {
         }
 
         let next_selection = self.scene.selection().clone();
+        cx.emit(GraphViewEvent::SelectionChanged {
+            selected_node: next_selection.selected_node,
+        });
         if previous_selection.selected_node != next_selection.selected_node {
             self.reset_expanded_card_state();
             self.sync_task_session_view(next_selection.selected_node, cx);
@@ -563,16 +572,10 @@ impl GraphView {
 
     fn select_node(&mut self, node_id: GraphNodeId, cx: &mut Context<Self>) {
         self.update_selection(|scene| scene.select_node(node_id), cx);
-        if let GraphNodeId::Task(task_id) = node_id {
-            cx.emit(GraphViewEvent::TaskCardActivated(task_id));
-        }
     }
 
     fn toggle_node(&mut self, node_id: GraphNodeId, cx: &mut Context<Self>) {
         self.update_selection(|scene| scene.toggle_node(node_id), cx);
-        if let GraphNodeId::Task(task_id) = node_id {
-            cx.emit(GraphViewEvent::TaskCardActivated(task_id));
-        }
     }
 
     fn select_edge(&mut self, edge_id: GraphEdgeId, cx: &mut Context<Self>) {
@@ -1596,7 +1599,7 @@ impl GraphView {
         let local_anchor = event.position - canvas_bounds.origin;
 
         if event.modifiers.secondary() {
-            if self.focus_steal_enabled {
+            if self.scroll_focus_enabled {
                 window.focus(&self.focus_handle);
             }
             let dy = f32::from(delta.y);
@@ -1615,7 +1618,7 @@ impl GraphView {
             return;
         }
 
-        if self.focus_steal_enabled {
+        if self.scroll_focus_enabled {
             window.focus(&self.focus_handle);
         }
         self.camera.pan_by_screen_delta(delta);

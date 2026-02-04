@@ -3510,7 +3510,7 @@ impl WorkspacePaneHost {
         subscriptions.push(cx.subscribe(
             &graph_view,
             |this, _, event: &GraphViewEvent, cx| match event {
-                GraphViewEvent::TaskCardActivated(_) => {
+                GraphViewEvent::SelectionChanged { .. } => {
                     if !this.task_filters_open {
                         return;
                     }
@@ -3634,7 +3634,7 @@ impl WorkspacePaneHost {
             .update(cx, |input, cx| input.set_text("", cx));
 
         self.graph_view.update(cx, |view, _cx| {
-            view.set_focus_steal_enabled(!open);
+            view.set_scroll_focus_enabled(!open);
         });
 
         self.ui_updates.bump();
