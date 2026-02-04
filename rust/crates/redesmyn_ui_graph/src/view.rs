@@ -1441,13 +1441,14 @@ impl GraphView {
     fn on_mouse_down(
         &mut self,
         event: &MouseDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if event.button != MouseButton::Left {
             return;
         }
 
+        window.focus(&self.focus_handle);
         self.cancel_camera_animation();
         self.pending_pan_to_selection = None;
         if !self.did_initial_fit {
@@ -1577,6 +1578,7 @@ impl GraphView {
         let local_anchor = event.position - canvas_bounds.origin;
 
         if event.modifiers.secondary() {
+            window.focus(&self.focus_handle);
             let dy = f32::from(delta.y);
             let factor = (-dy / 300.0).exp();
             self.camera.zoom_by_factor_at(factor, local_anchor);
@@ -1593,6 +1595,7 @@ impl GraphView {
             return;
         }
 
+        window.focus(&self.focus_handle);
         self.camera.pan_by_screen_delta(delta);
         cx.notify();
     }

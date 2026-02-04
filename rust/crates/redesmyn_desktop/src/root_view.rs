@@ -4162,6 +4162,7 @@ impl Render for WorkspacePaneHost {
         let entity_id = cx.entity_id();
         let workspace = cx.entity();
 
+        let filter_shortcut_enabled = self.graph_view.focus_handle(cx).is_focused(window);
         let filter_tab_height = px(28.0);
         let keycap = |label: &'static str| {
             div()
@@ -4175,7 +4176,7 @@ impl Render for WorkspacePaneHost {
                 .text_color(theme.colors.foreground_muted)
                 .child(label)
         };
-        let filter_keycap = keycap("F");
+        let filter_keycap = keycap("F").opacity(if filter_shortcut_enabled { 1.0 } else { 0.4 });
 
         let filter_button = TextButton::new(("workspace_filters_button", entity_id), "Filter")
             .kind(ButtonKind::Ghost)

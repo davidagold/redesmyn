@@ -18,6 +18,7 @@ actions!(
 pub fn bind_task_filter_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("f", OpenTaskFilters, Some("Workspace")),
+        KeyBinding::new("f", OpenTaskFilters, Some("Graph")),
         KeyBinding::new("escape", CloseTaskFilters, Some("TaskFilters")),
         KeyBinding::new("escape", CloseTaskFilters, Some("TaskFilters > TextInput")),
         KeyBinding::new("tab", TaskFiltersToggleChipFocus, Some("TaskFilters")),
