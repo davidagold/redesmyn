@@ -4558,12 +4558,14 @@ impl Render for WorkspacePaneHost {
                                 .px(theme.spacing.sm)
                                 .h(menu_item_height)
                                 .rounded(theme.radius.sm)
-                                .when(highlighted, |this| this.bg(theme.colors.accent))
+                                .when(highlighted, |this| {
+                                    this.bg(theme.colors.surface.opacity(0.9))
+                                })
                                 .when(
                                     self.task_filters_input_source == TaskFiltersInputSource::Mouse,
                                     |this| {
                                         this.hover(|this| {
-                                            this.bg(theme.colors.accent.opacity(0.75))
+                                            this.bg(theme.colors.surface.opacity(0.8))
                                         })
                                     },
                                 )
@@ -4670,7 +4672,6 @@ impl Render for WorkspacePaneHost {
                             .w(primary_menu_width)
                             .pt(theme.spacing.sm)
                             .pb(theme.spacing.md)
-                            .px(theme.spacing.sm)
                             .shadow_md()
                             .occlude()
                             .child(
@@ -4679,15 +4680,15 @@ impl Render for WorkspacePaneHost {
                                     .flex()
                                     .items_center()
                                     .w_full()
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .child(self.task_filters_search_input.clone()),
-                                    ),
+                                    .child(self.task_filters_search_input.clone()),
                             )
-                            .child(div().pt(theme.spacing.sm).child(category_list))
-                            .child(actions_row);
+                            .child(
+                                div()
+                                    .px(theme.spacing.sm)
+                                    .pt(theme.spacing.sm)
+                                    .child(category_list),
+                            )
+                            .child(div().px(theme.spacing.sm).child(actions_row));
 
                     let submenu_state = self.task_filters_hovered_category.and_then(|category| {
                         let row_index = visible_categories
@@ -4769,13 +4770,15 @@ impl Render for WorkspacePaneHost {
                                             .px(theme.spacing.sm)
                                             .h(menu_item_height)
                                             .rounded(theme.radius.sm)
-                                            .when(highlighted, |this| this.bg(theme.colors.accent))
+                                            .when(highlighted, |this| {
+                                                this.bg(theme.colors.surface.opacity(0.9))
+                                            })
                                             .when(
                                                 self.task_filters_input_source
                                                     == TaskFiltersInputSource::Mouse,
                                                 |this| {
                                                     this.hover(|this| {
-                                                        this.bg(theme.colors.accent.opacity(0.75))
+                                                        this.bg(theme.colors.surface.opacity(0.8))
                                                     })
                                                 },
                                             )
@@ -4868,13 +4871,15 @@ impl Render for WorkspacePaneHost {
                                             .px(theme.spacing.sm)
                                             .h(menu_item_height)
                                             .rounded(theme.radius.sm)
-                                            .when(highlighted, |this| this.bg(theme.colors.accent))
+                                            .when(highlighted, |this| {
+                                                this.bg(theme.colors.surface.opacity(0.9))
+                                            })
                                             .when(
                                                 self.task_filters_input_source
                                                     == TaskFiltersInputSource::Mouse,
                                                 |this| {
                                                     this.hover(|this| {
-                                                        this.bg(theme.colors.accent.opacity(0.75))
+                                                        this.bg(theme.colors.surface.opacity(0.8))
                                                     })
                                                 },
                                             )
@@ -4969,13 +4974,15 @@ impl Render for WorkspacePaneHost {
                                             .px(theme.spacing.sm)
                                             .h(menu_item_height)
                                             .rounded(theme.radius.sm)
-                                            .when(highlighted, |this| this.bg(theme.colors.accent))
+                                            .when(highlighted, |this| {
+                                                this.bg(theme.colors.surface.opacity(0.9))
+                                            })
                                             .when(
                                                 self.task_filters_input_source
                                                     == TaskFiltersInputSource::Mouse,
                                                 |this| {
                                                     this.hover(|this| {
-                                                        this.bg(theme.colors.accent.opacity(0.75))
+                                                        this.bg(theme.colors.surface.opacity(0.8))
                                                     })
                                                 },
                                             )

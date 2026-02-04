@@ -19,8 +19,8 @@ struct OverlaySurfaceStyle {
 impl OverlaySurfaceStyle {
     fn for_kind(theme: &UiTheme, kind: OverlaySurfaceKind) -> Self {
         let (background_alpha, border_alpha) = match kind {
-            OverlaySurfaceKind::Chrome => (0.92_f32, 0.0_f32),
-            OverlaySurfaceKind::Menu => (0.92_f32, 0.22_f32),
+            OverlaySurfaceKind::Chrome => (1.0_f32, 0.22_f32),
+            OverlaySurfaceKind::Menu => (1.0_f32, 0.35_f32),
         };
 
         Self {

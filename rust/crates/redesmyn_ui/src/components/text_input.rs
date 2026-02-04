@@ -1213,6 +1213,7 @@ impl Render for TextInput {
                 .overflow_hidden()
                 .rounded(radius),
             TextInputChrome::MenuSearch => container
+                .w_full()
                 .border_b_1()
                 .border_color(theme.colors.border.opacity(0.35)),
         };
