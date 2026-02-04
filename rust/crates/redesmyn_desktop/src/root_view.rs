@@ -4442,8 +4442,7 @@ impl Render for WorkspacePaneHost {
             );
 
             if show_filter_ui {
-                let tab_top =
-                    theme.spacing.md + self.graph_view.read(cx).selection_bar_reserved_top_offset();
+                let tab_top = theme.spacing.md;
                 let tab_left = theme.spacing.md;
 
                 let menu_opacity = self.task_filters_menu_opacity.opacity_for_render(
