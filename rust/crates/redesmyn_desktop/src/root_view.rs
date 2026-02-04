@@ -3367,8 +3367,6 @@ struct WorkspacePaneHost {
     task_filters_search_input: Entity<TextInput>,
     task_filters_value_search: SharedString,
     task_filters_value_search_input: Entity<TextInput>,
-    task_filters_category_scroll: ScrollHandle,
-    task_filters_value_scroll: ScrollHandle,
     task_filters_menu_opacity: TransitionMap<&'static str>,
     sessions_collapsed: bool,
     ui_settings_error: Option<SharedString>,
@@ -3444,17 +3442,15 @@ impl WorkspacePaneHost {
                     TextInputEvent::Changed(text) => {
                         this.task_filters_value_search = text.clone();
                         let visible_count = this
-                            .visible_task_filter_value_indices(this.task_filters_active_category)
+                            .visible_task_filter_value_indices(
+                                this.task_filters_hovered_category
+                                    .unwrap_or(this.task_filters_active_category),
+                            )
                             .len();
                         if visible_count == 0 {
                             this.task_filters_active_value_index = 0;
                         } else if this.task_filters_active_value_index >= visible_count {
                             this.task_filters_active_value_index = 0;
-                        }
-                        if this.task_filters_open {
-                            this.task_filters_focus = TaskFiltersFocus::Values;
-                            this.task_filters_hovered_category =
-                                Some(this.task_filters_active_category);
                         }
                         this.ui_updates.bump();
                         cx.notify();
@@ -3504,8 +3500,6 @@ impl WorkspacePaneHost {
             task_filters_search_input,
             task_filters_value_search: "".into(),
             task_filters_value_search_input,
-            task_filters_category_scroll: ScrollHandle::new(),
-            task_filters_value_scroll: ScrollHandle::new(),
             task_filters_menu_opacity: TransitionMap::new(),
             sessions_collapsed,
             ui_settings_error: None,
@@ -3676,7 +3670,7 @@ impl WorkspacePaneHost {
                 self.task_filters_value_search_input
                     .update(cx, |input, cx| input.set_text("", cx));
                 self.task_filters_active_value_index = 0;
-                window.focus(&self.task_filters_value_search_input.focus_handle(cx));
+                window.focus(&self.task_filters_focus_handle);
             }
             TaskFiltersFocus::Values => {
                 self.toggle_active_filter_value(cx);
@@ -3692,7 +3686,7 @@ impl WorkspacePaneHost {
                 self.task_filters_value_search = "".into();
                 self.task_filters_value_search_input
                     .update(cx, |input, cx| input.set_text("", cx));
-                window.focus(&self.task_filters_value_search_input.focus_handle(cx));
+                window.focus(&self.task_filters_focus_handle);
             }
         }
 
@@ -3971,7 +3965,7 @@ impl WorkspacePaneHost {
                         .len()
                         .saturating_sub(1),
                 );
-                window.focus(&self.task_filters_value_search_input.focus_handle(cx));
+                window.focus(&self.task_filters_focus_handle);
             }
             TaskFiltersFocus::Values => {}
             TaskFiltersFocus::Chips => {
@@ -4265,7 +4259,7 @@ impl Render for WorkspacePaneHost {
                     }
                 });
 
-            let chip = overlay_surface(&theme, OverlaySurfaceKind::Menu, px(999.0))
+            let chip = overlay_surface(&theme, OverlaySurfaceKind::Chrome, px(999.0))
                 .h(filter_tab_height)
                 .flex()
                 .flex_row()
@@ -4273,8 +4267,7 @@ impl Render for WorkspacePaneHost {
                 .gap(theme.spacing.xs)
                 .px(theme.spacing.sm)
                 .when(highlighted, |this| {
-                    this.bg(theme.colors.surface.opacity(0.85))
-                        .border_color(theme.colors.ring.opacity(0.7))
+                    this.border_color(theme.colors.ring.opacity(0.7))
                 })
                 .child(open_label)
                 .child(clear_button);
@@ -4423,17 +4416,20 @@ impl Render for WorkspacePaneHost {
                         theme
                             .animation
                             .fast
-                            .saturating_sub(Duration::from_millis(60)),
+                            .saturating_sub(Duration::from_millis(80)),
                     ),
                     window,
                 );
 
                 let filter_button_pill =
-                    overlay_surface(&theme, OverlaySurfaceKind::Menu, px(999.0))
+                    overlay_surface(&theme, OverlaySurfaceKind::Chrome, px(999.0))
                         .h(filter_tab_height)
                         .flex()
                         .flex_row()
                         .items_center()
+                        .when(self.task_filters_open, |this| {
+                            this.border_color(theme.colors.ring.opacity(0.7))
+                        })
                         .child(filter_button);
 
                 let filter_tab = div()
@@ -4456,6 +4452,12 @@ impl Render for WorkspacePaneHost {
                 );
 
                 if menu_opacity > 1e-3 {
+                    let primary_menu_width = px(260.0);
+                    let submenu_width = px(240.0);
+                    let submenu_overlap = px(12.0);
+                    let menu_item_height = px(34.0);
+                    let menu_search_height = menu_item_height;
+
                     let query = self.task_filters_search.trim().to_ascii_lowercase();
                     let visible_categories: Vec<TaskFilterCategory> = TaskFilterCategory::ALL
                         .into_iter()
@@ -4465,7 +4467,7 @@ impl Render for WorkspacePaneHost {
                         })
                         .collect();
 
-                    let mut category_list = div().flex().flex_col().gap(theme.spacing.xs);
+                    let mut category_list = div().flex().flex_col().gap(px(0.0));
                     if visible_categories.is_empty() {
                         category_list = category_list.child(
                             div()
@@ -4474,7 +4476,7 @@ impl Render for WorkspacePaneHost {
                                 .child("No matching filters."),
                         );
                     } else {
-                        for category in visible_categories {
+                        for category in visible_categories.iter().copied() {
                             let count = self.task_filters.selected_count(category);
                             let active = self.task_filters_active_category == category;
                             let hovered = self.task_filters_hovered_category == Some(category);
@@ -4487,7 +4489,9 @@ impl Render for WorkspacePaneHost {
                                         .px(theme.spacing.xs)
                                         .py(px(1.0))
                                         .rounded(theme.radius.sm)
-                                        .bg(theme.colors.surface_elevated.opacity(0.85))
+                                        .bg(theme.colors.surface.opacity(0.85))
+                                        .border_1()
+                                        .border_color(theme.colors.border.opacity(0.25))
                                         .text_xs()
                                         .text_color(theme.colors.foreground_muted)
                                         .child(format!("{count}")),
@@ -4511,37 +4515,49 @@ impl Render for WorkspacePaneHost {
                                 .items_center()
                                 .gap(theme.spacing.xs)
                                 .px(theme.spacing.sm)
-                                .py(theme.spacing.xs)
+                                .h(menu_item_height)
                                 .rounded(theme.radius.sm)
                                 .when(highlighted, |this| this.bg(theme.colors.accent))
                                 .hover(|this| this.bg(theme.colors.accent.opacity(0.75)))
                                 .cursor_pointer()
                                 .on_mouse_move(cx.listener(move |this, _, _, cx| {
-                                    if this.task_filters_hovered_category == Some(category) {
-                                        return;
+                                    let mut did_change = false;
+                                    if this.task_filters_active_category != category {
+                                        this.task_filters_active_category = category;
+                                        did_change = true;
                                     }
-                                    this.task_filters_hovered_category = Some(category);
-                                    this.task_filters_active_category = category;
-                                    this.task_filters_focus = TaskFiltersFocus::Categories;
-                                    this.task_filters_active_value_index = 0;
-                                    this.task_filters_value_search = "".into();
-                                    this.task_filters_value_search_input
-                                        .update(cx, |input, cx| input.set_text("", cx));
-                                    cx.notify();
+                                    if this.task_filters_hovered_category != Some(category) {
+                                        this.task_filters_hovered_category = Some(category);
+                                        did_change = true;
+                                    }
+                                    if this.task_filters_focus != TaskFiltersFocus::Categories {
+                                        this.task_filters_focus = TaskFiltersFocus::Categories;
+                                        did_change = true;
+                                    }
+
+                                    if did_change {
+                                        this.task_filters_active_value_index = 0;
+                                        this.task_filters_value_search = "".into();
+                                        this.task_filters_value_search_input
+                                            .update(cx, |input, cx| input.set_text("", cx));
+                                        cx.notify();
+                                    }
                                 }))
                                 .on_mouse_down(gpui::MouseButton::Left, {
                                     let workspace = workspace.clone();
-                                    move |_, _, cx| {
-                                        workspace.update(cx, |this, cx| {
-                                            this.task_filters_hovered_category = Some(category);
+                                    move |_, window, cx| {
+                                        let focus = workspace.update(cx, |this, cx| {
                                             this.task_filters_active_category = category;
-                                            this.task_filters_focus = TaskFiltersFocus::Categories;
+                                            this.task_filters_hovered_category = Some(category);
+                                            this.task_filters_focus = TaskFiltersFocus::Values;
                                             this.task_filters_active_value_index = 0;
                                             this.task_filters_value_search = "".into();
                                             this.task_filters_value_search_input
                                                 .update(cx, |input, cx| input.set_text("", cx));
                                             cx.notify();
+                                            this.task_filters_focus_handle.clone()
                                         });
+                                        window.focus(&focus);
                                     }
                                 })
                                 .child(
@@ -4560,20 +4576,13 @@ impl Render for WorkspacePaneHost {
                         }
                     }
 
-                    let categories_scroll = self.task_filters_category_scroll.clone();
-                    let categories = ScrollArea::new(
-                        ("task_filters_category_scroll", entity_id),
-                        categories_scroll,
-                    )
-                    .scrollbar_width(px(8.0))
-                    .child(category_list);
-
                     let actions_row = div()
                         .pt(theme.spacing.xs)
                         .flex()
                         .flex_row()
                         .items_center()
                         .justify_between()
+                        .w_full()
                         .child(
                             TextButton::new(("task_filters_clear_all", entity_id), "Clear all")
                                 .kind(ButtonKind::Ghost)
@@ -4603,19 +4612,58 @@ impl Render for WorkspacePaneHost {
 
                     let primary_menu =
                         overlay_surface(&theme, OverlaySurfaceKind::Menu, theme.radius.lg)
-                            .w(px(260.0))
+                            .w(primary_menu_width)
                             .pt(theme.spacing.sm)
-                            .pb(theme.spacing.sm)
-                            .px(theme.spacing.md)
+                            .pb(theme.spacing.md)
+                            .px(theme.spacing.sm)
                             .shadow_md()
                             .occlude()
-                            .child(div().w_full().child(self.task_filters_search_input.clone()))
-                            .child(div().pt(theme.spacing.sm).h(px(260.0)).child(categories))
+                            .child(
+                                div()
+                                    .h(menu_search_height)
+                                    .flex()
+                                    .items_center()
+                                    .w_full()
+                                    .child(self.task_filters_search_input.clone()),
+                            )
+                            .child(div().pt(theme.spacing.sm).child(category_list))
                             .child(actions_row);
 
-                    let submenu = self.task_filters_hovered_category.map(|category| {
+                    let submenu_state = self.task_filters_hovered_category.and_then(|category| {
+                        let row_index = visible_categories
+                            .iter()
+                            .position(|candidate| *candidate == category)?;
+                        Some((category, row_index))
+                    });
+
+                    let submenu_top = submenu_state.map(|(_category, row_index)| {
+                        let categories_top =
+                            theme.spacing.sm + menu_search_height + theme.spacing.sm;
+                        let row_top = categories_top + (menu_item_height * row_index as f32);
+                        let submenu_padding_top = theme.spacing.sm;
+                        (row_top - submenu_padding_top).max(px(0.0))
+                    });
+
+                    let submenu = submenu_state.map(|(category, _row_index)| {
                         let visible_values = self.visible_task_filter_value_indices(category);
-                        let mut value_list = div().flex().flex_col().gap(theme.spacing.xs);
+                        let mut value_list = div().flex().flex_col().gap(px(0.0));
+                        let checkbox = |selected: bool| {
+                            div()
+                                .size(px(16.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(theme.radius.sm)
+                                .border_1()
+                                .border_color(theme.colors.border.opacity(0.45))
+                                .when(selected, |this| {
+                                    this.border_color(theme.colors.ring.opacity(0.7))
+                                        .text_color(theme.colors.ring)
+                                })
+                                .text_xs()
+                                .text_color(theme.colors.foreground_muted)
+                                .child(if selected { "✓" } else { "" })
+                        };
 
                         if visible_values.is_empty() {
                             value_list = value_list.child(
@@ -4658,7 +4706,7 @@ impl Render for WorkspacePaneHost {
                                             .items_center()
                                             .gap(theme.spacing.xs)
                                             .px(theme.spacing.sm)
-                                            .py(theme.spacing.xs)
+                                            .h(menu_item_height)
                                             .rounded(theme.radius.sm)
                                             .when(highlighted, |this| this.bg(theme.colors.accent))
                                             .hover(|this| {
@@ -4697,6 +4745,7 @@ impl Render for WorkspacePaneHost {
                                                     });
                                                 }
                                             })
+                                            .child(checkbox(selected))
                                             .child(
                                                 div()
                                                     .flex_1()
@@ -4705,15 +4754,7 @@ impl Render for WorkspacePaneHost {
                                                     .text_color(theme.colors.foreground)
                                                     .truncate()
                                                     .child(label),
-                                            )
-                                            .when(selected, |this| {
-                                                this.child(
-                                                    div()
-                                                        .text_xs()
-                                                        .text_color(theme.colors.foreground_muted)
-                                                        .child("✓"),
-                                                )
-                                            });
+                                            );
 
                                         value_list = value_list.child(row);
                                     }
@@ -4750,7 +4791,7 @@ impl Render for WorkspacePaneHost {
                                             .items_center()
                                             .gap(theme.spacing.xs)
                                             .px(theme.spacing.sm)
-                                            .py(theme.spacing.xs)
+                                            .h(menu_item_height)
                                             .rounded(theme.radius.sm)
                                             .when(highlighted, |this| this.bg(theme.colors.accent))
                                             .hover(|this| {
@@ -4791,6 +4832,7 @@ impl Render for WorkspacePaneHost {
                                                     });
                                                 }
                                             })
+                                            .child(checkbox(selected))
                                             .child(
                                                 div()
                                                     .flex_1()
@@ -4799,15 +4841,7 @@ impl Render for WorkspacePaneHost {
                                                     .text_color(theme.colors.foreground)
                                                     .truncate()
                                                     .child(label),
-                                            )
-                                            .when(selected, |this| {
-                                                this.child(
-                                                    div()
-                                                        .text_xs()
-                                                        .text_color(theme.colors.foreground_muted)
-                                                        .child("✓"),
-                                                )
-                                            });
+                                            );
 
                                         value_list = value_list.child(row);
                                     }
@@ -4844,7 +4878,7 @@ impl Render for WorkspacePaneHost {
                                             .items_center()
                                             .gap(theme.spacing.xs)
                                             .px(theme.spacing.sm)
-                                            .py(theme.spacing.xs)
+                                            .h(menu_item_height)
                                             .rounded(theme.radius.sm)
                                             .when(highlighted, |this| this.bg(theme.colors.accent))
                                             .hover(|this| {
@@ -4883,6 +4917,7 @@ impl Render for WorkspacePaneHost {
                                                     });
                                                 }
                                             })
+                                            .child(checkbox(selected))
                                             .child(
                                                 div()
                                                     .flex_1()
@@ -4891,15 +4926,7 @@ impl Render for WorkspacePaneHost {
                                                     .text_color(theme.colors.foreground)
                                                     .truncate()
                                                     .child(label),
-                                            )
-                                            .when(selected, |this| {
-                                                this.child(
-                                                    div()
-                                                        .text_xs()
-                                                        .text_color(theme.colors.foreground_muted)
-                                                        .child("✓"),
-                                                )
-                                            });
+                                            );
 
                                         value_list = value_list.child(row);
                                     }
@@ -4907,31 +4934,13 @@ impl Render for WorkspacePaneHost {
                             }
                         }
 
-                        let values_scroll = self.task_filters_value_scroll.clone();
-                        let values = ScrollArea::new(
-                            ("task_filters_value_scroll", entity_id),
-                            values_scroll,
-                        )
-                        .scrollbar_width(px(8.0))
-                        .child(value_list);
-
-                        let values_body = div()
-                            .flex()
-                            .flex_col()
-                            .gap(theme.spacing.sm)
-                            .h(px(260.0))
-                            .child(
-                                div()
-                                    .w_full()
-                                    .child(self.task_filters_value_search_input.clone()),
-                            )
-                            .child(div().flex_1().min_h(px(0.0)).child(values));
+                        let values_body = div().flex().flex_col().child(value_list);
 
                         overlay_surface(&theme, OverlaySurfaceKind::Menu, theme.radius.lg)
-                            .w(px(240.0))
+                            .w(submenu_width)
                             .pt(theme.spacing.sm)
                             .pb(theme.spacing.sm)
-                            .px(theme.spacing.md)
+                            .px(theme.spacing.sm)
                             .shadow_md()
                             .occlude()
                             .child(values_body)
@@ -4940,12 +4949,18 @@ impl Render for WorkspacePaneHost {
                     let menu_container = div()
                         .key_context("TaskFilters")
                         .track_focus(&self.task_filters_focus_handle)
-                        .flex()
-                        .flex_row()
-                        .items_start()
-                        .gap(px(2.0))
                         .child(primary_menu)
-                        .when_some(submenu, |this, submenu| this.child(submenu));
+                        .relative()
+                        .when_some(submenu, move |this, submenu| {
+                            let top = submenu_top.unwrap_or(px(0.0));
+                            this.child(
+                                div()
+                                    .absolute()
+                                    .top(top)
+                                    .left(primary_menu_width - submenu_overlap)
+                                    .child(submenu),
+                            )
+                        });
 
                     let overlay = div()
                         .absolute()
