@@ -59,7 +59,7 @@ enum UiDriverMethod {
   UI_DRIVER_METHOD_SESSION_SETTINGS_MENU_SET_OPEN = 22;
   UI_DRIVER_METHOD_SESSION_SETTINGS_MENU_SEND_KEY = 23;
   // Workspace task filters (Domain 6).
-  UI_DRIVER_METHOD_TASK_FILTERS_MENU_SET_OPEN = 24;
+  UI_DRIVER_METHOD_TASK_FILTERS_MENU_SET_OPEN = 26;
 
   reserved 18;
 }
@@ -94,7 +94,7 @@ message UiDriverRequest {
     MultiSelectRemoveNodeRequest multi_select_remove_node = 30;
     SessionSettingsMenuSetOpenRequest session_settings_menu_set_open = 31;
     SessionSettingsMenuSendKeyRequest session_settings_menu_send_key = 32;
-    TaskFiltersMenuSetOpenRequest task_filters_menu_set_open = 33;
+    TaskFiltersMenuSetOpenRequest task_filters_menu_set_open = 35;
   }
 
   reserved 27;
@@ -136,7 +136,7 @@ message UiDriverResponse {
     MultiSelectRemoveNodeResponse multi_select_remove_node = 30;
     SessionSettingsMenuSetOpenResponse session_settings_menu_set_open = 31;
     SessionSettingsMenuSendKeyResponse session_settings_menu_send_key = 32;
-    TaskFiltersMenuSetOpenResponse task_filters_menu_set_open = 33;
+    TaskFiltersMenuSetOpenResponse task_filters_menu_set_open = 35;
     ErrorEnvelope error = 100;
   }
 
