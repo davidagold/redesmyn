@@ -6,6 +6,7 @@ use std::sync::Arc;
 use redesmyn_domain::agent::AppServerTurnIntent;
 use redesmyn_ids::{SessionEventId, SessionId, TaskId};
 use redesmyn_logging::tracing;
+use redesmyn_protocol::agent_commands::SessionPolicySnapshot;
 use redesmyn_protocol::artifacts::{ArtifactKind, ArtifactRef};
 use redesmyn_protocol::daemon::{
     DaemonFrame, DaemonMessage, SessionEventBatch, SessionLiveEventBatch,
@@ -299,6 +300,10 @@ enum SessionCommand {
         decision: PermissionDecision,
         reply: oneshot::Sender<Result<AppServerResponse, AppServerRequestError>>,
     },
+    HydratePolicies {
+        snapshot: SessionPolicySnapshot,
+        reply: oneshot::Sender<Result<(), AppServerRequestError>>,
+    },
     Reconnect {
         reply: oneshot::Sender<Result<(), AppServerProcessError>>,
     },
@@ -533,6 +538,20 @@ impl AppServerSupervisor {
             },
         )
         .await?;
+        rx.await
+            .map_err(|_| SessionControlError::SessionClosed { session_id })?
+            .map_err(AppServerCallError::Request)?;
+        Ok(())
+    }
+
+    pub async fn hydrate_policies(
+        &self,
+        session_id: SessionId,
+        snapshot: SessionPolicySnapshot,
+    ) -> Result<(), AppServerCallError> {
+        let (reply, rx) = oneshot::channel::<Result<(), AppServerRequestError>>();
+        self.send_command(session_id, SessionCommand::HydratePolicies { snapshot, reply })
+            .await?;
         rx.await
             .map_err(|_| SessionControlError::SessionClosed { session_id })?
             .map_err(AppServerCallError::Request)?;
@@ -822,6 +841,38 @@ async fn run_session(
                         format!("respond_permission_request_failed: {err}"),
                     );
                 }
+                let _ = reply.send(response);
+            }
+            SessionCommand::HydratePolicies { snapshot, reply } => {
+                let response = async {
+                    let _ = client
+                        .request(AppServerRequest::SetPermissionsMode {
+                            mode: snapshot.permissions_mode,
+                        })
+                        .await?;
+                    let _ = client
+                        .request(AppServerRequest::SetCodexApprovalPolicy {
+                            approval_policy: snapshot.codex_approval_policy,
+                        })
+                        .await?;
+                    let _ = client
+                        .request(AppServerRequest::SetCodexSandboxPolicy {
+                            sandbox_policy: snapshot.codex_sandbox_policy.clone(),
+                        })
+                        .await?;
+                    Ok(())
+                }
+                .await;
+
+                if let Err(err) = &response {
+                    try_emit_status_update(
+                        &frames_tx,
+                        session_id,
+                        scope,
+                        format!("hydrate_policies_failed: {err}"),
+                    );
+                }
+
                 let _ = reply.send(response);
             }
             SessionCommand::Reconnect { reply } => match process.connect().await {

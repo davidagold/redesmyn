@@ -6,6 +6,7 @@ mod agent_orchestration;
 mod command;
 mod daemon_link;
 mod daemon_router;
+mod policy_snapshot;
 mod session_events_projection;
 mod task_manager;
 mod turn_state;

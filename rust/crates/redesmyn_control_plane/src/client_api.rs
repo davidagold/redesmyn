@@ -997,6 +997,21 @@ async fn handle_request_result(
             let interrupt_turn = send.on_conflict == AgentMessageConflictAction::InterruptTurn
                 && turn_in_progress;
 
+            let policy_snapshot = if matches!(
+                interface_mode,
+                AgentInterfaceMode::StructuredExec | AgentInterfaceMode::AppServer
+            ) {
+                Some(
+                    crate::policy_snapshot::load_session_policy_snapshot(
+                        control_plane.session_events(),
+                        session_id,
+                    )
+                    .await?,
+                )
+            } else {
+                None
+            };
+
             let (command_kind, json_payload) = match interface_mode {
                 AgentInterfaceMode::StructuredExec | AgentInterfaceMode::AppServer => {
                     if let Some(external_session_ref) = external_session_ref {
@@ -1006,6 +1021,7 @@ async fn handle_request_result(
                                 task_id,
                                 prompt: text.to_string(),
                                 external_session_ref,
+                                policy_snapshot: policy_snapshot.clone(),
                                 interrupt_turn,
                             },
                         ) {
@@ -1022,6 +1038,7 @@ async fn handle_request_result(
                                 agent_kind,
                                 interface_mode,
                                 initial_prompt: Some(text.to_string()),
+                                policy_snapshot,
                                 stop_session_ids,
                             },
                         ) {

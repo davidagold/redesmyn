@@ -12,6 +12,24 @@ use crate::session::{
     CodexApprovalPolicy, CodexSandboxPolicy, ExternalSessionRef, PermissionDecision, PermissionsMode,
 };
 
+fn default_permissions_mode() -> PermissionsMode {
+    PermissionsMode::Ask
+}
+
+/// Session-scoped policy overrides derived from durable session events.
+///
+/// This snapshot is passed along with `session.agent.start` / `session.agent.resume_by_id_turn`
+/// so the daemon can hydrate a freshly started runner before sending the next turn.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionPolicySnapshot {
+    #[serde(default = "default_permissions_mode")]
+    pub permissions_mode: PermissionsMode,
+    #[serde(default)]
+    pub codex_approval_policy: Option<CodexApprovalPolicy>,
+    #[serde(default)]
+    pub codex_sandbox_policy: Option<CodexSandboxPolicy>,
+}
+
 pub const SESSION_AGENT_START: &str = "session.agent.start";
 pub const SESSION_AGENT_STOP: &str = "session.agent.stop";
 pub const SESSION_AGENT_INTERRUPT_TURN: &str = "session.agent.interrupt_turn";
@@ -36,6 +54,8 @@ pub struct StartAgentSessionCommand {
     pub interface_mode: AgentInterfaceMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_snapshot: Option<SessionPolicySnapshot>,
     /// Session ids to stop before starting this session.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stop_session_ids: Vec<SessionId>,
@@ -49,6 +69,8 @@ pub struct StartTaskAgentSessionCommand {
     pub interface_mode: AgentInterfaceMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_snapshot: Option<SessionPolicySnapshot>,
     /// Session ids to stop before starting this new conversation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stop_session_ids: Vec<SessionId>,
@@ -86,6 +108,8 @@ pub struct ResumeByIdTaskAgentTurnCommand {
     pub task_id: Option<TaskId>,
     pub prompt: String,
     pub external_session_ref: ExternalSessionRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_snapshot: Option<SessionPolicySnapshot>,
     #[serde(default)]
     pub interrupt_turn: bool,
 }

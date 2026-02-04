@@ -282,12 +282,21 @@ pub(super) async fn execute_start_agent(
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
+    let policy_snapshot =
+        crate::policy_snapshot::load_session_policy_snapshot(control_plane.session_events(), session_id)
+            .await
+            .map_err(|err| {
+                ErrorEnvelope::new(ErrorCategory::Internal, "Failed to load session policy snapshot.")
+                    .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
+            })?;
+
     let json_payload = payloads::start_task_session(
         session_id,
         task_id,
         agent_kind,
         interface_mode,
         initial_prompt,
+        Some(policy_snapshot),
         stop_session_ids.clone(),
     )?;
 
@@ -366,11 +375,22 @@ pub(super) async fn execute_structured_resume(
 ) -> Result<SendTaskAgentMessageResponse, ErrorEnvelope> {
     append_user_message(control_plane, plan.session_id, task_id, message).await?;
 
+    let policy_snapshot = crate::policy_snapshot::load_session_policy_snapshot(
+        control_plane.session_events(),
+        plan.session_id,
+    )
+    .await
+    .map_err(|err| {
+        ErrorEnvelope::new(ErrorCategory::Internal, "Failed to load session policy snapshot.")
+            .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
+    })?;
+
     let json_payload = payloads::resume_by_id_turn(
         plan.session_id,
         Some(task_id),
         message.to_string(),
         plan.external_session_ref,
+        Some(policy_snapshot),
         plan.interrupt_turn,
     )?;
 
@@ -428,12 +448,21 @@ pub(super) async fn execute_new_session_send(
     append_session_started(control_plane, session_id, task_id).await?;
     append_user_message(control_plane, session_id, task_id, message).await?;
 
+    let policy_snapshot =
+        crate::policy_snapshot::load_session_policy_snapshot(control_plane.session_events(), session_id)
+            .await
+            .map_err(|err| {
+                ErrorEnvelope::new(ErrorCategory::Internal, "Failed to load session policy snapshot.")
+                    .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
+            })?;
+
     let json_payload = payloads::start_task_session(
         session_id,
         task_id,
         agent_kind,
         interface_mode,
         Some(message.to_string()),
+        Some(policy_snapshot),
         plan.stop_session_ids.clone(),
     )?;
 

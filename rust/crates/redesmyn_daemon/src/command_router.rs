@@ -180,6 +180,7 @@ async fn handle_task_agent_start(
         agent_kind: cmd.agent_kind,
         interface_mode: cmd.interface_mode,
         initial_prompt: cmd.initial_prompt,
+        policy_snapshot: cmd.policy_snapshot,
         stop_session_ids: cmd.stop_session_ids,
     };
 
@@ -281,6 +282,22 @@ async fn handle_agent_start(
         return;
     }
 
+    if let Some(snapshot) = cmd.policy_snapshot.clone() {
+        if let Err(err) = router
+            .app_server
+            .hydrate_policies(cmd.session_id, snapshot)
+            .await
+        {
+            fail_command(
+                frames_tx,
+                dispatch,
+                ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()),
+            )
+            .await;
+            return;
+        }
+    }
+
     if let Some(prompt) = cmd.initial_prompt {
         let intent = AppServerTurnIntent::StartNew { prompt };
         if let Err(err) = router.app_server.send_message(cmd.session_id, intent).await {
@@ -352,6 +369,22 @@ async fn handle_session_agent_resume_by_id_turn(
     {
         fail_command(frames_tx, dispatch, ErrorEnvelope::new(ErrorCategory::Internal, err.to_string())).await;
         return;
+    }
+
+    if let Some(snapshot) = cmd.policy_snapshot.clone() {
+        if let Err(err) = router
+            .app_server
+            .hydrate_policies(cmd.session_id, snapshot)
+            .await
+        {
+            fail_command(
+                frames_tx,
+                dispatch,
+                ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()),
+            )
+            .await;
+            return;
+        }
     }
 
     if cmd.interrupt_turn {
