@@ -2789,11 +2789,17 @@ impl Render for SessionView {
                         .fade_height(theme.spacing.lg)
                         .bg(theme.colors.surface);
 
-                        container = container.child(StyledScrollbar::for_scroll_handle(
-                            ("session_item_ephemeral_reasoning_summary_scrollbar", ix),
-                            summary_scroll_handle.clone(),
-                            summary_scrollable,
-                        ));
+                        container = container.child(
+                            StyledScrollbar::for_scroll_handle(
+                                ("session_item_ephemeral_reasoning_summary_scrollbar", ix),
+                                summary_scroll_handle.clone(),
+                                summary_scrollable,
+                            )
+                            .style(ScrollbarStyle {
+                                inset: -theme.spacing.sm,
+                                ..ScrollbarStyle::default()
+                            }),
+                        );
 
 	                        if let Some(raw_text) = raw_text {
 	                            let (raw_scroll_handle, follow_raw_bottom) = {
@@ -2858,11 +2864,17 @@ impl Render for SessionView {
                             .fade_height(theme.spacing.lg)
                             .bg(theme.colors.surface);
 
-                            container = container.child(StyledScrollbar::for_scroll_handle(
-                                ("session_item_ephemeral_reasoning_raw_scrollbar", raw_id_key),
-                                raw_scroll_handle.clone(),
-                                raw_scrollable,
-                            ));
+                            container = container.child(
+                                StyledScrollbar::for_scroll_handle(
+                                    ("session_item_ephemeral_reasoning_raw_scrollbar", raw_id_key),
+                                    raw_scroll_handle.clone(),
+                                    raw_scrollable,
+                                )
+                                .style(ScrollbarStyle {
+                                    inset: -theme.spacing.sm,
+                                    ..ScrollbarStyle::default()
+                                }),
+                            );
                         }
                     }
 
@@ -3099,11 +3111,17 @@ impl Render for SessionView {
                                 .fade_height(theme.spacing.lg)
                                 .bg(theme.colors.surface);
 
-                                body = body.child(StyledScrollbar::for_scroll_handle(
-                                    (bubble_id.clone(), "reasoning_summary_scrollbar"),
-                                    summary_scroll_handle.clone(),
-                                    summary_scrollable,
-                                ));
+                                body = body.child(
+                                    StyledScrollbar::for_scroll_handle(
+                                        (bubble_id.clone(), "reasoning_summary_scrollbar"),
+                                        summary_scroll_handle.clone(),
+                                        summary_scrollable,
+                                    )
+                                    .style(ScrollbarStyle {
+                                        inset: -theme.spacing.sm,
+                                        ..ScrollbarStyle::default()
+                                    }),
+                                );
 
 	                                if let Some(raw) = reasoning.raw {
 	                                    let (raw_scroll_handle, follow_raw_bottom) = {
@@ -3172,11 +3190,17 @@ impl Render for SessionView {
                                     .fade_height(theme.spacing.lg)
                                     .bg(theme.colors.surface);
 
-                                    body = body.child(StyledScrollbar::for_scroll_handle(
-                                        (bubble_id.clone(), "reasoning_raw_scrollbar"),
-                                        raw_scroll_handle.clone(),
-                                        raw_scrollable,
-                                    ));
+                                    body = body.child(
+                                        StyledScrollbar::for_scroll_handle(
+                                            (bubble_id.clone(), "reasoning_raw_scrollbar"),
+                                            raw_scroll_handle.clone(),
+                                            raw_scrollable,
+                                        )
+                                        .style(ScrollbarStyle {
+                                            inset: -theme.spacing.sm,
+                                            ..ScrollbarStyle::default()
+                                        }),
+                                    );
                                 }
 
                                 let max_h = px(520.0) * progress;
@@ -3737,7 +3761,11 @@ impl Render for SessionView {
                                                 (bubble_id.clone(), "details_scrollbar"),
                                                 details_scroll_handle.clone(),
                                                 details_fade,
-                                            );
+                                            )
+                                            .style(ScrollbarStyle {
+                                                inset: -theme.spacing.sm,
+                                                ..ScrollbarStyle::default()
+                                            });
 
                                             let mut details =
                                                 Expandable::new(details).opacity(progress);
@@ -4015,7 +4043,11 @@ impl Render for SessionView {
                                                     (bubble_id.clone(), "details_scrollbar"),
                                                     details_scroll_handle.clone(),
                                                     details_fade,
-                                                );
+                                                )
+                                                .style(ScrollbarStyle {
+                                                    inset: -theme.spacing.sm,
+                                                    ..ScrollbarStyle::default()
+                                                });
 
                                                 let mut details =
                                                     Expandable::new(details).opacity(progress);
