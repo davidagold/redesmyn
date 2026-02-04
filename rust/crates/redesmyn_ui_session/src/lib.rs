@@ -35,7 +35,7 @@ use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 use redesmyn_session_view_model::{SessionEventItemContent, SessionFeedState, SessionTimelineItem};
 use redesmyn_ui::components::{
     ButtonKind, Callout, CalloutKind, Expandable, IconButton, MarkdownView, ScrollFade,
-    StyledScrollbar, TextArea, TextButton, TextInput, TextInputEvent,
+    ScrollbarStyle, StyledScrollbar, TextArea, TextButton, TextInput, TextInputEvent,
 };
 use redesmyn_ui::styles::ThemeMode;
 use redesmyn_ui::utils::{
@@ -4136,7 +4136,13 @@ impl Render for SessionView {
             ("session_timeline_scrollbar", entity_id),
             timeline_list_state,
             feed_list,
-        );
+        )
+        .style(ScrollbarStyle {
+            // Prefer placing the thumb in the "gutter" when the session timeline is embedded in a
+            // padded container (e.g. details panels).
+            inset: -theme.spacing.sm,
+            ..ScrollbarStyle::default()
+        });
 
         let mut composer_callout = None;
         if let Some(feed) = self.feed.as_ref() {
