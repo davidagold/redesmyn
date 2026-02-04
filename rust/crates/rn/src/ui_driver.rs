@@ -1101,8 +1101,20 @@ fn spawn_desktop_app(
         ));
     }
 
+    let repo_root = workspace_root.parent().ok_or_else(|| {
+        ErrorEnvelope::new(
+            ErrorCategory::InvalidRequest,
+            format!(
+                "Rust workspace root {} has no parent; cannot infer repo root for UI driver.",
+                workspace_root.display()
+            ),
+        )
+    })?;
+
     Command::new(bin_path)
-        .current_dir(workspace_root)
+        // The desktop app discovers epics relative to the repository root (e.g. `epics/`).
+        // `workspace_root` is the `rust/` directory, so use its parent.
+        .current_dir(repo_root)
         .env("REDESMYN_UI_DRIVER_SOCKET_PATH", socket_path)
         .env("REDESMYN_TEST_ARTIFACTS_DIR", artifacts_dir)
         .env("REDESMYN_UI_TEST_MODE", "1")
