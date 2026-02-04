@@ -1985,8 +1985,10 @@ impl Render for RootView {
             "Daemon: external (start: rn daemon run)".into()
         };
 
-        let settings_button =
-            IconButton::new(("chrome_settings", cx.entity_id()), div().child("⚙"))
+        let settings_button = IconButton::new(
+            ("chrome_settings", cx.entity_id()),
+            div().text_sm().child("⚙"),
+        )
                 .tooltip("Settings")
                 .on_click({
                     let root = root.clone();
@@ -1995,8 +1997,10 @@ impl Render for RootView {
                     }
                 });
 
-        let theme_toggle_button =
-            IconButton::new(("chrome_theme_toggle", cx.entity_id()), div().child("◐"))
+        let theme_toggle_button = IconButton::new(
+            ("chrome_theme_toggle", cx.entity_id()),
+            div().text_sm().child("◐"),
+        )
                 .tooltip("Toggle theme")
                 .on_click({
                     let root = root.clone();
@@ -2019,7 +2023,7 @@ impl Render for RootView {
         let connections_button =
             TextButton::new(("chrome_connections", cx.entity_id()), "Connections")
                 .kind(ButtonKind::Ghost)
-                .small()
+                .compact()
                 .trailing(
                     div()
                         .flex()
@@ -2052,6 +2056,7 @@ impl Render for RootView {
         let epic_button =
             TextButton::new(("chrome_epic_selector", cx.entity_id()), epic_button_label)
                 .kind(ButtonKind::Ghost)
+                .compact()
                 .disabled(epic_button_disabled)
                 .disabled_reason(epic_button_disabled_reason)
                 .trailing(div().child("▾"))
@@ -2072,7 +2077,7 @@ impl Render for RootView {
             .gap(theme.spacing.md)
             .bg(theme.colors.background)
             .border_b_1()
-            .border_color(theme.colors.border.opacity(0.6))
+            .border_color(theme.colors.ring.opacity(0.25))
             .child(
                 div()
                     .flex()
@@ -2082,7 +2087,7 @@ impl Render for RootView {
                     .child(
                         IconButton::new(
                             ("chrome_toggle_sessions", cx.entity_id()),
-                            div().child(toggle_icon),
+                            div().text_sm().child(toggle_icon),
                         )
                         .tooltip(toggle_tooltip)
                         .on_click({
