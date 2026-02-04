@@ -19,6 +19,12 @@ impl CascadingMenuMetrics {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CascadingMenuSecondarySide {
+    Left,
+    Right,
+}
+
 struct CascadingMenuSecondary {
     top: Pixels,
     element: AnyElement,
@@ -34,6 +40,7 @@ pub struct CascadingMenu {
     primary: AnyElement,
     secondary: Option<CascadingMenuSecondary>,
     metrics: CascadingMenuMetrics,
+    secondary_side: CascadingMenuSecondarySide,
 }
 
 impl CascadingMenu {
@@ -42,11 +49,17 @@ impl CascadingMenu {
             primary: primary.into_any_element(),
             secondary: None,
             metrics: CascadingMenuMetrics::filter_defaults(),
+            secondary_side: CascadingMenuSecondarySide::Right,
         }
     }
 
     pub fn metrics(mut self, metrics: CascadingMenuMetrics) -> Self {
         self.metrics = metrics;
+        self
+    }
+
+    pub fn secondary_side(mut self, secondary_side: CascadingMenuSecondarySide) -> Self {
+        self.secondary_side = secondary_side;
         self
     }
 
@@ -76,16 +89,24 @@ impl CascadingMenu {
 impl RenderOnce for CascadingMenu {
     fn render(self, _window: &mut Window, _cx: &mut gpui::App) -> impl IntoElement {
         let metrics = self.metrics;
+        let secondary_side = self.secondary_side;
 
         div()
             .relative()
             .child(div().w(metrics.primary_width).child(self.primary))
             .when_some(self.secondary, move |this, secondary| {
+                let left = match secondary_side {
+                    CascadingMenuSecondarySide::Right => metrics.primary_width - metrics.overlap,
+                    CascadingMenuSecondarySide::Left => {
+                        -(metrics.secondary_width - metrics.overlap)
+                    }
+                };
+
                 this.child(
                     div()
                         .absolute()
                         .top(secondary.top)
-                        .left(metrics.primary_width - metrics.overlap)
+                        .left(left)
                         .w(metrics.secondary_width)
                         .child(secondary.element),
                 )
