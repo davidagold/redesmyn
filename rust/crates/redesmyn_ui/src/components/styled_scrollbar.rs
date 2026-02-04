@@ -57,7 +57,7 @@ impl Default for ScrollbarStyle {
         Self {
             axis: ScrollbarAxis::Vertical,
             thickness: px(6.0),
-            inset: px(2.0),
+            inset: px(0.0),
             min_thumb_length: px(24.0),
             idle_delay: Duration::from_millis(700),
             fade_duration: Duration::from_millis(140),
