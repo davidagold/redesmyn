@@ -171,7 +171,7 @@ impl SettingsDialog {
         window: &mut Window,
         cx: &mut Context<RootView>,
     ) -> Option<AnyElement> {
-        let duration = ui_test_mode_animation_duration(Duration::from_millis(140));
+        let duration = ui_test_mode_animation_duration(Duration::from_millis(70));
         let opacity = self.transitions.opacity_for_render(
             SETTINGS_DIALOG_TRANSITION_KEY,
             visible,
@@ -270,13 +270,6 @@ impl SettingsDialog {
                 }
             });
 
-        let config_path_label: SharedString = self
-            .repo_config_path
-            .as_ref()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "config.toml".to_string())
-            .into();
-
         let mut header_right = div().flex().flex_row().items_center().gap(theme.spacing.sm);
 
         header_right = header_right.child(self.save_reset_buttons(root, window, cx));
@@ -306,7 +299,7 @@ impl SettingsDialog {
                         div()
                             .text_sm()
                             .text_color(theme.colors.foreground_muted)
-                            .child(format!("Updates `{}` (repo scope).", config_path_label)),
+                            .child("Updates `config.toml` (repo scope)."),
                     ),
             )
             .child(header_right);
@@ -413,37 +406,55 @@ impl SettingsDialog {
 
         let nav_item = |id: &'static str, label: &'static str, section: SettingsSection| {
             let selected = self.section == section;
-            let kind = if selected {
-                ButtonKind::Secondary
-            } else {
-                ButtonKind::Ghost
-            };
-
-            TextButton::new((id, cx.entity_id()), label)
-                .kind(kind)
-                .small()
-                .on_click({
-                    let root = root.clone();
-                    move |_, _, cx| {
-                        root.update(cx, |this, cx| {
-                            this.settings_dialog.section = section;
-                            cx.notify();
-                        });
-                    }
+            let mut row = div()
+                .id((id, cx.entity_id()))
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .px(theme.spacing.md)
+                .py(theme.spacing.sm)
+                .rounded(theme.radius.md)
+                .when(selected, |this| {
+                    this.bg(theme.colors.accent)
+                        .border_1()
+                        .border_color(theme.colors.ring)
                 })
+                .when(!selected, |this| {
+                    this.hover(|this| this.bg(theme.colors.surface_elevated.opacity(0.35)))
+                })
+                .cursor_pointer();
+
+            row = row.child(
+                div()
+                    .text_sm()
+                    .text_color(theme.colors.foreground)
+                    .child(label),
+            );
+
+            row.on_click({
+                let root = root.clone();
+                move |_, _, cx| {
+                    root.update(cx, |this, cx| {
+                        this.settings_dialog.section = section;
+                        cx.notify();
+                    });
+                }
+            })
         };
 
         div()
             .w(px(220.0))
-            .p(theme.spacing.lg)
+            .p(theme.spacing.md)
+            .bg(theme.colors.surface_elevated.opacity(0.15))
             .border_r_1()
             .border_color(theme.colors.border.opacity(0.6))
             .flex()
             .flex_col()
-            .gap(theme.spacing.sm)
+            .gap(theme.spacing.xs)
             .child(
                 div()
-                    .text_sm()
+                    .text_xs()
                     .text_color(theme.colors.foreground_muted)
                     .child("Sections"),
             )
@@ -508,21 +519,51 @@ impl SettingsDialog {
             .map(|ui| ui.theme_preference())
             .unwrap_or(ThemePreference::System);
 
-        let pref_button = |id: &'static str, label: &'static str, pref: ThemePreference| {
+        let theme_choices = [
+            ("theme_light", "Light", ThemePreference::Light),
+            ("theme_dark", "Dark", ThemePreference::Dark),
+            ("theme_system", "System", ThemePreference::System),
+        ];
+
+        let mut choices = div()
+            .flex()
+            .flex_row()
+            .rounded(theme.radius.md)
+            .border_1()
+            .border_color(theme.colors.border.opacity(0.6))
+            .overflow_hidden();
+
+        for (idx, (id, label, pref)) in theme_choices.into_iter().enumerate() {
             let selected = current == pref;
-            TextButton::new((id, cx.entity_id()), label)
-                .kind(if selected {
-                    ButtonKind::Secondary
-                } else {
-                    ButtonKind::Ghost
+            let mut cell = div()
+                .id((id, cx.entity_id()))
+                .px(theme.spacing.sm)
+                .py(theme.spacing.xs)
+                .text_xs()
+                .text_color(theme.colors.foreground)
+                .when(selected, |this| this.bg(theme.colors.accent))
+                .when(!selected, |this| {
+                    this.hover(|this| this.bg(theme.colors.surface_elevated.opacity(0.35)))
                 })
-                .on_click({
+                .cursor_pointer()
+                .child(label);
+
+                cell = cell.on_click({
                     let root = root.clone();
                     move |_, _, cx| {
                         root.update(cx, |this, cx| this.set_theme_preference(pref, cx));
                     }
-                })
-        };
+                });
+
+            if idx > 0 {
+                choices = choices.child(
+                    div()
+                        .border_l_1()
+                        .border_color(theme.colors.border.opacity(0.6)),
+                );
+            }
+            choices = choices.child(cell);
+        }
 
         div()
             .flex()
@@ -536,23 +577,11 @@ impl SettingsDialog {
             )
             .child(
                 div()
-                    .text_sm()
+                    .text_xs()
                     .text_color(theme.colors.foreground_muted)
                     .child("Theme preference"),
             )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap(theme.spacing.xs)
-                    .child(pref_button("theme_light", "Light", ThemePreference::Light))
-                    .child(pref_button("theme_dark", "Dark", ThemePreference::Dark))
-                    .child(pref_button(
-                        "theme_system",
-                        "System",
-                        ThemePreference::System,
-                    )),
-            )
+            .child(choices)
             .into_any_element()
     }
 
@@ -1035,32 +1064,59 @@ impl SettingsDialog {
         cx: &mut Context<RootView>,
     ) -> AnyElement {
         let theme = theme_for_window(window, cx);
-        let selected_true = current;
-        let selected_false = !current;
 
-        let button = |id: &'static str, label: &'static str, next: bool, selected: bool| {
-            TextButton::new((id, cx.entity_id()), label)
-                .kind(if selected {
-                    ButtonKind::Secondary
-                } else {
-                    ButtonKind::Ghost
-                })
-                .small()
-                .on_click({
-                    let root = root.clone();
-                    move |_, _, cx| {
-                        root.update(cx, |this, cx| {
-                            apply(&mut this.settings_dialog.draft, next);
-                            if !this.settings_dialog.draft.harness.send_prelude {
-                                this.settings_dialog.draft.harness.submit_prelude = false;
-                            }
-                            this.settings_dialog.notice = None;
-                            this.settings_dialog.save.clear_error();
-                            cx.notify();
-                        });
-                    }
-                })
-        };
+        let segments = [
+            ("seg_true", true_label, true, current),
+            ("seg_false", false_label, false, !current),
+        ];
+
+        let mut group = div()
+            .flex()
+            .flex_row()
+            .rounded(theme.radius.md)
+            .border_1()
+            .border_color(theme.colors.border.opacity(0.6))
+            .overflow_hidden();
+
+        for (idx, (suffix, segment_label, next, selected)) in segments.into_iter().enumerate() {
+            let mut cell = div()
+                    .id((gpui::ElementId::from((label, cx.entity_id())), suffix))
+                    .px(theme.spacing.sm)
+                    .py(theme.spacing.xs)
+                    .text_xs()
+                    .text_color(theme.colors.foreground)
+                    .when(selected, |this| this.bg(theme.colors.accent))
+                    .when(!selected, |this| {
+                        this.hover(|this| this.bg(theme.colors.surface_elevated.opacity(0.35)))
+                    })
+                    .cursor_pointer()
+                    .child(segment_label);
+
+            cell = cell.on_click({
+                let root = root.clone();
+                move |_, _, cx| {
+                    root.update(cx, |this, cx| {
+                        apply(&mut this.settings_dialog.draft, next);
+                        if !this.settings_dialog.draft.harness.send_prelude {
+                            this.settings_dialog.draft.harness.submit_prelude = false;
+                        }
+                        this.settings_dialog.notice = None;
+                        this.settings_dialog.save.clear_error();
+                        cx.notify();
+                    });
+                }
+            });
+
+            if idx > 0 {
+                group = group.child(
+                    div()
+                        .border_l_1()
+                        .border_color(theme.colors.border.opacity(0.6)),
+                );
+            }
+
+            group = group.child(cell);
+        }
 
         div()
             .flex()
@@ -1068,17 +1124,18 @@ impl SettingsDialog {
             .gap(theme.spacing.xs)
             .child(
                 div()
-                    .text_sm()
-                    .text_color(theme.colors.foreground_muted)
-                    .child(label),
-            )
-            .child(
-                div()
                     .flex()
                     .flex_row()
-                    .gap(theme.spacing.xs)
-                    .child(button("seg_true", true_label, true, selected_true))
-                    .child(button("seg_false", false_label, false, selected_false)),
+                    .items_center()
+                    .justify_between()
+                    .gap(theme.spacing.md)
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.colors.foreground_muted)
+                            .child(label),
+                    )
+                    .child(group),
             )
             .child(
                 div()
@@ -1101,35 +1158,59 @@ impl SettingsDialog {
         cx: &mut Context<RootView>,
     ) -> AnyElement {
         let theme = theme_for_window(window, cx);
-        let kind = if enabled {
-            ButtonKind::Secondary
-        } else {
-            ButtonKind::Ghost
-        };
 
-        let mut toggle = TextButton::new((id, cx.entity_id()), if enabled { "On" } else { "Off" })
-            .kind(kind)
-            .small()
-            .disabled(disabled);
+        let segments = [("off", false, "Off"), ("on", true, "On")];
 
-        if disabled {
-            toggle = toggle.disabled_reason("Disabled");
-        }
+        let mut group = div()
+            .flex()
+            .flex_row()
+            .rounded(theme.radius.md)
+            .border_1()
+            .border_color(theme.colors.border.opacity(0.6))
+            .overflow_hidden();
 
-        let toggle = toggle.on_click({
-            let root = root.clone();
-            move |_, _, cx| {
-                root.update(cx, |this, cx| {
-                    apply(&mut this.settings_dialog.draft, !enabled);
-                    if !this.settings_dialog.draft.harness.send_prelude {
-                        this.settings_dialog.draft.harness.submit_prelude = false;
+        for (idx, (suffix, value, segment_label)) in segments.into_iter().enumerate() {
+            let selected = enabled == value;
+            let mut cell = div()
+                .id((gpui::ElementId::from((id, cx.entity_id())), suffix))
+                .px(theme.spacing.sm)
+                .py(theme.spacing.xs)
+                .text_xs()
+                .text_color(theme.colors.foreground)
+                .when(selected, |this| this.bg(theme.colors.accent))
+                .when(!selected, |this| {
+                    this.hover(|this| this.bg(theme.colors.surface_elevated.opacity(0.35)))
+                })
+                .when(disabled, |this| this.opacity(0.55).cursor_not_allowed())
+                .when(!disabled, |this| this.cursor_pointer())
+                .child(segment_label);
+
+            if !disabled {
+                cell = cell.on_click({
+                    let root = root.clone();
+                    move |_, _, cx| {
+                        root.update(cx, |this, cx| {
+                            apply(&mut this.settings_dialog.draft, value);
+                            if !this.settings_dialog.draft.harness.send_prelude {
+                                this.settings_dialog.draft.harness.submit_prelude = false;
+                            }
+                            this.settings_dialog.notice = None;
+                            this.settings_dialog.save.clear_error();
+                            cx.notify();
+                        });
                     }
-                    this.settings_dialog.notice = None;
-                    this.settings_dialog.save.clear_error();
-                    cx.notify();
                 });
             }
-        });
+
+            if idx > 0 {
+                group = group.child(
+                    div()
+                        .border_l_1()
+                        .border_color(theme.colors.border.opacity(0.6)),
+                );
+            }
+            group = group.child(cell);
+        }
 
         div()
             .flex()
@@ -1139,7 +1220,7 @@ impl SettingsDialog {
             .gap(theme.spacing.md)
             .child(
                 div()
-                    .text_sm()
+                    .text_xs()
                     .text_color(if disabled {
                         theme.colors.foreground_muted
                     } else {
@@ -1147,7 +1228,7 @@ impl SettingsDialog {
                     })
                     .child(label),
             )
-            .child(toggle)
+            .child(group)
             .into_any_element()
     }
 
