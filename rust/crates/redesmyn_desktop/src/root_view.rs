@@ -25,7 +25,7 @@ use redesmyn_ui::UiContext;
 use redesmyn_ui::components::{
     ButtonKind, Callout, CalloutKind, CascadingMenu, CascadingMenuMetrics, IconButton,
     OverlaySurfaceKind, ProgressPill, ScrollArea, SplitPane, SplitPaneAxis, SplitPaneEvent,
-    SplitPaneState, TextButton, TextInput, TextInputEvent, Tooltip, overlay_surface,
+    SplitPaneState, TextButton, TextInput, TextInputEvent, overlay_surface,
 };
 use redesmyn_ui::settings::ThemePreference;
 use redesmyn_ui::task_filters::{
@@ -1985,17 +1985,6 @@ impl Render for RootView {
             "Daemon: external (start: rn daemon run)".into()
         };
 
-        let refresh_button = IconButton::new(("chrome_refresh", cx.entity_id()), div().child("↻"))
-            .tooltip("Refresh")
-            .disabled(self.chrome.refresh.in_flight)
-            .disabled_reason("Refreshing…")
-            .on_click({
-                let root = root.clone();
-                move |_, _, cx| {
-                    root.update(cx, |this, cx| this.start_refresh(RefreshReason::Manual, cx));
-                }
-            });
-
         let settings_button =
             IconButton::new(("chrome_settings", cx.entity_id()), div().child("⚙"))
                 .tooltip("Settings")
@@ -2021,43 +2010,44 @@ impl Render for RootView {
                     }
                 });
 
-        let status_chip = |id: &'static str,
-                           dot_color: gpui::Hsla,
-                           label: &'static str,
-                           tooltip: SharedString| {
-            overlay_surface(&theme, OverlaySurfaceKind::Chrome, theme.radius.md)
-                .id((id, cx.entity_id()))
-                .px(theme.spacing.sm)
-                .py(theme.spacing.xs)
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(theme.spacing.xs)
-                .text_sm()
-                .text_color(theme.colors.foreground_muted)
-                .child(div().size(px(6.0)).rounded(px(999.0)).bg(dot_color))
-                .child(label)
-                .tooltip(move |_, cx| cx.new(|_| Tooltip::new(tooltip.clone())).into())
-        };
-
-        let control_plane_chip = status_chip(
-            "chrome_control_plane_chip",
-            status_dot_color,
-            "Control plane",
-            control_plane_label.into(),
-        );
-
         let daemon_chip_dot_color = if model.config.desktop.embed_daemon {
             theme.colors.ring
         } else {
             theme.colors.border.opacity(0.7)
         };
-        let daemon_chip = status_chip(
-            "chrome_daemon_chip",
-            daemon_chip_dot_color,
-            "Daemon",
-            daemon_label.clone(),
-        );
+
+        let connections_button =
+            TextButton::new(("chrome_connections", cx.entity_id()), "Connections")
+                .kind(ButtonKind::Ghost)
+                .small()
+                .trailing(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(theme.spacing.xs)
+                        .child(
+                            div()
+                                .size(px(6.0))
+                                .rounded(px(999.0))
+                                .bg(status_dot_color),
+                        )
+                        .child(
+                            div()
+                                .size(px(6.0))
+                                .rounded(px(999.0))
+                                .bg(daemon_chip_dot_color),
+                        )
+                        .child("▾"),
+                )
+                .on_click({
+                    let root = root.clone();
+                    move |_, _, cx| {
+                        root.update(cx, |this, cx| {
+                            this.toggle_panel(ChromePanel::ConnectionsMenu, cx)
+                        });
+                    }
+                });
 
         let epic_button =
             TextButton::new(("chrome_epic_selector", cx.entity_id()), epic_button_label)
@@ -2080,7 +2070,7 @@ impl Render for RootView {
             .items_center()
             .justify_between()
             .gap(theme.spacing.md)
-            .bg(theme.colors.surface)
+            .bg(theme.colors.background)
             .border_b_1()
             .border_color(theme.colors.border.opacity(0.6))
             .child(
@@ -2118,19 +2108,10 @@ impl Render for RootView {
                     .flex_row()
                     .items_center()
                     .gap(theme.spacing.sm)
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(theme.spacing.xs)
-                            .child(control_plane_chip)
-                            .child(daemon_chip),
-                    )
+                    .child(connections_button)
                     .when(self.chrome.refresh.in_flight, |this| {
                         this.child(ProgressPill::new("Refreshing"))
                     })
-                    .child(refresh_button)
                     .child(theme_toggle_button)
                     .child(settings_button),
             );
@@ -2178,6 +2159,96 @@ impl Render for RootView {
                 ),
             );
         }
+
+        let connections_menu_overlay =
+            if matches!(self.chrome.panel, Some(ChromePanel::ConnectionsMenu)) {
+                let daemon_chip_dot_color = daemon_chip_dot_color;
+                let menu_body = div()
+                    .flex()
+                    .flex_col()
+                    .gap(theme.spacing.sm)
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.colors.foreground)
+                            .child("Connections"),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(theme.spacing.xs)
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap(theme.spacing.xs)
+                                    .child(
+                                        div()
+                                            .size(px(6.0))
+                                            .rounded(px(999.0))
+                                            .bg(status_dot_color),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(theme.colors.foreground)
+                                            .child(control_plane_label),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap(theme.spacing.xs)
+                                    .child(
+                                        div()
+                                            .size(px(6.0))
+                                            .rounded(px(999.0))
+                                            .bg(daemon_chip_dot_color),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(theme.colors.foreground)
+                                            .child(daemon_label.clone()),
+                                    ),
+                            ),
+                    );
+
+                let menu = overlay_surface(&theme, OverlaySurfaceKind::Menu, theme.radius.md)
+                    .shadow_md()
+                    .occlude()
+                    .p(theme.spacing.md)
+                    .child(menu_body);
+
+                Some(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .child(div().absolute().inset_0().occlude().on_mouse_down(
+                            gpui::MouseButton::Left,
+                            {
+                                let root = root.clone();
+                                move |_, _, cx| {
+                                    root.update(cx, |this, cx| this.close_panel(cx));
+                                    cx.stop_propagation();
+                                }
+                            },
+                        ))
+                        .child(
+                            div()
+                                .absolute()
+                                .top(px(44.0) + theme.spacing.xs)
+                                .right(theme.spacing.md)
+                                .child(div().w(px(360.0)).child(menu)),
+                        ),
+                )
+            } else {
+                None
+            };
 
         let epic_menu_overlay = if matches!(self.chrome.panel, Some(ChromePanel::EpicMenu)) {
             let mut menu_body = div().flex().flex_col().gap(theme.spacing.sm).child(
@@ -2393,6 +2464,10 @@ impl Render for RootView {
 
         if let Some(epic_menu_overlay) = epic_menu_overlay {
             root_container = root_container.child(epic_menu_overlay);
+        }
+
+        if let Some(connections_menu_overlay) = connections_menu_overlay {
+            root_container = root_container.child(connections_menu_overlay);
         }
 
         if self.command_palette.is_open() {
@@ -3229,7 +3304,9 @@ impl Render for EpicSessionPaneHost {
             .flex()
             .items_center()
             .justify_between()
-            .bg(theme.colors.surface_elevated)
+            .bg(theme.colors.background)
+            .border_b_1()
+            .border_color(theme.colors.ring.opacity(0.25))
             .child(
                 div().flex().min_w_0().child(
                     div()
@@ -5339,6 +5416,7 @@ enum RefreshReason {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ChromePanel {
     EpicMenu,
+    ConnectionsMenu,
     Settings,
 }
 
