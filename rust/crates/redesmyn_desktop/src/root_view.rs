@@ -26,10 +26,10 @@ use redesmyn_ui_session::SessionView;
 use redesmyn_ui::UiContext;
 use redesmyn_ui::components::{
     ButtonKind, Callout, CalloutKind, CascadingMenu, CascadingMenuId, CascadingMenuMetrics,
-    CascadingMenuRowStyle, CascadingMenuSecondarySide, CloseCascadingMenus, IconButton,
-    OverlaySurfaceKind, ProgressPill, ScrollArea, SplitPane, SplitPaneAxis, SplitPaneEvent,
-    SplitPaneResizeMode, SplitPaneState, TextButton, TextInput, TextInputEvent, Tooltip,
-    cascading_menu_row, overlay_surface,
+    CascadingMenuRowStyle, CascadingMenuSecondarySide, CascadingMenuSurfaceStyle,
+    CloseCascadingMenus, IconButton, OverlaySurfaceKind, ProgressPill, ScrollArea, SplitPane,
+    SplitPaneAxis, SplitPaneEvent, SplitPaneResizeMode, SplitPaneState, TextButton, TextInput,
+    TextInputEvent, Tooltip, cascading_menu_row, cascading_menu_surface, overlay_surface,
 };
 use redesmyn_ui::settings::ThemePreference;
 use redesmyn_ui::task_filters::{
@@ -402,17 +402,16 @@ impl RootView {
 
     fn close_all_cascading_menus(&mut self, cx: &mut Context<Self>) {
         self.workspace_pane.update(cx, |pane, cx| {
-            if !pane.task_filters_open {
-                return;
+            if pane.task_filters_open {
+                pane.set_task_filters_open(
+                    false,
+                    pane.task_filters_active_category,
+                    None,
+                    TaskFiltersInputSource::Mouse,
+                    cx,
+                );
             }
-
-            pane.set_task_filters_open(
-                false,
-                pane.task_filters_active_category,
-                None,
-                TaskFiltersInputSource::Mouse,
-                cx,
-            );
+            pane.task_filters_menu_opacity.remove(&"task_filters_menu");
         });
 
         self.session_pane.update(cx, |pane, cx| {
@@ -431,17 +430,16 @@ impl RootView {
     ) {
         if action.keep_menu != CascadingMenuId::TaskFilters {
             self.workspace_pane.update(cx, |pane, cx| {
-                if !pane.task_filters_open {
-                    return;
+                if pane.task_filters_open {
+                    pane.set_task_filters_open(
+                        false,
+                        pane.task_filters_active_category,
+                        None,
+                        TaskFiltersInputSource::Mouse,
+                        cx,
+                    );
                 }
-
-                pane.set_task_filters_open(
-                    false,
-                    pane.task_filters_active_category,
-                    None,
-                    TaskFiltersInputSource::Mouse,
-                    cx,
-                );
+                pane.task_filters_menu_opacity.remove(&"task_filters_menu");
             });
         }
 
@@ -5168,6 +5166,7 @@ impl Render for WorkspacePaneHost {
 
                 if menu_opacity > 1e-3 {
                     let row_style = CascadingMenuRowStyle::compact(&theme);
+                    let surface_style = CascadingMenuSurfaceStyle::compact(&theme);
                     let value_row_style = CascadingMenuRowStyle {
                         gap: theme.spacing.sm,
                         ..row_style
@@ -5349,28 +5348,19 @@ impl Render for WorkspacePaneHost {
                                 .child("Close"),
                         );
 
-                    let primary_menu =
-                        overlay_surface(&theme, OverlaySurfaceKind::Menu, theme.radius.lg)
-                            .w(primary_menu_width)
-                            .pt(theme.spacing.sm)
-                            .pb(theme.spacing.md)
-                            .shadow_md()
-                            .occlude()
-                            .child(
-                                div()
-                                    .h(menu_search_height)
-                                    .flex()
-                                    .items_center()
-                                    .w_full()
-                                    .child(self.task_filters_search_input.clone()),
-                            )
-                            .child(
-                                div()
-                                    .px(theme.spacing.sm)
-                                    .pt(theme.spacing.sm)
-                                    .child(category_list),
-                            )
-                            .child(div().px(theme.spacing.sm).child(actions_row));
+                    let primary_menu = cascading_menu_surface(&theme, surface_style)
+                        .w(primary_menu_width)
+                        .child(
+                            div()
+                                .h(menu_search_height)
+                                .flex()
+                                .items_center()
+                                .w_full()
+                                .px(row_style.padding_x)
+                                .child(self.task_filters_search_input.clone()),
+                        )
+                        .child(div().pt(surface_style.padding_y).child(category_list))
+                        .child(div().px(row_style.padding_x).child(actions_row));
 
                     let submenu_state = self.task_filters_hovered_category.and_then(|category| {
                         let row_index = visible_categories
@@ -5727,13 +5717,8 @@ impl Render for WorkspacePaneHost {
 
                         let values_body = div().flex().flex_col().child(value_list);
 
-                        overlay_surface(&theme, OverlaySurfaceKind::Menu, theme.radius.lg)
+                        cascading_menu_surface(&theme, surface_style)
                             .w(submenu_width)
-                            .pt(theme.spacing.sm)
-                            .pb(theme.spacing.sm)
-                            .px(theme.spacing.sm)
-                            .shadow_md()
-                            .occlude()
                             .child(values_body)
                     });
 

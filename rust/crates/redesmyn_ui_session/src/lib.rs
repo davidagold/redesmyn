@@ -41,9 +41,9 @@ use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 use redesmyn_session_view_model::{SessionEventItemContent, SessionFeedState, SessionTimelineItem};
 use redesmyn_ui::components::{
     ButtonKind, Callout, CalloutKind, CascadingMenu, CascadingMenuId, CascadingMenuMetrics,
-    CascadingMenuRowStyle, CloseCascadingMenus, Expandable, IconButton, MarkdownView,
-    OverlaySurfaceKind, ScrollFade, ScrollbarStyle, StyledScrollbar, TextArea, TextButton,
-    TextInput, TextInputEvent, cascading_menu_row, cascading_menu_row_value, overlay_surface,
+    CascadingMenuRowStyle, CascadingMenuSurfaceStyle, CloseCascadingMenus, Expandable, IconButton,
+    MarkdownView, ScrollFade, ScrollbarStyle, StyledScrollbar, TextArea, TextButton, TextInput,
+    TextInputEvent, cascading_menu_row, cascading_menu_row_value, cascading_menu_surface,
 };
 use redesmyn_ui::styles::ThemeMode;
 use redesmyn_ui::utils::{
@@ -6017,6 +6017,7 @@ impl Render for SessionView {
 
         let settings_menu = if self.session_settings_open && !settings_disabled {
             let row_style = CascadingMenuRowStyle::compact(&theme);
+            let surface_style = CascadingMenuSurfaceStyle::compact(&theme);
             let primary_row_style = CascadingMenuRowStyle {
                 gap: theme.spacing.sm,
                 ..row_style
@@ -6025,8 +6026,7 @@ impl Render for SessionView {
             let primary_width = px(220.0);
             let secondary_width = px(240.0);
             let overlap = px(6.0);
-            let padding_y = theme.spacing.xs;
-            let padding_x = theme.spacing.xs;
+            let padding_y = surface_style.padding_y;
             let row_height = row_style.height;
             let row_gap = theme.spacing.xs;
 
@@ -6086,13 +6086,8 @@ impl Render for SessionView {
                 primary_list = primary_list.child(row);
             }
 
-            let primary_menu = overlay_surface(&theme, OverlaySurfaceKind::Menu, theme.radius.lg)
+            let primary_menu = cascading_menu_surface(&theme, surface_style)
                 .w(primary_width)
-                .pt(padding_y)
-                .pb(padding_y)
-                .px(padding_x)
-                .shadow_md()
-                .occlude()
                 .child(primary_list);
 
             let approval_options = &SESSION_SETTINGS_APPROVAL_OPTIONS;
@@ -6180,13 +6175,8 @@ impl Render for SessionView {
                     }
 
                     Some(
-                        overlay_surface(&theme, OverlaySurfaceKind::Menu, theme.radius.lg)
+                        cascading_menu_surface(&theme, surface_style)
                             .w(secondary_width)
-                            .pt(padding_y)
-                            .pb(padding_y)
-                            .px(padding_x)
-                            .shadow_md()
-                            .occlude()
                             .child(list)
                             .into_any_element(),
                     )
@@ -6259,13 +6249,8 @@ impl Render for SessionView {
                     }
 
                     Some(
-                        overlay_surface(&theme, OverlaySurfaceKind::Menu, theme.radius.lg)
+                        cascading_menu_surface(&theme, surface_style)
                             .w(secondary_width)
-                            .pt(padding_y)
-                            .pb(padding_y)
-                            .px(padding_x)
-                            .shadow_md()
-                            .occlude()
                             .child(list)
                             .into_any_element(),
                     )

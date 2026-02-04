@@ -1,6 +1,7 @@
 use gpui::{Action, AnyElement, Div, Pixels, RenderOnce, Window, div, prelude::*, px};
 
 use crate::styles::UiTheme;
+use super::overlay_surface::{OverlaySurfaceKind, overlay_surface};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CascadingMenuId {
@@ -34,6 +35,23 @@ impl CascadingMenuRowStyle {
             gap: theme.spacing.xs,
             radius: theme.radius.sm,
             hover_bg_alpha: 0.08,
+        }
+    }
+}
+
+/// Visual styling defaults for cascading menu surfaces.
+#[derive(Debug, Clone, Copy)]
+pub struct CascadingMenuSurfaceStyle {
+    pub padding_x: Pixels,
+    pub padding_y: Pixels,
+}
+
+impl CascadingMenuSurfaceStyle {
+    #[must_use]
+    pub fn compact(theme: &UiTheme) -> Self {
+        Self {
+            padding_x: theme.spacing.xs,
+            padding_y: theme.spacing.xs,
         }
     }
 }
@@ -78,6 +96,17 @@ pub fn cascading_menu_row_value(theme: &UiTheme, value: impl IntoElement) -> Div
         .text_color(theme.colors.foreground_muted)
         .truncate()
         .child(value)
+}
+
+/// Standardized surface wrapper for cascading menus.
+#[must_use]
+pub fn cascading_menu_surface(theme: &UiTheme, style: CascadingMenuSurfaceStyle) -> Div {
+    overlay_surface(theme, OverlaySurfaceKind::Menu, theme.radius.lg)
+        .pt(style.padding_y)
+        .pb(style.padding_y)
+        .px(style.padding_x)
+        .shadow_md()
+        .occlude()
 }
 
 /// Layout metrics for a two-level cascading menu (primary + optional secondary menu).
