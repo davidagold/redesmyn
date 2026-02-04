@@ -1,8 +1,9 @@
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AnyElement, App, Bounds, Corners, Element, ElementId, GlobalElementId, InspectorElementId,
-    LayoutId, ListState, Pixels, Point, ScrollHandle, Size, Window, fill, px, size,
+    AnyElement, App, Bounds, Corners, DispatchPhase, Element, ElementId, EntityId, GlobalElementId,
+    Hitbox, HitboxBehavior, InspectorElementId, LayoutId, ListState, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, Size, Window, fill, px, size,
 };
 
 use crate::utils::{TransitionMap, theme_for_window};
@@ -40,6 +41,25 @@ impl ScrollbarTarget {
             Self::ListState(state) => state.max_offset_for_scrollbar(),
         }
     }
+
+    fn set_offset_from_scrollbar(&self, point: Point<Pixels>) {
+        match self {
+            Self::ScrollHandle(handle) => handle.set_offset(point),
+            Self::ListState(state) => state.set_offset_from_scrollbar(point),
+        }
+    }
+
+    fn scrollbar_drag_started(&self) {
+        if let Self::ListState(state) = self {
+            state.scrollbar_drag_started();
+        }
+    }
+
+    fn scrollbar_drag_ended(&self) {
+        if let Self::ListState(state) = self {
+            state.scrollbar_drag_ended();
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -72,6 +92,17 @@ impl Default for ScrollbarStyle {
 struct ThumbGeometry {
     offset: Pixels,
     length: Pixels,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ScrollbarGeometry {
+    viewport: Bounds<Pixels>,
+    max_offset: Pixels,
+    scroll_pos: Pixels,
+    thumb: ThumbGeometry,
+    thickness: Pixels,
+    thumb_bounds: Bounds<Pixels>,
+    gutter_hitbox_bounds: Bounds<Pixels>,
 }
 
 fn clamp_scroll_axis(offset: Pixels, max_offset: Pixels) -> Pixels {
@@ -108,6 +139,73 @@ fn compute_thumb(
     })
 }
 
+fn compute_geometry(target: &ScrollbarTarget, style: ScrollbarStyle) -> Option<ScrollbarGeometry> {
+    let viewport = target.bounds();
+    if viewport.size.width <= px(1.0) || viewport.size.height <= px(1.0) {
+        return None;
+    }
+
+    let (max_offset, raw_offset) = match style.axis {
+        ScrollbarAxis::Vertical => (target.max_offset().height, target.offset().y),
+        ScrollbarAxis::Horizontal => (target.max_offset().width, target.offset().x),
+    };
+
+    let viewport_len = match style.axis {
+        ScrollbarAxis::Vertical => viewport.size.height,
+        ScrollbarAxis::Horizontal => viewport.size.width,
+    };
+
+    let scroll_pos = clamp_scroll_axis(raw_offset, max_offset);
+    let thumb = compute_thumb(viewport_len, max_offset, scroll_pos, style.min_thumb_length)?;
+
+    let thickness = style.thickness.min(match style.axis {
+        ScrollbarAxis::Vertical => viewport.size.width,
+        ScrollbarAxis::Horizontal => viewport.size.height,
+    });
+
+    let gutter_hitbox_thickness = (thickness + px(10.0)).max(px(18.0));
+    let inset = style.inset;
+
+    let (thumb_bounds, gutter_hitbox_bounds) = match style.axis {
+        ScrollbarAxis::Vertical => {
+            let right = viewport.origin.x + viewport.size.width - inset;
+            let thumb_x = right - thickness;
+            let thumb_bounds = Bounds::new(
+                gpui::point(thumb_x, viewport.origin.y + thumb.offset),
+                size(thickness, thumb.length),
+            );
+            let gutter_hitbox_bounds = Bounds::new(
+                gpui::point(right - gutter_hitbox_thickness, viewport.origin.y),
+                size(gutter_hitbox_thickness, viewport.size.height),
+            );
+            (thumb_bounds, gutter_hitbox_bounds)
+        }
+        ScrollbarAxis::Horizontal => {
+            let bottom = viewport.origin.y + viewport.size.height - inset;
+            let thumb_y = bottom - thickness;
+            let thumb_bounds = Bounds::new(
+                gpui::point(viewport.origin.x + thumb.offset, thumb_y),
+                size(thumb.length, thickness),
+            );
+            let gutter_hitbox_bounds = Bounds::new(
+                gpui::point(viewport.origin.x, bottom - gutter_hitbox_thickness),
+                size(viewport.size.width, gutter_hitbox_thickness),
+            );
+            (thumb_bounds, gutter_hitbox_bounds)
+        }
+    };
+
+    Some(ScrollbarGeometry {
+        viewport,
+        max_offset,
+        scroll_pos,
+        thumb,
+        thickness,
+        thumb_bounds,
+        gutter_hitbox_bounds,
+    })
+}
+
 #[derive(Debug)]
 struct StyledScrollbarState {
     last_scroll_pos: Pixels,
@@ -127,8 +225,8 @@ impl Default for StyledScrollbarState {
 
 /// Paints a minimal, overlay scrollbar thumb for a scrollable element.
 ///
-/// This wrapper is *paint-only*: it does not add overlay elements, so pointer/wheel hit-testing is
-/// unaffected.
+/// This wrapper inserts a narrow hitbox near the scroll thumb so we can reveal the scrollbar on
+/// hover and support dragging.
 pub struct StyledScrollbar {
     id: ElementId,
     target: ScrollbarTarget,
@@ -194,7 +292,7 @@ impl gpui::IntoElement for StyledScrollbar {
 
 impl Element for StyledScrollbar {
     type RequestLayoutState = ();
-    type PrepaintState = ();
+    type PrepaintState = Option<Hitbox>;
 
     fn id(&self) -> Option<ElementId> {
         Some(self.id.clone())
@@ -222,8 +320,11 @@ impl Element for StyledScrollbar {
         _state: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
-    ) {
+    ) -> Self::PrepaintState {
         self.child.prepaint(window, cx);
+
+        compute_geometry(&self.target, self.style)
+            .map(|geometry| window.insert_hitbox(geometry.gutter_hitbox_bounds, HitboxBehavior::Normal))
     }
 
     fn paint(
@@ -232,34 +333,33 @@ impl Element for StyledScrollbar {
         _inspector_id: Option<&InspectorElementId>,
         _bounds: Bounds<Pixels>,
         _layout_state: &mut Self::RequestLayoutState,
-        _prepaint_state: &mut Self::PrepaintState,
+        prepaint_state: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
         self.child.paint(window, cx);
 
-        let target = &self.target;
+        let target = self.target.clone();
         let style = self.style;
-        let viewport = target.bounds();
-
-        if viewport.size.width <= px(1.0) || viewport.size.height <= px(1.0) {
+        let Some(geometry) = compute_geometry(&target, style) else {
             return;
-        }
-
-        let (max_offset, raw_offset) = match style.axis {
-            ScrollbarAxis::Vertical => (target.max_offset().height, target.offset().y),
-            ScrollbarAxis::Horizontal => (target.max_offset().width, target.offset().x),
         };
 
-        let viewport_len = match style.axis {
-            ScrollbarAxis::Vertical => viewport.size.height,
-            ScrollbarAxis::Horizontal => viewport.size.width,
-        };
+        let hovered = prepaint_state
+            .as_ref()
+            .is_some_and(|hitbox| hitbox.is_hovered(window));
 
-        let scroll_pos = clamp_scroll_axis(raw_offset, max_offset);
-        let Some(thumb) = compute_thumb(viewport_len, max_offset, scroll_pos, style.min_thumb_length)
-        else {
-            return;
+        let current_view = window.current_view();
+        let drag_key = ScrollbarDragKey {
+            view_id: current_view,
+            element_id: self.id.clone(),
+        };
+        let is_dragging = {
+            let global = cx.default_global::<ScrollbarDragGlobal>();
+            global
+                .active
+                .as_ref()
+                .is_some_and(|drag| drag.key == drag_key)
         };
 
         window.with_element_state::<StyledScrollbarState, _>(
@@ -267,19 +367,20 @@ impl Element for StyledScrollbar {
             |state, window| {
                 let mut state = state.unwrap_or_default();
 
-                let scroll_changed = (scroll_pos - state.last_scroll_pos).abs() > px(0.5);
+                let scroll_changed = (geometry.scroll_pos - state.last_scroll_pos).abs() > px(0.5);
                 if scroll_changed {
-                    state.last_scroll_pos = scroll_pos;
+                    state.last_scroll_pos = geometry.scroll_pos;
                     state.last_interaction_at = Some(Instant::now());
                 }
 
                 let now = Instant::now();
-                let visible = state
+                let within_idle_window = state
                     .last_interaction_at
                     .is_some_and(|at| now.duration_since(at) <= style.idle_delay);
+                let visible = hovered || is_dragging || within_idle_window;
 
                 // Keep ticking while we’re within the idle window so the fade-out can start promptly.
-                if visible && !scroll_changed {
+                if within_idle_window && !scroll_changed {
                     window.request_animation_frame();
                 }
 
@@ -297,30 +398,9 @@ impl Element for StyledScrollbar {
                         theme.colors.foreground_muted.opacity(factor)
                     });
 
-                    let thickness = style.thickness.min(match style.axis {
-                        ScrollbarAxis::Vertical => viewport.size.width,
-                        ScrollbarAxis::Horizontal => viewport.size.height,
-                    });
+                    let thumb_bounds = geometry.thumb_bounds;
 
-                    let inset = style.inset;
-                    let thumb_bounds = match style.axis {
-                        ScrollbarAxis::Vertical => Bounds::new(
-                            gpui::point(
-                                viewport.origin.x + viewport.size.width - inset - thickness,
-                                viewport.origin.y + thumb.offset,
-                            ),
-                            size(thickness, thumb.length),
-                        ),
-                        ScrollbarAxis::Horizontal => Bounds::new(
-                            gpui::point(
-                                viewport.origin.x + thumb.offset,
-                                viewport.origin.y + viewport.size.height - inset - thickness,
-                            ),
-                            size(thumb.length, thickness),
-                        ),
-                    };
-
-                    let radius = (thickness * 0.5).max(px(0.0));
+                    let radius = (geometry.thickness * 0.5).max(px(0.0));
                     let corners: Corners<Pixels> = Corners {
                         top_left: radius,
                         top_right: radius,
@@ -336,7 +416,218 @@ impl Element for StyledScrollbar {
                 ((), state)
             },
         );
+
+        let Some(hitbox) = prepaint_state.clone() else {
+            return;
+        };
+
+        let hitbox_for_mouse_move = hitbox.clone();
+        let hitbox_for_mouse_down = hitbox.clone();
+
+        let target_for_events = target.clone();
+        let style_for_events = style;
+        let drag_key_for_events = drag_key.clone();
+        let was_hovered = hovered;
+
+        window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+            if phase == DispatchPhase::Capture {
+                let hovered = hitbox_for_mouse_move.is_hovered(window);
+                if hovered != was_hovered {
+                    cx.notify(current_view);
+                }
+            }
+
+            if phase != DispatchPhase::Bubble {
+                return;
+            }
+
+            let drag_offset = {
+                let global = cx.default_global::<ScrollbarDragGlobal>();
+                global
+                    .active
+                    .as_ref()
+                    .filter(|drag| drag.key == drag_key_for_events)
+                    .map(|drag| drag.drag_offset_in_thumb)
+            };
+
+            let Some(drag_offset_in_thumb) = drag_offset else {
+                return;
+            };
+
+            let Some(geometry) = compute_geometry(&target_for_events, style_for_events) else {
+                return;
+            };
+
+            let pointer = event.position;
+            let (track_origin, pointer_pos) = match style_for_events.axis {
+                ScrollbarAxis::Vertical => (geometry.viewport.origin.y, pointer.y),
+                ScrollbarAxis::Horizontal => (geometry.viewport.origin.x, pointer.x),
+            };
+
+            let thumb_len = geometry.thumb.length;
+            let track_len = (match style_for_events.axis {
+                ScrollbarAxis::Vertical => geometry.viewport.size.height,
+                ScrollbarAxis::Horizontal => geometry.viewport.size.width,
+            } - thumb_len)
+                .max(px(0.0));
+            if track_len <= px(0.5) {
+                return;
+            }
+
+            let thumb_top = (pointer_pos - drag_offset_in_thumb - track_origin).clamp(px(0.0), track_len);
+            let t = (thumb_top / track_len).clamp(0.0, 1.0);
+            let scroll_pos = geometry.max_offset * t;
+            let raw_offset = -scroll_pos;
+
+            match style_for_events.axis {
+                ScrollbarAxis::Vertical => {
+                    let offset = target_for_events.offset();
+                    target_for_events.set_offset_from_scrollbar(gpui::point(offset.x, raw_offset));
+                }
+                ScrollbarAxis::Horizontal => {
+                    let offset = target_for_events.offset();
+                    target_for_events.set_offset_from_scrollbar(gpui::point(raw_offset, offset.y));
+                }
+            }
+
+            cx.notify(current_view);
+            cx.stop_propagation();
+            window.prevent_default();
+        });
+
+        let target_for_mouse_down = target.clone();
+        let style_for_mouse_down = style;
+        let drag_key_for_mouse_down = drag_key.clone();
+        window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+            if phase != DispatchPhase::Bubble
+                || event.button != MouseButton::Left
+                || !hitbox_for_mouse_down.is_hovered(window)
+            {
+                return;
+            }
+
+            let Some(geometry) = compute_geometry(&target_for_mouse_down, style_for_mouse_down) else {
+                return;
+            };
+
+            target_for_mouse_down.scrollbar_drag_started();
+
+            let in_thumb = geometry.thumb_bounds.contains(&event.position);
+            let drag_offset_in_thumb = match style_for_mouse_down.axis {
+                ScrollbarAxis::Vertical => {
+                    if in_thumb {
+                        event.position.y - geometry.thumb_bounds.origin.y
+                    } else {
+                        geometry.thumb.length * 0.5
+                    }
+                }
+                ScrollbarAxis::Horizontal => {
+                    if in_thumb {
+                        event.position.x - geometry.thumb_bounds.origin.x
+                    } else {
+                        geometry.thumb.length * 0.5
+                    }
+                }
+            };
+
+            {
+                let global = cx.default_global::<ScrollbarDragGlobal>();
+                global.active = Some(ActiveScrollbarDrag {
+                    key: drag_key_for_mouse_down.clone(),
+                    drag_offset_in_thumb,
+                });
+            }
+
+            if !in_thumb {
+                // Clicking on the track should immediately jump to that scroll position.
+                let pointer = event.position;
+                let (track_origin, pointer_pos) = match style_for_mouse_down.axis {
+                    ScrollbarAxis::Vertical => (geometry.viewport.origin.y, pointer.y),
+                    ScrollbarAxis::Horizontal => (geometry.viewport.origin.x, pointer.x),
+                };
+
+                let thumb_len = geometry.thumb.length;
+                let track_len = (match style_for_mouse_down.axis {
+                    ScrollbarAxis::Vertical => geometry.viewport.size.height,
+                    ScrollbarAxis::Horizontal => geometry.viewport.size.width,
+                } - thumb_len)
+                    .max(px(0.0));
+
+                if track_len > px(0.5) {
+                    let thumb_top = (pointer_pos - drag_offset_in_thumb - track_origin)
+                        .clamp(px(0.0), track_len);
+                    let t = (thumb_top / track_len).clamp(0.0, 1.0);
+                    let scroll_pos = geometry.max_offset * t;
+                    let raw_offset = -scroll_pos;
+
+                    match style_for_mouse_down.axis {
+                        ScrollbarAxis::Vertical => {
+                            let offset = target_for_mouse_down.offset();
+                            target_for_mouse_down
+                                .set_offset_from_scrollbar(gpui::point(offset.x, raw_offset));
+                        }
+                        ScrollbarAxis::Horizontal => {
+                            let offset = target_for_mouse_down.offset();
+                            target_for_mouse_down
+                                .set_offset_from_scrollbar(gpui::point(raw_offset, offset.y));
+                        }
+                    }
+                }
+
+                cx.notify(current_view);
+            }
+
+            cx.stop_propagation();
+            window.prevent_default();
+        });
+
+        let target_for_mouse_up = target.clone();
+        let drag_key_for_mouse_up = drag_key.clone();
+        window.on_mouse_event(move |event: &MouseUpEvent, phase, _window, cx| {
+            if phase != DispatchPhase::Bubble || event.button != MouseButton::Left {
+                return;
+            }
+
+            let should_end = {
+                let global = cx.default_global::<ScrollbarDragGlobal>();
+                global
+                    .active
+                    .as_ref()
+                    .is_some_and(|drag| drag.key == drag_key_for_mouse_up)
+            };
+
+            if !should_end {
+                return;
+            }
+
+            target_for_mouse_up.scrollbar_drag_ended();
+            {
+                let global = cx.default_global::<ScrollbarDragGlobal>();
+                global.active = None;
+            }
+            cx.notify(current_view);
+            cx.stop_propagation();
+        });
     }
+}
+
+#[derive(Default)]
+struct ScrollbarDragGlobal {
+    active: Option<ActiveScrollbarDrag>,
+}
+
+impl gpui::Global for ScrollbarDragGlobal {}
+
+#[derive(Debug)]
+struct ActiveScrollbarDrag {
+    key: ScrollbarDragKey,
+    drag_offset_in_thumb: Pixels,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ScrollbarDragKey {
+    view_id: EntityId,
+    element_id: ElementId,
 }
 
 #[cfg(test)]
