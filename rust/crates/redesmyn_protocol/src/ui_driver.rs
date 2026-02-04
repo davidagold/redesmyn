@@ -45,6 +45,8 @@ pub enum UiDriverMethod {
     GraphToggleExpandedTaskCard,
     GraphMultiSelectAddNode,
     GraphMultiSelectRemoveNode,
+    SessionSettingsMenuSetOpen,
+    SessionSettingsMenuSendKey,
 }
 
 /// A request issued to the UI driver.
@@ -84,6 +86,8 @@ pub enum UiDriverRequestPayload {
     GraphToggleExpandedTaskCard(ToggleExpandedTaskCardRequest),
     GraphMultiSelectAddNode(MultiSelectAddNodeRequest),
     GraphMultiSelectRemoveNode(MultiSelectRemoveNodeRequest),
+    SessionSettingsMenuSetOpen(SessionSettingsMenuSetOpenRequest),
+    SessionSettingsMenuSendKey(SessionSettingsMenuSendKeyRequest),
 }
 
 impl UiDriverRequestPayload {
@@ -110,6 +114,8 @@ impl UiDriverRequestPayload {
             Self::GraphToggleExpandedTaskCard(_) => UiDriverMethod::GraphToggleExpandedTaskCard,
             Self::GraphMultiSelectAddNode(_) => UiDriverMethod::GraphMultiSelectAddNode,
             Self::GraphMultiSelectRemoveNode(_) => UiDriverMethod::GraphMultiSelectRemoveNode,
+            Self::SessionSettingsMenuSetOpen(_) => UiDriverMethod::SessionSettingsMenuSetOpen,
+            Self::SessionSettingsMenuSendKey(_) => UiDriverMethod::SessionSettingsMenuSendKey,
         }
     }
 }
@@ -161,6 +167,8 @@ pub enum UiDriverResponseResult {
     GraphToggleExpandedTaskCard(ToggleExpandedTaskCardResponse),
     GraphMultiSelectAddNode(MultiSelectAddNodeResponse),
     GraphMultiSelectRemoveNode(MultiSelectRemoveNodeResponse),
+    SessionSettingsMenuSetOpen(SessionSettingsMenuSetOpenResponse),
+    SessionSettingsMenuSendKey(SessionSettingsMenuSendKeyResponse),
     Error(ErrorEnvelope),
 }
 
@@ -211,6 +219,22 @@ pub struct OpenDiffViewRequest {}
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct OpenDiffViewResponse {}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionSettingsMenuSetOpenRequest {
+    pub open: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionSettingsMenuSetOpenResponse {}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionSettingsMenuSendKeyRequest {
+    pub key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionSettingsMenuSendKeyResponse {}
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SetLeftPaneCollapsedRequest {

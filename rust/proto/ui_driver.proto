@@ -53,6 +53,9 @@ enum UiDriverMethod {
   UI_DRIVER_METHOD_GRAPH_TOGGLE_EXPANDED_TASK_CARD = 19;
   UI_DRIVER_METHOD_GRAPH_MULTI_SELECT_ADD_NODE = 20;
   UI_DRIVER_METHOD_GRAPH_MULTI_SELECT_REMOVE_NODE = 21;
+  // Session view settings (Domain 7).
+  UI_DRIVER_METHOD_SESSION_SETTINGS_MENU_SET_OPEN = 22;
+  UI_DRIVER_METHOD_SESSION_SETTINGS_MENU_SEND_KEY = 23;
 
   reserved 18;
 }
@@ -83,6 +86,8 @@ message UiDriverRequest {
     ToggleExpandedTaskCardRequest toggle_expanded_task_card = 28;
     MultiSelectAddNodeRequest multi_select_add_node = 29;
     MultiSelectRemoveNodeRequest multi_select_remove_node = 30;
+    SessionSettingsMenuSetOpenRequest session_settings_menu_set_open = 31;
+    SessionSettingsMenuSendKeyRequest session_settings_menu_send_key = 32;
   }
 
   reserved 27;
@@ -120,6 +125,8 @@ message UiDriverResponse {
     ToggleExpandedTaskCardResponse toggle_expanded_task_card = 28;
     MultiSelectAddNodeResponse multi_select_add_node = 29;
     MultiSelectRemoveNodeResponse multi_select_remove_node = 30;
+    SessionSettingsMenuSetOpenResponse session_settings_menu_set_open = 31;
+    SessionSettingsMenuSendKeyResponse session_settings_menu_send_key = 32;
     ErrorEnvelope error = 100;
   }
 
@@ -163,6 +170,19 @@ message OpenSessionViewResponse {}
 message OpenDiffViewRequest {}
 
 message OpenDiffViewResponse {}
+
+message SessionSettingsMenuSetOpenRequest {
+  bool open = 1;
+}
+
+message SessionSettingsMenuSetOpenResponse {}
+
+message SessionSettingsMenuSendKeyRequest {
+  // Keystroke key string (e.g. "up", "down", "left", "right", "enter", "escape").
+  string key = 1;
+}
+
+message SessionSettingsMenuSendKeyResponse {}
 
 message SetLeftPaneCollapsedRequest {
   bool collapsed = 1;

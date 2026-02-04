@@ -4979,6 +4979,12 @@ fn encode_ui_driver_method(value: crate::ui_driver::UiDriverMethod) -> i32 {
         crate::ui_driver::UiDriverMethod::GraphMultiSelectRemoveNode => {
             pbv1::UiDriverMethod::GraphMultiSelectRemoveNode as i32
         }
+        crate::ui_driver::UiDriverMethod::SessionSettingsMenuSetOpen => {
+            pbv1::UiDriverMethod::SessionSettingsMenuSetOpen as i32
+        }
+        crate::ui_driver::UiDriverMethod::SessionSettingsMenuSendKey => {
+            pbv1::UiDriverMethod::SessionSettingsMenuSendKey as i32
+        }
     }
 }
 
@@ -5035,6 +5041,12 @@ fn decode_ui_driver_method(value: i32) -> Result<crate::ui_driver::UiDriverMetho
         }
         Ok(pbv1::UiDriverMethod::GraphMultiSelectRemoveNode) => {
             Ok(crate::ui_driver::UiDriverMethod::GraphMultiSelectRemoveNode)
+        }
+        Ok(pbv1::UiDriverMethod::SessionSettingsMenuSetOpen) => Ok(
+            crate::ui_driver::UiDriverMethod::SessionSettingsMenuSetOpen,
+        ),
+        Ok(pbv1::UiDriverMethod::SessionSettingsMenuSendKey) => {
+            Ok(crate::ui_driver::UiDriverMethod::SessionSettingsMenuSendKey)
         }
         Ok(pbv1::UiDriverMethod::Unspecified) | Err(_) => Err(invalid_field(
             "method",
@@ -5223,6 +5235,12 @@ impl crate::ui_driver::UiDriverRequest {
                 crate::ui_driver::UiDriverRequestPayload::GraphMultiSelectRemoveNode(req) => {
                     pbv1::ui_driver_request::Payload::MultiSelectRemoveNode(req.to_protobuf())
                 }
+                crate::ui_driver::UiDriverRequestPayload::SessionSettingsMenuSetOpen(req) => {
+                    pbv1::ui_driver_request::Payload::SessionSettingsMenuSetOpen(req.to_protobuf())
+                }
+                crate::ui_driver::UiDriverRequestPayload::SessionSettingsMenuSendKey(req) => {
+                    pbv1::ui_driver_request::Payload::SessionSettingsMenuSendKey(req.to_protobuf())
+                }
             }),
         }
     }
@@ -5332,6 +5350,16 @@ impl crate::ui_driver::UiDriverRequest {
                     crate::ui_driver::MultiSelectRemoveNodeRequest::try_from_protobuf(req)?,
                 )
             }
+            pbv1::ui_driver_request::Payload::SessionSettingsMenuSetOpen(req) => {
+                crate::ui_driver::UiDriverRequestPayload::SessionSettingsMenuSetOpen(
+                    crate::ui_driver::SessionSettingsMenuSetOpenRequest::from_protobuf(req),
+                )
+            }
+            pbv1::ui_driver_request::Payload::SessionSettingsMenuSendKey(req) => {
+                crate::ui_driver::UiDriverRequestPayload::SessionSettingsMenuSendKey(
+                    crate::ui_driver::SessionSettingsMenuSendKeyRequest::from_protobuf(req),
+                )
+            }
         };
 
         let derived_method = payload.method();
@@ -5415,6 +5443,12 @@ impl crate::ui_driver::UiDriverResponse {
                 }
                 crate::ui_driver::UiDriverResponseResult::GraphMultiSelectRemoveNode(resp) => {
                     pbv1::ui_driver_response::Result::MultiSelectRemoveNode(resp.to_protobuf())
+                }
+                crate::ui_driver::UiDriverResponseResult::SessionSettingsMenuSetOpen(resp) => {
+                    pbv1::ui_driver_response::Result::SessionSettingsMenuSetOpen(resp.to_protobuf())
+                }
+                crate::ui_driver::UiDriverResponseResult::SessionSettingsMenuSendKey(resp) => {
+                    pbv1::ui_driver_response::Result::SessionSettingsMenuSendKey(resp.to_protobuf())
                 }
                 crate::ui_driver::UiDriverResponseResult::Error(err) => {
                     pbv1::ui_driver_response::Result::Error(err.to_protobuf())
@@ -5526,6 +5560,16 @@ impl crate::ui_driver::UiDriverResponse {
             pbv1::ui_driver_response::Result::MultiSelectRemoveNode(resp) => {
                 crate::ui_driver::UiDriverResponseResult::GraphMultiSelectRemoveNode(
                     crate::ui_driver::MultiSelectRemoveNodeResponse::from_protobuf(resp),
+                )
+            }
+            pbv1::ui_driver_response::Result::SessionSettingsMenuSetOpen(resp) => {
+                crate::ui_driver::UiDriverResponseResult::SessionSettingsMenuSetOpen(
+                    crate::ui_driver::SessionSettingsMenuSetOpenResponse::from_protobuf(resp),
+                )
+            }
+            pbv1::ui_driver_response::Result::SessionSettingsMenuSendKey(resp) => {
+                crate::ui_driver::UiDriverResponseResult::SessionSettingsMenuSendKey(
+                    crate::ui_driver::SessionSettingsMenuSendKeyResponse::from_protobuf(resp),
                 )
             }
             pbv1::ui_driver_response::Result::Error(err) => {
@@ -5714,6 +5758,56 @@ impl crate::ui_driver::OpenDiffViewResponse {
 
     #[must_use]
     pub fn from_protobuf(_proto: pbv1::OpenDiffViewResponse) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::SessionSettingsMenuSetOpenRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SessionSettingsMenuSetOpenRequest {
+        pbv1::SessionSettingsMenuSetOpenRequest { open: self.open }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::SessionSettingsMenuSetOpenRequest) -> Self {
+        Self { open: proto.open }
+    }
+}
+
+impl crate::ui_driver::SessionSettingsMenuSetOpenResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SessionSettingsMenuSetOpenResponse {
+        pbv1::SessionSettingsMenuSetOpenResponse {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::SessionSettingsMenuSetOpenResponse) -> Self {
+        Self {}
+    }
+}
+
+impl crate::ui_driver::SessionSettingsMenuSendKeyRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SessionSettingsMenuSendKeyRequest {
+        pbv1::SessionSettingsMenuSendKeyRequest {
+            key: self.key.clone(),
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::SessionSettingsMenuSendKeyRequest) -> Self {
+        Self { key: proto.key }
+    }
+}
+
+impl crate::ui_driver::SessionSettingsMenuSendKeyResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SessionSettingsMenuSendKeyResponse {
+        pbv1::SessionSettingsMenuSendKeyResponse {}
+    }
+
+    #[must_use]
+    pub fn from_protobuf(_proto: pbv1::SessionSettingsMenuSendKeyResponse) -> Self {
         Self {}
     }
 }
