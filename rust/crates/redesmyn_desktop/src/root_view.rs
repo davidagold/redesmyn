@@ -4170,7 +4170,10 @@ impl Render for WorkspacePaneHost {
         let entity_id = cx.entity_id();
         let workspace = cx.entity();
 
-        let filter_shortcut_enabled = window.is_action_available(&OpenTaskFilters, cx);
+        // NOTE: `Window::is_action_available` can panic very early in app startup when GPUI's
+        // dispatch tree is not yet populated. For now, treat the shortcut as enabled when anything
+        // in the window is focused.
+        let filter_shortcut_enabled = window.focused(cx).is_some();
         let filter_tab_height = px(28.0);
         let keycap = |label: &'static str| {
             div()
