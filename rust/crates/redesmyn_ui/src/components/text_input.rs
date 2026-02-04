@@ -319,9 +319,17 @@ pub struct TextInput {
     is_selecting: bool,
     history: EditHistory,
     size: TextInputSize,
+    chrome: TextInputChrome,
 }
 
 impl EventEmitter<TextInputEvent> for TextInput {}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum TextInputChrome {
+    #[default]
+    Default,
+    MenuSearch,
+}
 
 impl TextInput {
     pub fn new(cx: &mut Context<Self>) -> Self {
@@ -337,6 +345,7 @@ impl TextInput {
             is_selecting: false,
             history: EditHistory::default(),
             size: TextInputSize::default(),
+            chrome: TextInputChrome::default(),
         }
     }
 
@@ -347,6 +356,11 @@ impl TextInput {
 
     pub fn small(mut self) -> Self {
         self.size = TextInputSize::Small;
+        self
+    }
+
+    pub fn menu_search(mut self) -> Self {
+        self.chrome = TextInputChrome::MenuSearch;
         self
     }
 
@@ -1189,12 +1203,19 @@ impl Render for TextInput {
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
-            .on_mouse_move(cx.listener(Self::on_mouse_move))
-            .bg(background)
-            .border_1()
-            .border_color(border_color)
-            .overflow_hidden()
-            .rounded(radius);
+            .on_mouse_move(cx.listener(Self::on_mouse_move));
+
+        let container = match self.chrome {
+            TextInputChrome::Default => container
+                .bg(background)
+                .border_1()
+                .border_color(border_color)
+                .overflow_hidden()
+                .rounded(radius),
+            TextInputChrome::MenuSearch => container
+                .border_b_1()
+                .border_color(theme.colors.border.opacity(0.35)),
+        };
 
         let container = match self.size {
             TextInputSize::Regular => container

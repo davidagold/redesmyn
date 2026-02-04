@@ -3408,10 +3408,18 @@ impl WorkspacePaneHost {
         ui_updates: UiUpdateCounter,
         cx: &mut Context<Self>,
     ) -> Self {
-        let task_filters_search_input =
-            cx.new(|cx| TextInput::new(cx).placeholder("Add filter…").small());
-        let task_filters_value_search_input =
-            cx.new(|cx| TextInput::new(cx).placeholder("Filter…").small());
+        let task_filters_search_input = cx.new(|cx| {
+            TextInput::new(cx)
+                .placeholder("Add filter…")
+                .small()
+                .menu_search()
+        });
+        let task_filters_value_search_input = cx.new(|cx| {
+            TextInput::new(cx)
+                .placeholder("Filter…")
+                .small()
+                .menu_search()
+        });
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.subscribe(
             &task_filters_search_input,
@@ -4162,7 +4170,7 @@ impl Render for WorkspacePaneHost {
         let entity_id = cx.entity_id();
         let workspace = cx.entity();
 
-        let filter_shortcut_enabled = self.graph_view.focus_handle(cx).is_focused(window);
+        let filter_shortcut_enabled = window.is_action_available(&OpenTaskFilters, cx);
         let filter_tab_height = px(28.0);
         let keycap = |label: &'static str| {
             div()
