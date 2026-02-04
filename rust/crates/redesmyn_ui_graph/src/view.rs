@@ -64,6 +64,11 @@ fn graph_edge_id_to_ui(id: GraphEdgeId) -> UiDriverGraphEdgeId {
 const SELECTION_BAR_SLIDE_PX: f32 = 56.0;
 
 #[derive(Debug, Clone)]
+pub enum GraphViewEvent {
+    TaskCardSelected(TaskId),
+}
+
+#[derive(Debug, Clone)]
 struct FpsOverlay {
     enabled: bool,
     last_frame_at: Option<Instant>,
@@ -240,6 +245,7 @@ struct CollapsedTitleCacheEntry {
 
 pub struct GraphView {
     focus_handle: FocusHandle,
+    focus_steal_enabled: bool,
     scene: GraphScene,
     full_scene: Option<GraphScene>,
     task_filters: TaskFilters,
@@ -309,6 +315,7 @@ impl GraphView {
 
         let mut this = Self {
             focus_handle: cx.focus_handle(),
+            focus_steal_enabled: true,
             scene,
             full_scene: None,
             task_filters: TaskFilters::default(),
@@ -345,6 +352,10 @@ impl GraphView {
         let selected = this.scene.selection().selected_node;
         this.sync_task_session_view(selected, cx);
         this
+    }
+
+    pub fn set_focus_steal_enabled(&mut self, enabled: bool) {
+        self.focus_steal_enabled = enabled;
     }
 
     pub fn set_task_filters(&mut self, filters: TaskFilters, cx: &mut Context<Self>) {
@@ -551,10 +562,16 @@ impl GraphView {
 
     fn select_node(&mut self, node_id: GraphNodeId, cx: &mut Context<Self>) {
         self.update_selection(|scene| scene.select_node(node_id), cx);
+        if let GraphNodeId::Task(task_id) = node_id {
+            cx.emit(GraphViewEvent::TaskCardSelected(task_id));
+        }
     }
 
     fn toggle_node(&mut self, node_id: GraphNodeId, cx: &mut Context<Self>) {
         self.update_selection(|scene| scene.toggle_node(node_id), cx);
+        if let GraphNodeId::Task(task_id) = node_id {
+            cx.emit(GraphViewEvent::TaskCardSelected(task_id));
+        }
     }
 
     fn select_edge(&mut self, edge_id: GraphEdgeId, cx: &mut Context<Self>) {
@@ -1578,7 +1595,9 @@ impl GraphView {
         let local_anchor = event.position - canvas_bounds.origin;
 
         if event.modifiers.secondary() {
-            window.focus(&self.focus_handle);
+            if self.focus_steal_enabled {
+                window.focus(&self.focus_handle);
+            }
             let dy = f32::from(delta.y);
             let factor = (-dy / 300.0).exp();
             self.camera.zoom_by_factor_at(factor, local_anchor);
@@ -1595,7 +1614,9 @@ impl GraphView {
             return;
         }
 
-        window.focus(&self.focus_handle);
+        if self.focus_steal_enabled {
+            window.focus(&self.focus_handle);
+        }
         self.camera.pan_by_screen_delta(delta);
         cx.notify();
     }
@@ -2120,6 +2141,8 @@ impl Focusable for GraphView {
         self.focus_handle.clone()
     }
 }
+
+impl gpui::EventEmitter<GraphViewEvent> for GraphView {}
 
 impl GraphView {
     fn paint_edge_ticks(

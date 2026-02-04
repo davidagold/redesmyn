@@ -36,7 +36,7 @@ use redesmyn_ui::utils::{
     ActionAvailabilityProbe, TransitionMap, UserActionState, theme_for_window,
     ui_test_mode_animation_duration,
 };
-use redesmyn_ui_graph::GraphView;
+use redesmyn_ui_graph::{GraphView, GraphViewEvent};
 
 use crate::app::SessionViewerFixtureEmitter;
 use crate::command_palette::{
@@ -3506,6 +3506,24 @@ impl WorkspacePaneHost {
             model.update(cx, |model, _cx| model.take_task_control_plane_client());
         let task_session_view = cx.new(|cx| SessionView::new(task_session_client, None, cx));
         let graph_session_view = task_session_view.clone();
+        let graph_view = cx.new(|cx| GraphView::new_empty(graph_session_view, cx));
+        subscriptions.push(cx.subscribe(
+            &graph_view,
+            |this, _, event: &GraphViewEvent, cx| match event {
+                GraphViewEvent::TaskCardSelected(_) => {
+                    if !this.task_filters_open {
+                        return;
+                    }
+                    this.set_task_filters_open(
+                        false,
+                        this.task_filters_active_category,
+                        None,
+                        TaskFiltersInputSource::Keyboard,
+                        cx,
+                    );
+                }
+            },
+        ));
         Self {
             focus_handle: cx.focus_handle(),
             task_filters_focus_handle: cx.focus_handle(),
@@ -3513,7 +3531,7 @@ impl WorkspacePaneHost {
             ui_updates,
             model,
             task_session_view,
-            graph_view: cx.new(|cx| GraphView::new_empty(graph_session_view, cx)),
+            graph_view,
             task_filters: TaskFilters::default(),
             task_filters_open: false,
             task_filters_active_category: TaskFilterCategory::TaskState,
@@ -3591,6 +3609,42 @@ impl WorkspacePaneHost {
         cx.notify();
     }
 
+    fn set_task_filters_open(
+        &mut self,
+        open: bool,
+        active_category: TaskFilterCategory,
+        hovered_category: Option<TaskFilterCategory>,
+        input_source: TaskFiltersInputSource,
+        cx: &mut Context<Self>,
+    ) -> FocusHandle {
+        self.task_filters_open = open;
+        self.task_filters_active_category = active_category;
+        self.task_filters_hovered_category = hovered_category;
+        self.task_filters_focus = TaskFiltersFocus::Categories;
+        self.task_filters_input_source = input_source;
+        self.task_filters_active_chip_index = 0;
+        self.task_filters_active_value_index = 0;
+        self.task_filters_search = "".into();
+        self.task_filters_search_input
+            .update(cx, |input, cx| input.set_text("", cx));
+        self.task_filters_value_search = "".into();
+        self.task_filters_value_search_input
+            .update(cx, |input, cx| input.set_text("", cx));
+
+        self.graph_view.update(cx, |view, _cx| {
+            view.set_focus_steal_enabled(!open);
+        });
+
+        self.ui_updates.bump();
+        cx.notify();
+
+        if open {
+            self.task_filters_search_input.focus_handle(cx)
+        } else {
+            self.focus_handle.clone()
+        }
+    }
+
     fn open_task_filters(
         &mut self,
         _: &OpenTaskFilters,
@@ -3600,21 +3654,14 @@ impl WorkspacePaneHost {
         let span = redesmyn_logging::redesmyn_info_span!("ui.workspace.filters.open");
         let _guard = span.enter();
 
-        self.task_filters_open = true;
-        self.task_filters_hovered_category = None;
-        self.task_filters_focus = TaskFiltersFocus::Categories;
-        self.task_filters_input_source = TaskFiltersInputSource::Keyboard;
-        self.task_filters_active_chip_index = 0;
-        self.task_filters_active_value_index = 0;
-        self.task_filters_search = "".into();
-        self.task_filters_search_input
-            .update(cx, |input, cx| input.set_text("", cx));
-        self.task_filters_value_search = "".into();
-        self.task_filters_value_search_input
-            .update(cx, |input, cx| input.set_text("", cx));
-        window.focus(&self.task_filters_search_input.focus_handle(cx));
-        self.ui_updates.bump();
-        cx.notify();
+        let focus = self.set_task_filters_open(
+            true,
+            self.task_filters_active_category,
+            None,
+            TaskFiltersInputSource::Keyboard,
+            cx,
+        );
+        window.focus(&focus);
     }
 
     fn close_task_filters(
@@ -3630,21 +3677,14 @@ impl WorkspacePaneHost {
         let span = redesmyn_logging::redesmyn_info_span!("ui.workspace.filters.close");
         let _guard = span.enter();
 
-        self.task_filters_open = false;
-        self.task_filters_hovered_category = None;
-        self.task_filters_focus = TaskFiltersFocus::Categories;
-        self.task_filters_input_source = TaskFiltersInputSource::Keyboard;
-        self.task_filters_active_chip_index = 0;
-        self.task_filters_active_value_index = 0;
-        self.task_filters_search = "".into();
-        self.task_filters_search_input
-            .update(cx, |input, cx| input.set_text("", cx));
-        self.task_filters_value_search = "".into();
-        self.task_filters_value_search_input
-            .update(cx, |input, cx| input.set_text("", cx));
-        window.focus(&self.focus_handle);
-        self.ui_updates.bump();
-        cx.notify();
+        let focus = self.set_task_filters_open(
+            false,
+            self.task_filters_active_category,
+            None,
+            TaskFiltersInputSource::Keyboard,
+            cx,
+        );
+        window.focus(&focus);
     }
 
     fn task_filters_toggle_chip_focus(
@@ -4220,20 +4260,14 @@ impl Render for WorkspacePaneHost {
                 let workspace = workspace.clone();
                 move |_, window, cx| {
                     let focus = workspace.update(cx, |this, cx| {
-                        this.task_filters_open = !this.task_filters_open;
-                        this.task_filters_hovered_category = None;
-                        this.task_filters_focus = TaskFiltersFocus::Categories;
-                        this.task_filters_input_source = TaskFiltersInputSource::Mouse;
-                        this.task_filters_active_value_index = 0;
-                        this.task_filters_search = "".into();
-                        this.task_filters_search_input
-                            .update(cx, |input, cx| input.set_text("", cx));
-
-                        if this.task_filters_open {
-                            Some(this.task_filters_search_input.focus_handle(cx))
-                        } else {
-                            Some(this.focus_handle.clone())
-                        }
+                        let open = !this.task_filters_open;
+                        Some(this.set_task_filters_open(
+                            open,
+                            this.task_filters_active_category,
+                            None,
+                            TaskFiltersInputSource::Mouse,
+                            cx,
+                        ))
                     });
 
                     if let Some(focus) = focus {
@@ -4272,18 +4306,13 @@ impl Render for WorkspacePaneHost {
                     let workspace = workspace.clone();
                     move |_, window, cx| {
                         let focus = workspace.update(cx, |this, cx| {
-                            this.task_filters_open = true;
-                            this.task_filters_active_category = category;
-                            this.task_filters_hovered_category = Some(category);
-                            this.task_filters_focus = TaskFiltersFocus::Categories;
-                            this.task_filters_active_value_index = 0;
-                            this.task_filters_search = "".into();
-                            this.task_filters_search_input
-                                .update(cx, |input, cx| input.set_text("", cx));
-                            this.task_filters_value_search = "".into();
-                            this.task_filters_value_search_input
-                                .update(cx, |input, cx| input.set_text("", cx));
-                            Some(this.task_filters_search_input.focus_handle(cx))
+                            Some(this.set_task_filters_open(
+                                true,
+                                category,
+                                Some(category),
+                                TaskFiltersInputSource::Mouse,
+                                cx,
+                            ))
                         });
                         if let Some(focus) = focus {
                             window.focus(&focus);
@@ -5150,11 +5179,13 @@ impl Render for WorkspacePaneHost {
                                     if !this.task_filters_open {
                                         return;
                                     }
-
-                                    this.task_filters_open = false;
-                                    this.task_filters_hovered_category = None;
-                                    this.ui_updates.bump();
-                                    cx.notify();
+                                    this.set_task_filters_open(
+                                        false,
+                                        this.task_filters_active_category,
+                                        None,
+                                        TaskFiltersInputSource::Mouse,
+                                        cx,
+                                    );
                                 });
                             }
                         })
