@@ -46,6 +46,9 @@ impl ScrollbarTarget {
 pub struct ScrollbarStyle {
     pub axis: ScrollbarAxis,
     pub thickness: Pixels,
+    /// Inset from the far edge of the scroll viewport (right for vertical scrollbars, bottom for
+    /// horizontal). Negative values are allowed and will place the thumb "into the gutter"
+    /// outside the viewport (useful when the scrollable is inside a padded container).
     pub inset: Pixels,
     pub min_thumb_length: Pixels,
     pub idle_delay: Duration,
@@ -299,7 +302,7 @@ impl Element for StyledScrollbar {
                         ScrollbarAxis::Horizontal => viewport.size.height,
                     });
 
-                    let inset = style.inset.max(px(0.0));
+                    let inset = style.inset;
                     let thumb_bounds = match style.axis {
                         ScrollbarAxis::Vertical => Bounds::new(
                             gpui::point(
