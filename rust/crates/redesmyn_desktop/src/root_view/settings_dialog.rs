@@ -406,41 +406,23 @@ impl SettingsDialog {
 
         let nav_item = |id: &'static str, label: &'static str, section: SettingsSection| {
             let selected = self.section == section;
-            let mut row = div()
-                .id((id, cx.entity_id()))
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .px(theme.spacing.md)
-                .py(theme.spacing.sm)
-                .rounded(theme.radius.md)
-                .when(selected, |this| {
-                    this.bg(theme.colors.accent)
-                        .border_1()
-                        .border_color(theme.colors.ring)
+            TextButton::new((id, cx.entity_id()), label)
+                .kind(if selected {
+                    ButtonKind::Secondary
+                } else {
+                    ButtonKind::Ghost
                 })
-                .when(!selected, |this| {
-                    this.hover(|this| this.bg(theme.colors.surface_elevated.opacity(0.35)))
+                .small()
+                .menu_item()
+                .on_click({
+                    let root = root.clone();
+                    move |_, _, cx| {
+                        root.update(cx, |this, cx| {
+                            this.settings_dialog.section = section;
+                            cx.notify();
+                        });
+                    }
                 })
-                .cursor_pointer();
-
-            row = row.child(
-                div()
-                    .text_sm()
-                    .text_color(theme.colors.foreground)
-                    .child(label),
-            );
-
-            row.on_click({
-                let root = root.clone();
-                move |_, _, cx| {
-                    root.update(cx, |this, cx| {
-                        this.settings_dialog.section = section;
-                        cx.notify();
-                    });
-                }
-            })
         };
 
         div()
