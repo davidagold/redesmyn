@@ -3352,6 +3352,8 @@ impl Render for EpicSessionPaneHost {
 struct WorkspacePaneHost {
     focus_handle: FocusHandle,
     task_filters_focus_handle: FocusHandle,
+    task_filters_action_availability_ready: bool,
+    task_filters_action_availability_ready_requested: bool,
     ui_updates: UiUpdateCounter,
     model: Entity<DesktopModel>,
     task_session_view: Entity<SessionView>,
@@ -3500,6 +3502,8 @@ impl WorkspacePaneHost {
         Self {
             focus_handle: cx.focus_handle(),
             task_filters_focus_handle: cx.focus_handle(),
+            task_filters_action_availability_ready: false,
+            task_filters_action_availability_ready_requested: false,
             ui_updates,
             model,
             task_session_view,
@@ -4171,9 +4175,27 @@ impl Render for WorkspacePaneHost {
         let workspace = cx.entity();
 
         // NOTE: `Window::is_action_available` can panic very early in app startup when GPUI's
-        // dispatch tree is not yet populated. For now, treat the shortcut as enabled when anything
-        // in the window is focused.
-        let filter_shortcut_enabled = window.focused(cx).is_some();
+        // rendered dispatch tree is still empty. Once a frame has been rendered, we can query
+        // action availability to correctly reflect whether `f` will work in the current focus
+        // domain without tracking every focusable child element manually.
+        if !self.task_filters_action_availability_ready
+            && !self.task_filters_action_availability_ready_requested
+        {
+            self.task_filters_action_availability_ready_requested = true;
+            let workspace = workspace.clone();
+            window.on_next_frame(move |_, cx| {
+                workspace.update(cx, |this, cx| {
+                    this.task_filters_action_availability_ready = true;
+                    cx.notify();
+                });
+            });
+        }
+
+        let filter_shortcut_enabled = if self.task_filters_action_availability_ready {
+            window.is_action_available(&OpenTaskFilters, cx)
+        } else {
+            self.graph_view.focus_handle(cx).is_focused(window)
+        };
         let filter_tab_height = px(28.0);
         let keycap = |label: &'static str| {
             div()
