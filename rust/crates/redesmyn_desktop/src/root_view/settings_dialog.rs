@@ -308,6 +308,7 @@ impl SettingsDialog {
         let body = div()
             .flex()
             .flex_row()
+            .flex_1()
             .min_h(px(0.0))
             .child(self.section_nav(root, window, cx))
             .child(self.section_body(root, window, cx));
@@ -322,6 +323,8 @@ impl SettingsDialog {
             .child(
                 div()
                     .key_context("SettingsDialog")
+                    .flex()
+                    .flex_col()
                     .w_full()
                     .max_w(px(960.0))
                     .h_full()
@@ -429,6 +432,7 @@ impl SettingsDialog {
 
         div()
             .w(px(220.0))
+            .h_full()
             .p(theme.spacing.md)
             .border_r_1()
             .border_color(theme.colors.border.opacity(0.6))
@@ -477,9 +481,15 @@ impl SettingsDialog {
             SettingsSection::Agents => content.child(self.section_agents(root, window, cx)),
         };
 
-        ScrollArea::new(("settings_scroll", cx.entity_id()), self.scroll.clone())
-            .bg(theme.colors.surface)
-            .child(content)
+        div()
+            .flex_1()
+            .min_h(px(0.0))
+            .min_w(px(0.0))
+            .child(
+                ScrollArea::new(("settings_scroll", cx.entity_id()), self.scroll.clone())
+                    .bg(theme.colors.surface)
+                    .child(content),
+            )
             .into_any_element()
     }
 
