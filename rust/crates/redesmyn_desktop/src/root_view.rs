@@ -2090,7 +2090,7 @@ impl Render for RootView {
             .justify_between()
             .gap(theme.spacing.md)
             .bg(theme.colors.background)
-            .border_b_2()
+            .border_b_1()
             .border_color(theme.colors.ring.opacity(0.25))
             .child(
                 div()
@@ -4917,7 +4917,7 @@ impl Render for WorkspacePaneHost {
             );
 
             if show_filter_ui {
-                let tab_top = theme.spacing.md;
+                let tab_top = (px(44.0) - filter_tab_height) * 0.5;
                 let tab_left = theme.spacing.md;
 
                 let menu_opacity = self.task_filters_menu_opacity.opacity_for_render(
@@ -4933,7 +4933,7 @@ impl Render for WorkspacePaneHost {
                 );
 
                 let filter_button_pill =
-                    overlay_surface(&theme, OverlaySurfaceKind::Chrome, px(999.0))
+                    overlay_surface(&theme, OverlaySurfaceKind::Chrome, theme.radius.sm)
                         .h(filter_tab_height)
                         .flex()
                         .flex_row()
