@@ -12,10 +12,11 @@ use tokio::sync::{mpsc, watch};
 use redesmyn_protocol::ui_driver::{
     CaptureScreenshotResponse, ClearGraphSelectionResponse, CreateChatSessionResponse,
     MultiSelectAddNodeResponse, MultiSelectRemoveNodeResponse, SelectGraphNodeResponse,
-    ToggleExpandedTaskCardResponse, TriggerRefreshResponse, UiComposerState, UiDriverRequestPayload,
-    UiDriverResponse, UiDriverResponseResult, UiErrorCallout, UiInFlightAction, UiLeftPaneState,
-    UiPrimaryView, UiSelectionState, UiSnapshot, UiSnapshotPredicate, WaitForUiIdleRequest,
-    WaitForUiIdleResponse, WaitForUiSnapshotRequest, WaitForUiSnapshotResponse,
+    ToggleExpandedTaskCardResponse, TriggerRefreshResponse, UiComposerState,
+    UiDriverRequestPayload, UiDriverResponse, UiDriverResponseResult, UiErrorCallout,
+    UiInFlightAction, UiLeftPaneState, UiPrimaryView, UiSelectionState, UiSnapshot,
+    UiSnapshotPredicate, WaitForUiIdleRequest, WaitForUiIdleResponse, WaitForUiSnapshotRequest,
+    WaitForUiSnapshotResponse,
 };
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, RepoScope, Timestamp};
 use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
@@ -23,9 +24,10 @@ use redesmyn_ui_session::SessionView;
 
 use redesmyn_ui::UiContext;
 use redesmyn_ui::components::{
-    ButtonKind, Callout, CalloutKind, CascadingMenu, CascadingMenuMetrics, IconButton,
-    OverlaySurfaceKind, ProgressPill, ScrollArea, SplitPane, SplitPaneAxis, SplitPaneEvent,
-    SplitPaneState, TextButton, TextInput, TextInputEvent, overlay_surface,
+    ButtonKind, Callout, CalloutKind, CascadingMenu, CascadingMenuMetrics,
+    CascadingMenuSecondarySide, IconButton, OverlaySurfaceKind, ProgressPill, ScrollArea,
+    SplitPane, SplitPaneAxis, SplitPaneEvent, SplitPaneState, TextButton, TextInput,
+    TextInputEvent, overlay_surface,
 };
 use redesmyn_ui::settings::ThemePreference;
 use redesmyn_ui::task_filters::{
@@ -338,11 +340,13 @@ impl RootView {
             Some(open) if open == panel => None,
             _ => Some(panel),
         };
+        self.chrome.connections_menu_active = None;
         self.notify_ui_updated(cx);
     }
 
     fn close_panel(&mut self, cx: &mut Context<Self>) {
         if self.chrome.panel.take().is_some() {
+            self.chrome.connections_menu_active = None;
             self.notify_ui_updated(cx);
         }
     }
@@ -1251,7 +1255,9 @@ async fn handle_ui_driver_request(
             };
 
             match result {
-                Ok(()) => UiDriverResponseResult::GraphClearSelection(ClearGraphSelectionResponse {}),
+                Ok(()) => {
+                    UiDriverResponseResult::GraphClearSelection(ClearGraphSelectionResponse {})
+                }
                 Err(err) => UiDriverResponseResult::Error(err),
             }
         }
@@ -1335,7 +1341,9 @@ async fn handle_ui_driver_request(
                     ));
                 }
 
-                graph_view.update(cx, |this, cx| this.driver_multi_select_add_node(task_id, cx));
+                graph_view.update(cx, |this, cx| {
+                    this.driver_multi_select_add_node(task_id, cx)
+                });
                 root.update(cx, |this, cx| this.notify_ui_updated(cx));
 
                 Ok(())
@@ -1350,7 +1358,9 @@ async fn handle_ui_driver_request(
             };
 
             match result {
-                Ok(()) => UiDriverResponseResult::GraphMultiSelectAddNode(MultiSelectAddNodeResponse {}),
+                Ok(()) => {
+                    UiDriverResponseResult::GraphMultiSelectAddNode(MultiSelectAddNodeResponse {})
+                }
                 Err(err) => UiDriverResponseResult::Error(err),
             }
         }
@@ -1468,7 +1478,8 @@ async fn handle_ui_driver_request(
                     root_ref.session_pane.read(cx).session_view.clone()
                 };
 
-                let handled = session_view.update(cx, |view, cx| view.send_settings_menu_key(&key, cx));
+                let handled =
+                    session_view.update(cx, |view, cx| view.send_settings_menu_key(&key, cx));
                 if !handled {
                     return Err(ErrorEnvelope::new(
                         ErrorCategory::InvalidRequest,
@@ -1956,69 +1967,75 @@ impl Render for RootView {
                 })
         };
 
-        let status_dot_color = if self.chrome.control_plane_status.is_some() {
-            theme.colors.ring
+        let control_plane_expected =
+            model.chrome_control_plane_client.is_some() || model.config.desktop.embed_control_plane;
+        let control_plane_is_healthy = self.chrome.control_plane_status.is_some();
+        let control_plane_is_unhealthy =
+            control_plane_expected && !control_plane_is_healthy && !self.chrome.refresh.in_flight;
+        let control_plane_dot_color = if control_plane_is_healthy {
+            theme.colors.success
         } else if self.chrome.refresh.in_flight {
             theme.colors.border.opacity(0.7)
-        } else {
+        } else if control_plane_expected {
             theme.colors.danger
+        } else {
+            theme.colors.border.opacity(0.7)
         };
 
-        let control_plane_label = if self.chrome.control_plane_status.is_some() {
-            "Control plane: running"
+        let daemon_expected = model.config.desktop.embed_daemon;
+        let daemon_is_healthy = daemon_expected && model.daemon_host_id.is_some();
+        let daemon_is_unhealthy = daemon_expected
+            && model.daemon_host_id.is_none()
+            && self.chrome.did_startup_refresh
+            && !self.chrome.refresh.in_flight;
+        let daemon_dot_color = if daemon_is_healthy {
+            theme.colors.success
+        } else if daemon_is_unhealthy {
+            theme.colors.danger
+        } else {
+            theme.colors.border.opacity(0.7)
+        };
+
+        let unhealthy_connections =
+            usize::from(control_plane_is_unhealthy) + usize::from(daemon_is_unhealthy);
+        let overall_dot_color = if unhealthy_connections > 0 {
+            theme.colors.danger
         } else if self.chrome.refresh.in_flight {
-            "Control plane: checking…"
-        } else if model.chrome_control_plane_client.is_some()
-            || model.config.desktop.embed_control_plane
-        {
-            "Control plane: unavailable"
+            theme.colors.border.opacity(0.7)
+        } else if control_plane_expected || daemon_expected {
+            theme.colors.success
         } else {
-            "Control plane: external"
-        };
-
-        let daemon_label: SharedString = if model.config.desktop.embed_daemon {
-            match model.daemon_host_id {
-                Some(id) => format!("Daemon: embedded · host {id}").into(),
-                None => "Daemon: embedded".into(),
-            }
-        } else {
-            "Daemon: external (start: rn daemon run)".into()
+            theme.colors.border.opacity(0.7)
         };
 
         let settings_button = IconButton::new(
             ("chrome_settings", cx.entity_id()),
             div().text_sm().child("⚙"),
         )
-                .tooltip("Settings")
-                .on_click({
-                    let root = root.clone();
-                    move |_, _, cx| {
-                        root.update(cx, |this, cx| this.toggle_panel(ChromePanel::Settings, cx));
-                    }
-                });
+        .tooltip("Settings")
+        .on_click({
+            let root = root.clone();
+            move |_, _, cx| {
+                root.update(cx, |this, cx| this.toggle_panel(ChromePanel::Settings, cx));
+            }
+        });
 
         let theme_toggle_button = IconButton::new(
             ("chrome_theme_toggle", cx.entity_id()),
             div().text_sm().child("◐"),
         )
-                .tooltip("Toggle theme")
-                .on_click({
-                    let root = root.clone();
-                    move |_, window, cx| {
-                        let mode = theme_for_window(window, cx).mode;
-                        let next = match mode {
-                            redesmyn_ui::styles::ThemeMode::Dark => ThemePreference::Light,
-                            redesmyn_ui::styles::ThemeMode::Light => ThemePreference::Dark,
-                        };
-                        root.update(cx, |this, cx| this.set_theme_preference(next, cx));
-                    }
-                });
-
-        let daemon_chip_dot_color = if model.config.desktop.embed_daemon {
-            theme.colors.ring
-        } else {
-            theme.colors.border.opacity(0.7)
-        };
+        .tooltip("Toggle theme")
+        .on_click({
+            let root = root.clone();
+            move |_, window, cx| {
+                let mode = theme_for_window(window, cx).mode;
+                let next = match mode {
+                    redesmyn_ui::styles::ThemeMode::Dark => ThemePreference::Light,
+                    redesmyn_ui::styles::ThemeMode::Light => ThemePreference::Dark,
+                };
+                root.update(cx, |this, cx| this.set_theme_preference(next, cx));
+            }
+        });
 
         let connections_button =
             TextButton::new(("chrome_connections", cx.entity_id()), "Connections")
@@ -2030,18 +2047,15 @@ impl Render for RootView {
                         .flex_row()
                         .items_center()
                         .gap(theme.spacing.xs)
-                        .child(
-                            div()
-                                .size(px(6.0))
-                                .rounded(px(999.0))
-                                .bg(status_dot_color),
-                        )
-                        .child(
-                            div()
-                                .size(px(6.0))
-                                .rounded(px(999.0))
-                                .bg(daemon_chip_dot_color),
-                        )
+                        .child(div().size(px(6.0)).rounded(px(999.0)).bg(overall_dot_color))
+                        .when(unhealthy_connections > 1, |this| {
+                            this.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme.colors.danger)
+                                    .child(unhealthy_connections.to_string()),
+                            )
+                        })
                         .child("▾"),
                 )
                 .on_click({
@@ -2076,7 +2090,7 @@ impl Render for RootView {
             .justify_between()
             .gap(theme.spacing.md)
             .bg(theme.colors.background)
-            .border_b_1()
+            .border_b_2()
             .border_color(theme.colors.ring.opacity(0.25))
             .child(
                 div()
@@ -2167,67 +2181,301 @@ impl Render for RootView {
 
         let connections_menu_overlay =
             if matches!(self.chrome.panel, Some(ChromePanel::ConnectionsMenu)) {
-                let daemon_chip_dot_color = daemon_chip_dot_color;
-                let menu_body = div()
-                    .flex()
-                    .flex_col()
-                    .gap(theme.spacing.sm)
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.colors.foreground)
-                            .child("Connections"),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(theme.spacing.xs)
+                let control_plane_summary: SharedString = if control_plane_is_healthy {
+                    "running".into()
+                } else if self.chrome.refresh.in_flight {
+                    "checking…".into()
+                } else if control_plane_expected {
+                    "unavailable".into()
+                } else {
+                    "external".into()
+                };
+
+                let daemon_summary: SharedString = if daemon_expected {
+                    if daemon_is_healthy {
+                        "embedded".into()
+                    } else if daemon_is_unhealthy {
+                        "unavailable".into()
+                    } else {
+                        "starting…".into()
+                    }
+                } else {
+                    "external".into()
+                };
+
+                let menu_item_height = px(36.0);
+                let menu_metrics = CascadingMenuMetrics {
+                    primary_width: px(280.0),
+                    secondary_width: px(360.0),
+                    overlap: px(10.0),
+                };
+
+                let active = self.chrome.connections_menu_active;
+
+                let primary_item = |item: ConnectionsMenuItem,
+                                    dot_color,
+                                    label: &'static str,
+                                    summary: SharedString| {
+                    let hovered = active == Some(item);
+                    div()
+                        .flex()
+                        .flex_row()
+                        .w_full()
+                        .items_center()
+                        .gap(theme.spacing.sm)
+                        .px(theme.spacing.sm)
+                        .h(menu_item_height)
+                        .rounded(theme.radius.sm)
+                        .when(hovered, |this| {
+                            this.bg(theme.colors.foreground.opacity(0.06))
+                        })
+                        .cursor_pointer()
+                        .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                            if this.chrome.connections_menu_active != Some(item) {
+                                this.chrome.connections_menu_active = Some(item);
+                                cx.notify();
+                            }
+                        }))
+                        .child(div().size(px(6.0)).rounded(px(999.0)).bg(dot_color))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .justify_between()
+                                .gap(theme.spacing.sm)
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(theme.colors.foreground)
+                                        .child(label),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme.colors.foreground_muted)
+                                        .child(summary),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(theme.colors.foreground_muted)
+                                .child("›"),
+                        )
+                };
+
+                let primary_menu =
+                    overlay_surface(&theme, OverlaySurfaceKind::Menu, theme.radius.md)
+                        .shadow_md()
+                        .occlude()
+                        .py(theme.spacing.sm)
+                        .px(theme.spacing.sm)
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .w_full()
+                                .child(primary_item(
+                                    ConnectionsMenuItem::ControlPlane,
+                                    control_plane_dot_color,
+                                    "Control plane",
+                                    control_plane_summary,
+                                ))
+                                .child(primary_item(
+                                    ConnectionsMenuItem::Daemon,
+                                    daemon_dot_color,
+                                    "Daemon",
+                                    daemon_summary,
+                                )),
+                        );
+
+                let info_row = |label: &'static str, value: SharedString| {
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_start()
+                        .gap(theme.spacing.sm)
+                        .child(
+                            div()
+                                .w(px(96.0))
+                                .text_xs()
+                                .text_color(theme.colors.foreground_muted)
+                                .child(label),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_xs()
+                                .text_color(theme.colors.foreground)
+                                .truncate()
+                                .child(value),
+                        )
+                };
+
+                let submenu_top = active.map(|item| match item {
+                    ConnectionsMenuItem::ControlPlane => theme.spacing.sm,
+                    ConnectionsMenuItem::Daemon => theme.spacing.sm + menu_item_height,
+                });
+
+                let submenu = active.map(|item| match item {
+                    ConnectionsMenuItem::ControlPlane => {
+                        let status = if control_plane_is_healthy {
+                            "Running"
+                        } else if self.chrome.refresh.in_flight {
+                            "Checking…"
+                        } else if control_plane_expected {
+                            "Unavailable"
+                        } else {
+                            "External"
+                        };
+
+                        let transport: SharedString = if control_plane_expected {
+                            "in-proc".into()
+                        } else {
+                            "—".into()
+                        };
+
+                        let (server_name, server_version, protocol): (
+                            SharedString,
+                            SharedString,
+                            SharedString,
+                        ) = match self.chrome.control_plane_status.as_ref() {
+                            Some(status) => (
+                                status.server_name.clone().into(),
+                                status
+                                    .server_version
+                                    .clone()
+                                    .unwrap_or_else(|| "—".to_string())
+                                    .into(),
+                                status.accepted_protocol.to_string().into(),
+                            ),
+                            None => ("—".into(), "—".into(), "—".into()),
+                        };
+
+                        overlay_surface(&theme, OverlaySurfaceKind::Menu, theme.radius.md)
+                            .shadow_md()
+                            .occlude()
+                            .p(theme.spacing.md)
                             .child(
                                 div()
                                     .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .gap(theme.spacing.xs)
+                                    .flex_col()
+                                    .gap(theme.spacing.sm)
                                     .child(
                                         div()
-                                            .size(px(6.0))
-                                            .rounded(px(999.0))
-                                            .bg(status_dot_color),
+                                            .flex()
+                                            .flex_row()
+                                            .items_center()
+                                            .gap(theme.spacing.sm)
+                                            .child(
+                                                div()
+                                                    .size(px(6.0))
+                                                    .rounded(px(999.0))
+                                                    .bg(control_plane_dot_color),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .text_color(theme.colors.foreground)
+                                                    .child("Control plane"),
+                                            ),
                                     )
                                     .child(
                                         div()
-                                            .text_sm()
-                                            .text_color(theme.colors.foreground)
-                                            .child(control_plane_label),
+                                            .flex()
+                                            .flex_col()
+                                            .gap(theme.spacing.xs)
+                                            .child(info_row("Status", status.into()))
+                                            .child(info_row("Transport", transport))
+                                            .child(info_row("Server", server_name))
+                                            .child(info_row("Version", server_version))
+                                            .child(info_row("Protocol", protocol)),
                                     ),
                             )
+                    }
+                    ConnectionsMenuItem::Daemon => {
+                        let status: SharedString = if daemon_is_healthy {
+                            "Healthy".into()
+                        } else if daemon_is_unhealthy {
+                            "Unavailable".into()
+                        } else if daemon_expected {
+                            "Starting…".into()
+                        } else {
+                            "External".into()
+                        };
+
+                        let mode: SharedString = if daemon_expected {
+                            "Embedded".into()
+                        } else {
+                            "External".into()
+                        };
+
+                        let host_id: SharedString = model
+                            .daemon_host_id
+                            .as_ref()
+                            .map(|id| id.to_string().into())
+                            .unwrap_or_else(|| "—".into());
+
+                        let transport: SharedString = if daemon_expected {
+                            "in-proc".into()
+                        } else {
+                            "—".into()
+                        };
+
+                        overlay_surface(&theme, OverlaySurfaceKind::Menu, theme.radius.md)
+                            .shadow_md()
+                            .occlude()
+                            .p(theme.spacing.md)
                             .child(
                                 div()
                                     .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .gap(theme.spacing.xs)
+                                    .flex_col()
+                                    .gap(theme.spacing.sm)
                                     .child(
                                         div()
-                                            .size(px(6.0))
-                                            .rounded(px(999.0))
-                                            .bg(daemon_chip_dot_color),
+                                            .flex()
+                                            .flex_row()
+                                            .items_center()
+                                            .gap(theme.spacing.sm)
+                                            .child(
+                                                div()
+                                                    .size(px(6.0))
+                                                    .rounded(px(999.0))
+                                                    .bg(daemon_dot_color),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .text_color(theme.colors.foreground)
+                                                    .child("Daemon"),
+                                            ),
                                     )
                                     .child(
                                         div()
-                                            .text_sm()
-                                            .text_color(theme.colors.foreground)
-                                            .child(daemon_label.clone()),
+                                            .flex()
+                                            .flex_col()
+                                            .gap(theme.spacing.xs)
+                                            .child(info_row("Status", status))
+                                            .child(info_row("Mode", mode))
+                                            .child(info_row("Host", host_id))
+                                            .child(info_row("Transport", transport)),
                                     ),
-                            ),
-                    );
+                            )
+                    }
+                });
 
-                let menu = overlay_surface(&theme, OverlaySurfaceKind::Menu, theme.radius.md)
-                    .shadow_md()
-                    .occlude()
-                    .p(theme.spacing.md)
-                    .child(menu_body);
+                let menu = div()
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(
+                        CascadingMenu::new(primary_menu)
+                            .metrics(menu_metrics)
+                            .secondary_side(CascadingMenuSecondarySide::Left)
+                            .maybe_secondary(submenu_top, submenu),
+                    );
 
                 Some(
                     div()
@@ -2248,7 +2496,7 @@ impl Render for RootView {
                                 .absolute()
                                 .top(px(44.0) + theme.spacing.xs)
                                 .right(theme.spacing.md)
-                                .child(div().w(px(360.0)).child(menu)),
+                                .child(menu),
                         ),
                 )
             } else {
@@ -3693,23 +3941,25 @@ impl WorkspacePaneHost {
         let task_session_view = cx.new(|cx| SessionView::new(task_session_client, None, cx));
         let graph_session_view = task_session_view.clone();
         let graph_view = cx.new(|cx| GraphView::new_empty(graph_session_view, cx));
-        subscriptions.push(cx.subscribe(
-            &graph_view,
-            |this, _, event: &GraphViewEvent, cx| match event {
-                GraphViewEvent::SelectionChanged { .. } => {
-                    if !this.task_filters_open {
-                        return;
+        subscriptions.push(
+            cx.subscribe(
+                &graph_view,
+                |this, _, event: &GraphViewEvent, cx| match event {
+                    GraphViewEvent::SelectionChanged { .. } => {
+                        if !this.task_filters_open {
+                            return;
+                        }
+                        this.set_task_filters_open(
+                            false,
+                            this.task_filters_active_category,
+                            None,
+                            TaskFiltersInputSource::Keyboard,
+                            cx,
+                        );
                     }
-                    this.set_task_filters_open(
-                        false,
-                        this.task_filters_active_category,
-                        None,
-                        TaskFiltersInputSource::Keyboard,
-                        cx,
-                    );
-                }
-            },
-        ));
+                },
+            ),
+        );
         Self {
             focus_handle: cx.focus_handle(),
             task_filters_focus_handle: cx.focus_handle(),
@@ -5425,9 +5675,16 @@ enum ChromePanel {
     Settings,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ConnectionsMenuItem {
+    ControlPlane,
+    Daemon,
+}
+
 struct ChromeState {
     did_startup_refresh: bool,
     panel: Option<ChromePanel>,
+    connections_menu_active: Option<ConnectionsMenuItem>,
     epics: Vec<redesmyn_protocol::client::EpicSummary>,
     selected_epic_slug: Option<String>,
     control_plane_status: Option<redesmyn_protocol::client::StatusResponse>,
@@ -5442,6 +5699,7 @@ impl ChromeState {
         Self {
             did_startup_refresh: false,
             panel: None,
+            connections_menu_active: None,
             epics: Vec::new(),
             selected_epic_slug: None,
             control_plane_status: None,
