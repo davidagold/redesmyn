@@ -348,6 +348,42 @@ fn tidy_shell_command(command: &str) -> String {
     rest.trim().trim_matches(&['\'', '"'][..]).to_string()
 }
 
+fn tool_summary_preview(value: &str, max_chars: usize) -> String {
+    let mut first_line = value.lines().next().unwrap_or_default().trim();
+    if first_line.is_empty() {
+        first_line = value.trim();
+    }
+    let mut out = String::new();
+    let mut count = 0usize;
+    let mut last_was_space = false;
+
+    for ch in first_line.chars() {
+        if ch.is_whitespace() {
+            if !last_was_space && !out.is_empty() {
+                out.push(' ');
+                count += 1;
+                last_was_space = true;
+            }
+        } else {
+            out.push(ch);
+            count += 1;
+            last_was_space = false;
+        }
+
+        if count >= max_chars {
+            break;
+        }
+    }
+
+    let is_multiline = value.lines().nth(1).is_some();
+    let first_line_overflow = first_line.chars().count() > max_chars;
+    if (is_multiline || first_line_overflow) && !out.is_empty() && !out.ends_with('…') {
+        out.push('…');
+    }
+
+    out
+}
+
 fn split_exec_command_exit_code(preview: &str) -> (Option<i32>, &str) {
     let trimmed = preview.trim_start();
 
@@ -2591,6 +2627,7 @@ impl SessionView {
                     } else {
                         tool.input_preview.clone()
                     };
+                    let summary_main = tool_summary_preview(&summary_main, 160);
 
                     if run_start_ix.is_none() {
                         run_start_ix = Some(ix);
@@ -2621,7 +2658,7 @@ impl SessionView {
                     }
                     run_end_ix = Some(ix + 1);
                     run_event_ids.push(event.session_event_id);
-                    last_summary = Some(tool.output_preview.clone());
+                    last_summary = Some(tool_summary_preview(&tool.output_preview, 160));
 
                     if tool.tool_name != "exec_command" {
                         run_kind = ToolEventGroupKind::ToolActivity;
@@ -4494,13 +4531,22 @@ impl Render for SessionView {
                                             (None, None)
                                         };
 
-                                        let summary_main = if is_exec_command {
+                                        let exec_command_full = is_exec_command.then(|| {
                                             exec_command
                                                 .as_deref()
                                                 .map(tidy_shell_command)
                                                 .unwrap_or_else(|| tool.input_preview.clone())
+                                        });
+
+                                        let summary_main = if is_exec_command {
+                                            tool_summary_preview(
+                                                exec_command_full
+                                                    .as_deref()
+                                                    .unwrap_or(&tool.input_preview),
+                                                240,
+                                            )
                                         } else {
-                                            tool.input_preview.clone()
+                                            tool_summary_preview(&tool.input_preview, 240)
                                         };
 
                                         let exit_code = exec_command_result
@@ -4601,16 +4647,32 @@ impl Render for SessionView {
                                                     );
                                                 }
 
-                                                details_content = details_content.child(
+                                                let command_text = exec_command_full
+                                                    .clone()
+                                                    .unwrap_or_else(|| tool.input_preview.clone());
+                                                let is_multiline_command = command_text.contains('\n');
+                                                details_content = details_content.child(if is_multiline_command {
                                                     div()
+                                                        .id((bubble_id.clone(), "exec_command_block"))
+                                                        .w_full()
+                                                        .min_w_0()
+                                                        .overflow_x_scroll()
+                                                        .scrollbar_width(px(10.0))
+                                                        .px(theme.spacing.md)
+                                                        .py(theme.spacing.sm)
+                                                        .rounded_md()
+                                                        .bg(theme.colors.surface_elevated.opacity(0.35))
+                                                        .border_1()
+                                                        .border_color(theme.colors.border.opacity(0.6))
                                                         .text_color(theme.colors.foreground)
-                                                        .child(
-                                                            exec_command
-                                                                .as_deref()
-                                                                .map(tidy_shell_command)
-                                                                .unwrap_or_else(|| tool.input_preview.clone()),
-                                                        ),
-                                                );
+                                                        .whitespace_nowrap()
+                                                        .child(command_text)
+                                                } else {
+                                                    div()
+                                                        .id((bubble_id.clone(), "exec_command_block"))
+                                                        .text_color(theme.colors.foreground)
+                                                        .child(command_text)
+                                                });
 
                                                 if let Some((_result_id, result)) = exec_command_result {
                                                     let (exit_code, remainder) =
@@ -4884,7 +4946,7 @@ impl Render for SessionView {
                                                         .min_w_0()
                                                         .text_color(theme.colors.foreground)
                                                         .truncate()
-                                                        .child(tool.output_preview.clone()),
+                                                        .child(tool_summary_preview(&tool.output_preview, 240)),
                                                 )
                                                 .when(has_error, |this| {
                                                     this.child(
