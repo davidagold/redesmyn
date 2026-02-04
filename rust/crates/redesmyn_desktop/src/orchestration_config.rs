@@ -228,6 +228,12 @@ pub fn write_repo_defaults(
 }
 
 fn normalize(defaults: &mut OrchestrationDefaults) {
+    if matches!(
+        defaults.harness.agent_kind,
+        AgentKindSelection::Auto | AgentKindSelection::Generic
+    ) {
+        defaults.harness.agent_kind = AgentKindSelection::Codex;
+    }
     if !defaults.harness.send_prelude {
         defaults.harness.submit_prelude = false;
     }

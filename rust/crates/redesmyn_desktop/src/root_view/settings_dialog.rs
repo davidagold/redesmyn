@@ -613,27 +613,14 @@ impl SettingsDialog {
             .child(self.segmented_choice_setting(
                 root,
                 "agent_kind",
-                "Agent kind",
+                "Agent",
                 &[
-                    ("auto", "Auto", AgentKindSelection::Auto),
-                    ("generic", "Generic", AgentKindSelection::Generic),
                     ("codex", "Codex", AgentKindSelection::Codex),
                     ("claude_code", "Claude Code", AgentKindSelection::ClaudeCode),
                 ],
                 self.draft.harness.agent_kind,
                 |draft, next| draft.harness.agent_kind = next,
-                "Auto chooses the agent implementation; switch if wrong.",
-                window,
-                cx,
-            ))
-            .child(self.segmented_bool_setting(
-                root,
-                "Run mode",
-                "Detached",
-                "Foreground",
-                self.draft.harness.detach,
-                |draft, next| draft.harness.detach = next,
-                "Detached runs in a tmux session; foreground runs in your current terminal.",
+                "Choose the agent. Redesmyn will select the best backend for structured operation.",
                 window,
                 cx,
             ))
@@ -990,101 +977,6 @@ impl SettingsDialog {
                 move |_, _, cx| {
                     root.update(cx, |this, cx| {
                         apply(&mut this.settings_dialog.draft, value);
-                        if !this.settings_dialog.draft.harness.send_prelude {
-                            this.settings_dialog.draft.harness.submit_prelude = false;
-                        }
-                        this.settings_dialog.notice = None;
-                        this.settings_dialog.save.clear_error();
-                        cx.notify();
-                    });
-                }
-            });
-
-            if idx > 0 {
-                group = group.child(
-                    div()
-                        .border_l_1()
-                        .border_color(theme.colors.border.opacity(0.6)),
-                );
-            }
-
-            group = group.child(cell);
-        }
-
-        div()
-            .flex()
-            .flex_col()
-            .gap(theme.spacing.xs)
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .gap(theme.spacing.md)
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.colors.foreground_muted)
-                            .child(label),
-                    )
-                    .child(group),
-            )
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(theme.colors.foreground_muted)
-                    .child(help),
-            )
-            .into_any_element()
-    }
-
-    fn segmented_bool_setting(
-        &mut self,
-        root: &Entity<RootView>,
-        label: &'static str,
-        true_label: &'static str,
-        false_label: &'static str,
-        current: bool,
-        apply: impl Fn(&mut OrchestrationDefaults, bool) + Copy + 'static,
-        help: &'static str,
-        window: &mut Window,
-        cx: &mut Context<RootView>,
-    ) -> AnyElement {
-        let theme = theme_for_window(window, cx);
-
-        let segments = [
-            ("seg_true", true_label, true, current),
-            ("seg_false", false_label, false, !current),
-        ];
-
-        let mut group = div()
-            .flex()
-            .flex_row()
-            .rounded(theme.radius.md)
-            .border_1()
-            .border_color(theme.colors.border.opacity(0.6))
-            .overflow_hidden();
-
-        for (idx, (suffix, segment_label, next, selected)) in segments.into_iter().enumerate() {
-            let mut cell = div()
-                    .id((gpui::ElementId::from((label, cx.entity_id())), suffix))
-                    .px(theme.spacing.sm)
-                    .py(theme.spacing.xs)
-                    .text_xs()
-                    .text_color(theme.colors.foreground)
-                    .when(selected, |this| this.bg(theme.colors.accent))
-                    .when(!selected, |this| {
-                        this.hover(|this| this.bg(theme.colors.surface_elevated.opacity(0.35)))
-                    })
-                    .cursor_pointer()
-                    .child(segment_label);
-
-            cell = cell.on_click({
-                let root = root.clone();
-                move |_, _, cx| {
-                    root.update(cx, |this, cx| {
-                        apply(&mut this.settings_dialog.draft, next);
                         if !this.settings_dialog.draft.harness.send_prelude {
                             this.settings_dialog.draft.harness.submit_prelude = false;
                         }
