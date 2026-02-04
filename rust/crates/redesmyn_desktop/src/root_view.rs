@@ -25,7 +25,7 @@ use redesmyn_ui::UiContext;
 use redesmyn_ui::components::{
     ButtonKind, Callout, CalloutKind, CascadingMenu, CascadingMenuMetrics, IconButton,
     OverlaySurfaceKind, ProgressPill, ScrollArea, SplitPane, SplitPaneAxis, SplitPaneEvent,
-    SplitPaneState, TextButton, TextInput, TextInputEvent, overlay_surface,
+    SplitPaneState, TextButton, TextInput, TextInputEvent, Tooltip, overlay_surface,
 };
 use redesmyn_ui::settings::ThemePreference;
 use redesmyn_ui::task_filters::{
@@ -1931,6 +1931,44 @@ impl Render for RootView {
                     }
                 });
 
+        let status_chip = |id: &'static str,
+                           dot_color: gpui::Hsla,
+                           label: &'static str,
+                           tooltip: SharedString| {
+            overlay_surface(&theme, OverlaySurfaceKind::Chrome, theme.radius.md)
+                .id((id, cx.entity_id()))
+                .px(theme.spacing.sm)
+                .py(theme.spacing.xs)
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(theme.spacing.xs)
+                .text_sm()
+                .text_color(theme.colors.foreground_muted)
+                .child(div().size(px(6.0)).rounded(px(999.0)).bg(dot_color))
+                .child(label)
+                .tooltip(move |_, cx| cx.new(|_| Tooltip::new(tooltip.clone())).into())
+        };
+
+        let control_plane_chip = status_chip(
+            "chrome_control_plane_chip",
+            status_dot_color,
+            "Control plane",
+            control_plane_label.into(),
+        );
+
+        let daemon_chip_dot_color = if model.config.desktop.embed_daemon {
+            theme.colors.ring
+        } else {
+            theme.colors.border.opacity(0.7)
+        };
+        let daemon_chip = status_chip(
+            "chrome_daemon_chip",
+            daemon_chip_dot_color,
+            "Daemon",
+            daemon_label.clone(),
+        );
+
         let epic_button =
             TextButton::new(("chrome_epic_selector", cx.entity_id()), epic_button_label)
                 .kind(ButtonKind::Ghost)
@@ -1951,8 +1989,8 @@ impl Render for RootView {
             .flex_row()
             .items_center()
             .justify_between()
-            .gap(theme.spacing.lg)
-            .bg(theme.colors.surface_elevated)
+            .gap(theme.spacing.md)
+            .bg(theme.colors.surface)
             .border_b_1()
             .border_color(theme.colors.border.opacity(0.6))
             .child(
@@ -1996,33 +2034,9 @@ impl Render for RootView {
                             .flex_row()
                             .items_center()
                             .gap(theme.spacing.xs)
-                            .child(div().size(px(8.0)).rounded(px(999.0)).bg(status_dot_color))
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme.colors.foreground_muted)
-                                    .child(control_plane_label),
-                            ),
+                            .child(control_plane_chip)
+                            .child(daemon_chip),
                     )
-                    .child(
-                        div()
-                            .w(px(1.0))
-                            .h(px(18.0))
-                            .bg(theme.colors.border.opacity(0.6)),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.colors.foreground_muted)
-                            .child(daemon_label),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(theme.spacing.sm)
                     .when(self.chrome.refresh.in_flight, |this| {
                         this.child(ProgressPill::new("Refreshing"))
                     })
