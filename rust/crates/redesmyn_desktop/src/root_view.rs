@@ -3371,6 +3371,7 @@ struct WorkspacePaneHost {
     task_filters_value_search: SharedString,
     task_filters_value_search_input: Entity<TextInput>,
     task_filters_menu_opacity: TransitionMap<&'static str>,
+    task_filters_row_hover_opacity: TransitionMap<TaskFiltersRowHoverKey>,
     sessions_collapsed: bool,
     ui_settings_error: Option<SharedString>,
     selected_epic_slug: Option<String>,
@@ -3395,6 +3396,12 @@ enum TaskFiltersFocus {
 enum TaskFiltersInputSource {
     Mouse,
     Keyboard,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum TaskFiltersRowHoverKey {
+    Category(TaskFilterCategory),
+    Value(TaskFilterCategory, usize),
 }
 
 impl Focusable for WorkspacePaneHost {
@@ -3520,6 +3527,7 @@ impl WorkspacePaneHost {
             task_filters_value_search: "".into(),
             task_filters_value_search_input,
             task_filters_menu_opacity: TransitionMap::new(),
+            task_filters_row_hover_opacity: TransitionMap::new(),
             sessions_collapsed,
             ui_settings_error: None,
             selected_epic_slug: None,
@@ -4496,6 +4504,14 @@ impl Render for WorkspacePaneHost {
                     let submenu_overlap = theme.spacing.xs;
                     let menu_item_height = px(34.0);
                     let menu_search_height = menu_item_height;
+                    let row_selected_bg = theme.colors.accent.opacity(0.9);
+                    let row_hover_bg_alpha = 0.55_f32;
+                    let row_hover_duration = ui_test_mode_animation_duration(
+                        theme
+                            .animation
+                            .fast
+                            .saturating_sub(Duration::from_millis(50)),
+                    );
 
                     let query = self.task_filters_search.trim().to_ascii_lowercase();
                     let visible_categories: Vec<TaskFilterCategory> = TaskFilterCategory::ALL
@@ -4521,6 +4537,15 @@ impl Render for WorkspacePaneHost {
                             let hovered = self.task_filters_hovered_category == Some(category);
                             let highlighted =
                                 hovered || (self.task_filters_hovered_category.is_none() && active);
+                            let hover_opacity =
+                                self.task_filters_row_hover_opacity.opacity_for_render(
+                                    TaskFiltersRowHoverKey::Category(category),
+                                    highlighted
+                                        && self.task_filters_input_source
+                                            == TaskFiltersInputSource::Mouse,
+                                    row_hover_duration,
+                                    window,
+                                );
 
                             let badge = if count > 0 {
                                 Some(
@@ -4557,17 +4582,18 @@ impl Render for WorkspacePaneHost {
                                 .px(theme.spacing.sm)
                                 .h(menu_item_height)
                                 .rounded(theme.radius.sm)
-                                .when(highlighted, |this| {
-                                    this.bg(theme.colors.surface.opacity(0.9))
-                                })
                                 .when(
-                                    self.task_filters_input_source == TaskFiltersInputSource::Mouse,
-                                    |this| {
-                                        this.hover(|this| {
-                                            this.bg(theme.colors.surface.opacity(0.8))
-                                        })
-                                    },
+                                    highlighted
+                                        && self.task_filters_input_source
+                                            == TaskFiltersInputSource::Keyboard,
+                                    |this| this.bg(row_selected_bg),
                                 )
+                                .when(hover_opacity > 1e-3, |this| {
+                                    this.bg(theme
+                                        .colors
+                                        .accent
+                                        .opacity(row_hover_bg_alpha * hover_opacity))
+                                })
                                 .cursor_pointer()
                                 .on_mouse_move(cx.listener(move |this, _, _, cx| {
                                     let mut did_change = false;
@@ -4750,6 +4776,18 @@ impl Render for WorkspacePaneHost {
                                             == TaskFiltersFocus::Values
                                             && self.task_filters_active_value_index
                                                 == display_index;
+                                        let hover_opacity =
+                                            self.task_filters_row_hover_opacity.opacity_for_render(
+                                                TaskFiltersRowHoverKey::Value(
+                                                    category,
+                                                    display_index,
+                                                ),
+                                                highlighted
+                                                    && self.task_filters_input_source
+                                                        == TaskFiltersInputSource::Mouse,
+                                                row_hover_duration,
+                                                window,
+                                            );
 
                                         let row_id = (
                                             gpui::ElementId::from((
@@ -4769,18 +4807,18 @@ impl Render for WorkspacePaneHost {
                                             .px(theme.spacing.sm)
                                             .h(menu_item_height)
                                             .rounded(theme.radius.sm)
-                                            .when(highlighted, |this| {
-                                                this.bg(theme.colors.surface.opacity(0.9))
-                                            })
                                             .when(
-                                                self.task_filters_input_source
-                                                    == TaskFiltersInputSource::Mouse,
-                                                |this| {
-                                                    this.hover(|this| {
-                                                        this.bg(theme.colors.surface.opacity(0.8))
-                                                    })
-                                                },
+                                                highlighted
+                                                    && self.task_filters_input_source
+                                                        == TaskFiltersInputSource::Keyboard,
+                                                |this| this.bg(row_selected_bg),
                                             )
+                                            .when(hover_opacity > 1e-3, |this| {
+                                                this.bg(theme
+                                                    .colors
+                                                    .accent
+                                                    .opacity(row_hover_bg_alpha * hover_opacity))
+                                            })
                                             .cursor_pointer()
                                             .on_mouse_move(cx.listener(move |this, _, _, cx| {
                                                 let mut did_change = false;
@@ -4851,6 +4889,18 @@ impl Render for WorkspacePaneHost {
                                             == TaskFiltersFocus::Values
                                             && self.task_filters_active_value_index
                                                 == display_index;
+                                        let hover_opacity =
+                                            self.task_filters_row_hover_opacity.opacity_for_render(
+                                                TaskFiltersRowHoverKey::Value(
+                                                    category,
+                                                    display_index,
+                                                ),
+                                                highlighted
+                                                    && self.task_filters_input_source
+                                                        == TaskFiltersInputSource::Mouse,
+                                                row_hover_duration,
+                                                window,
+                                            );
 
                                         let row_id = (
                                             gpui::ElementId::from((
@@ -4870,18 +4920,18 @@ impl Render for WorkspacePaneHost {
                                             .px(theme.spacing.sm)
                                             .h(menu_item_height)
                                             .rounded(theme.radius.sm)
-                                            .when(highlighted, |this| {
-                                                this.bg(theme.colors.surface.opacity(0.9))
-                                            })
                                             .when(
-                                                self.task_filters_input_source
-                                                    == TaskFiltersInputSource::Mouse,
-                                                |this| {
-                                                    this.hover(|this| {
-                                                        this.bg(theme.colors.surface.opacity(0.8))
-                                                    })
-                                                },
+                                                highlighted
+                                                    && self.task_filters_input_source
+                                                        == TaskFiltersInputSource::Keyboard,
+                                                |this| this.bg(row_selected_bg),
                                             )
+                                            .when(hover_opacity > 1e-3, |this| {
+                                                this.bg(theme
+                                                    .colors
+                                                    .accent
+                                                    .opacity(row_hover_bg_alpha * hover_opacity))
+                                            })
                                             .cursor_pointer()
                                             .on_mouse_move(cx.listener(move |this, _, _, cx| {
                                                 let mut did_change = false;
@@ -4954,6 +5004,18 @@ impl Render for WorkspacePaneHost {
                                             == TaskFiltersFocus::Values
                                             && self.task_filters_active_value_index
                                                 == display_index;
+                                        let hover_opacity =
+                                            self.task_filters_row_hover_opacity.opacity_for_render(
+                                                TaskFiltersRowHoverKey::Value(
+                                                    category,
+                                                    display_index,
+                                                ),
+                                                highlighted
+                                                    && self.task_filters_input_source
+                                                        == TaskFiltersInputSource::Mouse,
+                                                row_hover_duration,
+                                                window,
+                                            );
 
                                         let row_id = (
                                             gpui::ElementId::from((
@@ -4973,18 +5035,18 @@ impl Render for WorkspacePaneHost {
                                             .px(theme.spacing.sm)
                                             .h(menu_item_height)
                                             .rounded(theme.radius.sm)
-                                            .when(highlighted, |this| {
-                                                this.bg(theme.colors.surface.opacity(0.9))
-                                            })
                                             .when(
-                                                self.task_filters_input_source
-                                                    == TaskFiltersInputSource::Mouse,
-                                                |this| {
-                                                    this.hover(|this| {
-                                                        this.bg(theme.colors.surface.opacity(0.8))
-                                                    })
-                                                },
+                                                highlighted
+                                                    && self.task_filters_input_source
+                                                        == TaskFiltersInputSource::Keyboard,
+                                                |this| this.bg(row_selected_bg),
                                             )
+                                            .when(hover_opacity > 1e-3, |this| {
+                                                this.bg(theme
+                                                    .colors
+                                                    .accent
+                                                    .opacity(row_hover_bg_alpha * hover_opacity))
+                                            })
                                             .cursor_pointer()
                                             .on_mouse_move(cx.listener(move |this, _, _, cx| {
                                                 let mut did_change = false;
