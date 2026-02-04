@@ -1,4 +1,5 @@
 mod command_palette_overlay;
+mod settings_dialog;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -45,6 +46,7 @@ use crate::command_palette::{
     CloseCommandPalette, SelectNextCommand, SelectPreviousCommand, ToggleCommandPalette,
 };
 use crate::control_plane_client::{ControlPlaneClient, ControlPlaneClientError};
+use crate::settings_dialog_keys::{CloseSettingsDialog, ToggleSettingsDialog};
 use crate::task_filters::{
     CloseTaskFilters, OpenTaskFilters, TaskFiltersActivate, TaskFiltersClearFocusedChip,
     TaskFiltersMoveDown, TaskFiltersMoveLeft, TaskFiltersMoveRight, TaskFiltersMoveUp,
@@ -52,6 +54,7 @@ use crate::task_filters::{
 };
 
 use self::command_palette_overlay::CommandPaletteOverlay;
+use self::settings_dialog::SettingsDialog;
 
 #[derive(Debug)]
 pub struct DesktopModel {
@@ -135,6 +138,7 @@ pub struct RootView {
     workspace_pane: Entity<WorkspacePaneHost>,
     focus_handle: FocusHandle,
     command_palette: CommandPaletteOverlay,
+    settings_dialog: SettingsDialog,
     chrome: ChromeState,
     ui_updates: UiUpdateCounter,
     ui_driver_action: UserActionState,
@@ -187,6 +191,9 @@ impl RootView {
         );
 
         let palette_input = command_palette.input_entity();
+        let settings_dialog = SettingsDialog::new(focus_handle.clone(), cx);
+        let settings_command_input = settings_dialog.command_input_entity();
+        let settings_prelude_input = settings_dialog.prelude_input_entity();
 
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.observe_global::<UiContext>(|this, cx| this.notify_ui_updated(cx)));
@@ -207,6 +214,18 @@ impl RootView {
             this.ui_updates.bump();
         }));
 
+        subscriptions.push(cx.subscribe(&settings_command_input, |this, _, event, cx| {
+            this.settings_dialog
+                .handle_command_input_event(event.clone(), cx);
+            this.ui_updates.bump();
+        }));
+
+        subscriptions.push(cx.subscribe(&settings_prelude_input, |this, _, event, cx| {
+            this.settings_dialog
+                .handle_prelude_input_event(event.clone(), cx);
+            this.ui_updates.bump();
+        }));
+
         let mut this = Self {
             model,
             split_pane,
@@ -214,6 +233,7 @@ impl RootView {
             workspace_pane,
             focus_handle,
             command_palette,
+            settings_dialog,
             chrome: ChromeState::new(),
             ui_updates,
             ui_driver_action: UserActionState::default(),
@@ -275,6 +295,33 @@ impl RootView {
     ) {
         self.command_palette.handle_close_action(window, cx);
         self.ui_updates.bump();
+    }
+
+    fn toggle_settings_dialog(
+        &mut self,
+        _: &ToggleSettingsDialog,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let opening = !matches!(self.chrome.panel, Some(ChromePanel::Settings));
+        if opening && self.command_palette.is_open() {
+            self.command_palette.handle_close_action(window, cx);
+        }
+
+        self.toggle_panel(ChromePanel::Settings, cx);
+        self.ui_updates.bump();
+    }
+
+    fn close_settings_dialog(
+        &mut self,
+        _: &CloseSettingsDialog,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(self.chrome.panel, Some(ChromePanel::Settings)) {
+            self.close_panel(cx);
+            self.ui_updates.bump();
+        }
     }
 
     fn select_previous_command(
@@ -2612,72 +2659,9 @@ impl Render for RootView {
             None
         };
 
-        if matches!(self.chrome.panel, Some(ChromePanel::Settings)) {
-            let settings_panel = div()
-                .p(theme.spacing.md)
-                .rounded(theme.radius.md)
-                .bg(theme.colors.surface)
-                .border_1()
-                .border_color(theme.colors.border.opacity(0.5))
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .justify_between()
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(theme.colors.foreground)
-                                .child("Settings"),
-                        )
-                        .child(
-                            IconButton::new(("settings_close", cx.entity_id()), div().child("×"))
-                                .tooltip("Close")
-                                .on_click({
-                                    let root = root.clone();
-                                    move |_, _, cx| {
-                                        root.update(cx, |this, cx| this.close_panel(cx));
-                                    }
-                                }),
-                        ),
-                )
-                .child(
-                    div()
-                        .pt(theme.spacing.md)
-                        .flex()
-                        .gap(theme.spacing.xs)
-                        .child(theme_pref_button(
-                            "theme_light",
-                            "Light",
-                            ThemePreference::Light,
-                        ))
-                        .child(theme_pref_button(
-                            "theme_dark",
-                            "Dark",
-                            ThemePreference::Dark,
-                        ))
-                        .child(theme_pref_button(
-                            "theme_system",
-                            "System",
-                            ThemePreference::System,
-                        )),
-                )
-                .child(
-                    div()
-                        .pt(theme.spacing.md)
-                        .text_sm()
-                        .text_color(theme.colors.foreground_muted)
-                        .child("More settings coming soon."),
-                );
-
-            chrome_extras = chrome_extras.child(
-                div()
-                    .px(theme.spacing.md)
-                    .pb(theme.spacing.md)
-                    .child(settings_panel),
-            );
-        }
+        let settings_open = matches!(self.chrome.panel, Some(ChromePanel::Settings));
+        self.settings_dialog
+            .sync_visibility(settings_open, window, cx);
 
         let mut root_container = div()
             .id(("desktop_root", cx.entity_id()))
@@ -2688,6 +2672,8 @@ impl Render for RootView {
             .on_action(cx.listener(Self::close_command_palette))
             .on_action(cx.listener(Self::select_previous_command))
             .on_action(cx.listener(Self::select_next_command))
+            .on_action(cx.listener(Self::toggle_settings_dialog))
+            .on_action(cx.listener(Self::close_settings_dialog))
             .flex()
             .flex_col()
             .size_full()
@@ -2726,6 +2712,13 @@ impl Render for RootView {
 
         if self.command_palette.is_open() {
             root_container = root_container.child(self.command_palette.render(window, cx));
+        }
+
+        if let Some(dialog) = self
+            .settings_dialog
+            .render(&root, settings_open, window, cx)
+        {
+            root_container = root_container.child(dialog);
         }
 
         root_container

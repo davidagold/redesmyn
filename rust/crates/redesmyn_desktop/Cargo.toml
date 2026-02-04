@@ -27,6 +27,7 @@ serde_json.workspace = true
 sqlx = { workspace = true, features = ["sqlite", "runtime-tokio"] }
 thiserror.workspace = true
 time.workspace = true
+toml_edit.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

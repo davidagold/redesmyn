@@ -2,8 +2,10 @@ mod app;
 mod command_palette;
 mod control_plane_client;
 mod foundations_demo;
+mod orchestration_config;
 mod root_view;
 mod screenshot;
+mod settings_dialog_keys;
 mod task_filters;
 mod test_artifacts;
 mod ui_driver;
@@ -90,6 +92,7 @@ fn main() {
         }
         redesmyn_ui::components::bind_text_input_keys(cx);
         crate::command_palette::bind_command_palette_keys(cx);
+        crate::settings_dialog_keys::bind_settings_dialog_keys(cx);
         crate::task_filters::bind_task_filter_keys(cx);
 
         let window_size = gpui::Size::new(
