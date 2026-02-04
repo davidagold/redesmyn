@@ -1566,6 +1566,26 @@ impl SessionView {
         cx.notify();
     }
 
+    pub fn set_settings_menu_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        if open {
+            if self.session_settings_open {
+                return;
+            }
+
+            self.session_settings_open = true;
+            self.session_settings_hovered = None;
+            self.session_settings_focus = SessionSettingsMenuFocus::Primary;
+            self.session_settings_submenu_index = 0;
+            cx.notify();
+        } else {
+            self.close_session_settings_menu(cx);
+        }
+    }
+
+    pub fn send_settings_menu_key(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
+        self.handle_session_settings_key(key, cx)
+    }
+
     #[must_use]
     pub fn ui_composer_state(&self) -> UiComposerState {
         let Some(feed) = self.feed.as_ref() else {

@@ -1405,6 +1405,96 @@ async fn handle_ui_driver_request(
                 Err(err) => UiDriverResponseResult::Error(err),
             }
         }
+        UiDriverRequestPayload::SessionSettingsMenuSetOpen(req) => {
+            let open = req.open;
+            let span = redesmyn_logging::redesmyn_info_span!(
+                "ui_driver.session_settings_menu_set_open",
+                open
+            );
+            let _guard = span.enter();
+
+            let result: Result<(), ErrorEnvelope> = match cx.update(|cx| {
+                let Some(root) = root.upgrade() else {
+                    return Err(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "UI is unavailable.",
+                    ));
+                };
+
+                let session_view = {
+                    let root_ref = root.read(cx);
+                    root_ref.session_pane.read(cx).session_view.clone()
+                };
+
+                session_view.update(cx, |view, cx| view.set_settings_menu_open(open, cx));
+                root.update(cx, |this, cx| this.notify_ui_updated(cx));
+
+                Ok(())
+            }) {
+                Ok(result) => result,
+                Err(_) => {
+                    return UiDriverResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "UI is unavailable.",
+                    ));
+                }
+            };
+
+            match result {
+                Ok(()) => UiDriverResponseResult::SessionSettingsMenuSetOpen(
+                    redesmyn_protocol::ui_driver::SessionSettingsMenuSetOpenResponse {},
+                ),
+                Err(err) => UiDriverResponseResult::Error(err),
+            }
+        }
+        UiDriverRequestPayload::SessionSettingsMenuSendKey(req) => {
+            let key = req.key;
+            let span = redesmyn_logging::redesmyn_info_span!(
+                "ui_driver.session_settings_menu_send_key",
+                key = %key
+            );
+            let _guard = span.enter();
+
+            let result: Result<(), ErrorEnvelope> = match cx.update(|cx| {
+                let Some(root) = root.upgrade() else {
+                    return Err(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "UI is unavailable.",
+                    ));
+                };
+
+                let session_view = {
+                    let root_ref = root.read(cx);
+                    root_ref.session_pane.read(cx).session_view.clone()
+                };
+
+                let handled = session_view.update(cx, |view, cx| view.send_settings_menu_key(&key, cx));
+                if !handled {
+                    return Err(ErrorEnvelope::new(
+                        ErrorCategory::InvalidRequest,
+                        format!("Unrecognized settings menu key: {key}"),
+                    ));
+                }
+
+                root.update(cx, |this, cx| this.notify_ui_updated(cx));
+                Ok(())
+            }) {
+                Ok(result) => result,
+                Err(_) => {
+                    return UiDriverResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "UI is unavailable.",
+                    ));
+                }
+            };
+
+            match result {
+                Ok(()) => UiDriverResponseResult::SessionSettingsMenuSendKey(
+                    redesmyn_protocol::ui_driver::SessionSettingsMenuSendKeyResponse {},
+                ),
+                Err(err) => UiDriverResponseResult::Error(err),
+            }
+        }
         other => UiDriverResponseResult::Error(ErrorEnvelope::new(
             ErrorCategory::InvalidRequest,
             format!("unimplemented ui driver request: {other:?}"),
