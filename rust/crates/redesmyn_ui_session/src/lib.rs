@@ -966,6 +966,7 @@ pub struct SessionView {
     timeline_items: Rc<Vec<SessionTimelineItem>>,
     timeline_follow_bottom: Rc<Cell<bool>>,
     timeline_scroll_to_bottom_pending: bool,
+    timeline_scrollbar_hidden: bool,
     timeline_last_scroll_offset: gpui::Pixels,
     timeline_scroll_handler_installed: bool,
     timeline_viewport_width: Option<gpui::Pixels>,
@@ -1108,6 +1109,7 @@ impl SessionView {
             timeline_items: Rc::new(Vec::new()),
             timeline_follow_bottom: Rc::new(Cell::new(false)),
             timeline_scroll_to_bottom_pending: false,
+            timeline_scrollbar_hidden: false,
             timeline_last_scroll_offset: px(0.0),
             timeline_scroll_handler_installed: false,
             timeline_viewport_width: None,
@@ -1545,6 +1547,7 @@ impl SessionView {
             self.timeline_list_reset_task = None;
             self.timeline_list_reset_pending_scroll_top = None;
             self.timeline_autoload_scheduled = false;
+            self.timeline_scrollbar_hidden = false;
             self.reasoning_shimmer_phase = 0;
             self.reasoning_shimmer_task = None;
             self.pending_focus_composer = false;
@@ -2706,6 +2709,9 @@ impl SessionView {
     }
 
     fn schedule_list_reset(&mut self, scroll_top: ListOffset, cx: &mut Context<Self>) {
+        if !self.timeline_scrollbar_hidden {
+            self.timeline_scrollbar_hidden = true;
+        }
         self.timeline_list_reset_pending_scroll_top = Some(scroll_top);
         self.timeline_list_reset_generation = self.timeline_list_reset_generation.wrapping_add(1);
         let generation = self.timeline_list_reset_generation;
@@ -2725,6 +2731,7 @@ impl SessionView {
                         else {
                             return;
                         };
+                        this.timeline_scrollbar_hidden = false;
                         this.timeline_list_state
                             .reset(this.timeline_items.len() + 1);
                         this.timeline_list_state.scroll_to(scroll_top);
@@ -5644,17 +5651,22 @@ impl Render for SessionView {
         .w_full()
         .min_w_0()
         .bg(theme.colors.surface);
-        let feed_list = StyledScrollbar::for_list_state(
-            ("session_timeline_scrollbar", entity_id),
-            timeline_list_state,
-            feed_list,
-        )
-        .style(ScrollbarStyle {
-            // Prefer placing the thumb in the "gutter" when the session timeline is embedded in a
-            // padded container (e.g. details panels).
-            inset: -theme.spacing.sm,
-            ..ScrollbarStyle::default()
-        });
+        let feed_list = if self.timeline_scrollbar_hidden {
+            feed_list.into_any_element()
+        } else {
+            StyledScrollbar::for_list_state(
+                ("session_timeline_scrollbar", entity_id),
+                timeline_list_state,
+                feed_list,
+            )
+            .style(ScrollbarStyle {
+                // Prefer placing the thumb in the "gutter" when the session timeline is embedded in a
+                // padded container (e.g. details panels).
+                inset: -theme.spacing.sm,
+                ..ScrollbarStyle::default()
+            })
+            .into_any_element()
+        };
 
         let mut composer_callout = None;
         if let Some(feed) = self.feed.as_ref() {
