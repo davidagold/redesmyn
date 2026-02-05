@@ -2715,7 +2715,7 @@ impl SessionView {
         self.timeline_list_reset_pending_scroll_top = Some(scroll_top);
         self.timeline_list_reset_generation = self.timeline_list_reset_generation.wrapping_add(1);
         let generation = self.timeline_list_reset_generation;
-        let debounce = ui_test_mode_animation_duration(Duration::from_millis(150));
+        let debounce = ui_test_mode_animation_duration(Duration::from_millis(50));
         self.timeline_list_reset_task = Some(cx.spawn(move |weak: WeakEntity<Self>, cx: &mut AsyncApp| {
             let cx = cx.clone();
             async move {
