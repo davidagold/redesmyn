@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui::{
-    AnyElement, Context, Entity, FocusHandle, MouseButton, ScrollHandle, SharedString, WeakEntity,
-    Window, div, prelude::*, px,
+    AnyElement, Context, Entity, FocusHandle, FontWeight, MouseButton, ScrollHandle, SharedString,
+    WeakEntity, Window, div, prelude::*, px,
 };
 
 use redesmyn_ui::UiContext;
@@ -708,7 +708,7 @@ impl SettingsDialog {
             )
             .child(
                 div()
-                    .text_xs()
+                    .text_sm()
                     .text_color(theme.colors.foreground_muted)
                     .child("Theme preference"),
             )
@@ -725,6 +725,8 @@ impl SettingsDialog {
         let theme = theme_for_window(window, cx);
 
         let mut body = div().flex().flex_col().gap(theme.spacing.lg);
+        let agent_section = self.agent_section_agent(root, window, cx);
+        let prelude_section = self.agent_section_prelude(root, window, cx);
 
         body = body
             .child(
@@ -733,10 +735,37 @@ impl SettingsDialog {
                     .text_color(theme.colors.foreground)
                     .child("Agents"),
             )
-            .child(self.agent_section_agent(root, window, cx))
-            .child(self.agent_section_prelude(root, window, cx));
+            .child(self.section_card("Agent", agent_section, window, cx))
+            .child(self.section_card("Prelude", prelude_section, window, cx));
 
         body.into_any_element()
+    }
+
+    fn section_card(
+        &mut self,
+        title: &'static str,
+        body: AnyElement,
+        window: &mut Window,
+        cx: &mut Context<RootView>,
+    ) -> AnyElement {
+        let theme = theme_for_window(window, cx);
+
+        div()
+            .p(theme.spacing.lg)
+            .rounded(theme.radius.lg)
+            .bg(theme.colors.surface_elevated.opacity(0.2))
+            .flex()
+            .flex_col()
+            .gap(theme.spacing.md)
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.colors.foreground)
+                    .child(title),
+            )
+            .child(body)
+            .into_any_element()
     }
 
     fn agent_section_agent(
@@ -750,13 +779,7 @@ impl SettingsDialog {
         div()
             .flex()
             .flex_col()
-            .gap(theme.spacing.md)
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(theme.colors.foreground)
-                    .child("Agent"),
-            )
+            .gap(theme.spacing.lg)
             .child(self.segmented_choice_setting(
                 root,
                 "agent_kind",
@@ -789,10 +812,17 @@ impl SettingsDialog {
             .flex()
             .flex_col()
             .gap(theme.spacing.md)
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.colors.foreground)
+                    .child("Sandbox"),
+            )
             .child(self.segmented_choice_setting(
                 root,
                 "sandbox_type",
-                "Sandbox",
+                "Type",
                 &[
                     ("off", "Off", SandboxType::None),
                     ("worktree", "Worktree", SandboxType::Worktree),
@@ -826,7 +856,7 @@ impl SettingsDialog {
             ))
             .child(
                 div()
-                    .text_sm()
+                    .text_xs()
                     .text_color(theme.colors.foreground_muted)
                     .child("Enable “Deny network” to force offline operation."),
             )
@@ -865,13 +895,7 @@ impl SettingsDialog {
         div()
             .flex()
             .flex_col()
-            .gap(theme.spacing.md)
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(theme.colors.foreground)
-                    .child("Prelude"),
-            )
+            .gap(theme.spacing.lg)
             .child(
                 div()
                     .flex()
@@ -881,15 +905,21 @@ impl SettingsDialog {
                     .child(
                         div()
                             .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
                             .text_color(theme.colors.foreground_muted)
                             .child("Agent prelude"),
                     )
                     .child(show_default_button),
             )
-            .child(self.prelude_input.clone())
             .child(
                 div()
-                    .text_sm()
+                    .font(theme.typography.mono.font.clone())
+                    .text_size(theme.typography.mono.size)
+                    .child(self.prelude_input.clone()),
+            )
+            .child(
+                div()
+                    .text_xs()
                     .text_color(theme.colors.foreground_muted)
                     .child("Sent to the agent right after the harness starts. Use it to point the agent at relevant docs and guidance."),
             )
@@ -912,11 +942,12 @@ impl SettingsDialog {
         div()
             .flex()
             .flex_col()
-            .gap(theme.spacing.xs)
+            .gap(theme.spacing.md)
             .child(
                 div()
                     .text_sm()
-                    .text_color(theme.colors.foreground_muted)
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.colors.foreground)
                     .child("Prelude delivery"),
             )
             .child(self.boolean_row(
@@ -948,7 +979,7 @@ impl SettingsDialog {
             ))
             .child(
                 div()
-                    .text_sm()
+                    .text_xs()
                     .text_color(theme.colors.foreground_muted)
                     .child("Auto-send types the prelude into the harness. Press Enter submits it so the agent starts working immediately."),
             )
@@ -979,7 +1010,7 @@ impl SettingsDialog {
                 .child(
                     div()
                         .flex_1()
-                        .text_sm()
+                        .text_xs()
                         .text_color(theme.colors.foreground_muted)
                         .child(description),
                 )
@@ -1013,6 +1044,7 @@ impl SettingsDialog {
             .child(
                 div()
                     .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme.colors.foreground_muted)
                     .child("Available placeholders"),
             )
@@ -1103,7 +1135,7 @@ impl SettingsDialog {
                     .gap(theme.spacing.md)
                     .child(
                         div()
-                            .text_xs()
+                            .text_sm()
                             .text_color(theme.colors.foreground_muted)
                             .child(label),
                     )
@@ -1111,7 +1143,7 @@ impl SettingsDialog {
             )
             .child(
                 div()
-                    .text_sm()
+                    .text_xs()
                     .text_color(theme.colors.foreground_muted)
                     .child(help),
             )
@@ -1192,7 +1224,7 @@ impl SettingsDialog {
             .gap(theme.spacing.md)
             .child(
                 div()
-                    .text_xs()
+                    .text_sm()
                     .text_color(if disabled {
                         theme.colors.foreground_muted
                     } else {
