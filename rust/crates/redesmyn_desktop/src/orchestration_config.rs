@@ -108,6 +108,115 @@ impl std::str::FromStr for SandboxNetworkMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodexApprovalPolicyDefault {
+    Default,
+    UnlessTrusted,
+    OnFailure,
+    OnRequest,
+    Never,
+}
+
+impl CodexApprovalPolicyDefault {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::UnlessTrusted => "untrusted",
+            Self::OnFailure => "on_failure",
+            Self::OnRequest => "on_request",
+            Self::Never => "never",
+        }
+    }
+}
+
+impl Default for CodexApprovalPolicyDefault {
+    fn default() -> Self {
+        Self::Default
+    }
+}
+
+impl std::str::FromStr for CodexApprovalPolicyDefault {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "default" => Ok(Self::Default),
+            "untrusted" => Ok(Self::UnlessTrusted),
+            "on_failure" | "on-failure" => Ok(Self::OnFailure),
+            "on_request" | "on-request" => Ok(Self::OnRequest),
+            "never" => Ok(Self::Never),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodexSandboxPolicyDefault {
+    Default,
+    ReadOnly,
+    WorkspaceWrite,
+    DangerFullAccess,
+}
+
+impl CodexSandboxPolicyDefault {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::ReadOnly => "read_only",
+            Self::WorkspaceWrite => "workspace_write",
+            Self::DangerFullAccess => "danger_full_access",
+        }
+    }
+}
+
+impl Default for CodexSandboxPolicyDefault {
+    fn default() -> Self {
+        Self::Default
+    }
+}
+
+impl std::str::FromStr for CodexSandboxPolicyDefault {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "default" => Ok(Self::Default),
+            "read_only" | "read-only" => Ok(Self::ReadOnly),
+            "workspace_write" | "workspace-write" => Ok(Self::WorkspaceWrite),
+            "danger_full_access" | "danger-full-access" => Ok(Self::DangerFullAccess),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodexSessionDefaults {
+    pub approval_policy: CodexApprovalPolicyDefault,
+    pub sandbox_policy: CodexSandboxPolicyDefault,
+}
+
+impl Default for CodexSessionDefaults {
+    fn default() -> Self {
+        Self {
+            approval_policy: CodexApprovalPolicyDefault::Default,
+            sandbox_policy: CodexSandboxPolicyDefault::Default,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionDefaults {
+    pub codex: CodexSessionDefaults,
+}
+
+impl Default for SessionDefaults {
+    fn default() -> Self {
+        Self {
+            codex: CodexSessionDefaults::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HarnessDefaults {
     pub command: Option<String>,
@@ -136,6 +245,7 @@ pub struct OrchestrationDefaults {
     pub harness: HarnessDefaults,
     pub sandbox_type: SandboxType,
     pub sandbox_network: SandboxNetworkMode,
+    pub session_defaults: SessionDefaults,
 }
 
 impl Default for OrchestrationDefaults {
@@ -144,6 +254,7 @@ impl Default for OrchestrationDefaults {
             harness: HarnessDefaults::default(),
             sandbox_type: SandboxType::None,
             sandbox_network: SandboxNetworkMode::Allow,
+            session_defaults: SessionDefaults::default(),
         }
     }
 }
@@ -163,6 +274,18 @@ struct PartialOrchestrationDefaults {
     harness: PartialHarnessDefaults,
     sandbox_type: Option<SandboxType>,
     sandbox_network: Option<SandboxNetworkMode>,
+    session_defaults: PartialSessionDefaults,
+}
+
+#[derive(Debug, Clone, Default)]
+struct PartialSessionDefaults {
+    codex: PartialCodexSessionDefaults,
+}
+
+#[derive(Debug, Clone, Default)]
+struct PartialCodexSessionDefaults {
+    approval_policy: Option<CodexApprovalPolicyDefault>,
+    sandbox_policy: Option<CodexSandboxPolicyDefault>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -304,6 +427,23 @@ fn parse_partial_from_doc(doc: &DocumentMut) -> PartialOrchestrationDefaults {
             .and_then(|value| value.parse::<SandboxNetworkMode>().ok());
     }
 
+    if let Some(session_defaults) = doc
+        .get("session_defaults")
+        .and_then(|item| item.as_table())
+    {
+        if let Some(codex) = session_defaults.get("codex").and_then(|item| item.as_table()) {
+            partial.session_defaults.codex.approval_policy = codex
+                .get("approval_policy")
+                .and_then(|item| item.as_str())
+                .and_then(|value| value.parse::<CodexApprovalPolicyDefault>().ok());
+
+            partial.session_defaults.codex.sandbox_policy = codex
+                .get("sandbox_policy")
+                .and_then(|item| item.as_str())
+                .and_then(|value| value.parse::<CodexSandboxPolicyDefault>().ok());
+        }
+    }
+
     partial
 }
 
@@ -332,6 +472,13 @@ fn apply_partial(defaults: &mut OrchestrationDefaults, partial: PartialOrchestra
     }
     if let Some(sandbox_network) = partial.sandbox_network {
         defaults.sandbox_network = sandbox_network;
+    }
+
+    if let Some(approval_policy) = partial.session_defaults.codex.approval_policy {
+        defaults.session_defaults.codex.approval_policy = approval_policy;
+    }
+    if let Some(sandbox_policy) = partial.session_defaults.codex.sandbox_policy {
+        defaults.session_defaults.codex.sandbox_policy = sandbox_policy;
     }
 }
 
@@ -406,6 +553,27 @@ fn write_defaults_to_path(
     sandbox["type"] = value(defaults.sandbox_type.as_str());
     sandbox["network"] = value(defaults.sandbox_network.as_str());
 
+    let session_defaults = ensure_table(&mut doc, "session_defaults");
+    let codex = ensure_subtable(session_defaults, "codex");
+
+    match defaults.session_defaults.codex.approval_policy {
+        CodexApprovalPolicyDefault::Default => {
+            codex.remove("approval_policy");
+        }
+        other => {
+            codex["approval_policy"] = value(other.as_str());
+        }
+    }
+
+    match defaults.session_defaults.codex.sandbox_policy {
+        CodexSandboxPolicyDefault::Default => {
+            codex.remove("sandbox_policy");
+        }
+        other => {
+            codex["sandbox_policy"] = value(other.as_str());
+        }
+    }
+
     fs::write(path, doc.to_string()).map_err(|source| OrchestrationConfigError::Write {
         path: path.to_path_buf(),
         source,
@@ -415,6 +583,14 @@ fn write_defaults_to_path(
 
 fn ensure_table<'a>(doc: &'a mut DocumentMut, key: &str) -> &'a mut Table {
     let entry = doc.entry(key).or_insert(Item::Table(Table::new()));
+    if !entry.is_table() {
+        *entry = Item::Table(Table::new());
+    }
+    entry.as_table_mut().expect("table inserted above")
+}
+
+fn ensure_subtable<'a>(table: &'a mut Table, key: &str) -> &'a mut Table {
+    let entry = table.entry(key).or_insert(Item::Table(Table::new()));
     if !entry.is_table() {
         *entry = Item::Table(Table::new());
     }

@@ -16,9 +16,9 @@ use redesmyn_ui::utils::{
 };
 
 use crate::orchestration_config::{
-    AgentKindSelection, OrchestrationConfigError, OrchestrationDefaults, SandboxNetworkMode,
-    SandboxType, load_effective_defaults, repo_config_path, repo_root_from_cwd,
-    write_repo_defaults,
+    AgentKindSelection, CodexApprovalPolicyDefault, CodexSandboxPolicyDefault,
+    OrchestrationConfigError, OrchestrationDefaults, SandboxNetworkMode, SandboxType,
+    load_effective_defaults, repo_config_path, repo_root_from_cwd, write_repo_defaults,
 };
 
 use super::RootView;
@@ -776,7 +776,7 @@ impl SettingsDialog {
     ) -> AnyElement {
         let theme = theme_for_window(window, cx);
 
-        div()
+        let mut body = div()
             .flex()
             .flex_col()
             .gap(theme.spacing.lg)
@@ -794,8 +794,20 @@ impl SettingsDialog {
                 window,
                 cx,
             ))
-            .child(self.sandbox_settings(root, window, cx))
-            .into_any_element()
+            .child(self.sandbox_settings(root, window, cx));
+
+        if self.draft.harness.agent_kind == AgentKindSelection::Codex {
+            body = body.child(self.codex_session_defaults_settings(root, window, cx));
+        } else {
+            body = body.child(
+                div()
+                    .text_xs()
+                    .text_color(theme.colors.foreground_muted)
+                    .child("Session defaults are currently only configurable for Codex."),
+            );
+        }
+
+        body.into_any_element()
     }
 
     fn sandbox_settings(
@@ -817,7 +829,7 @@ impl SettingsDialog {
                     .text_sm()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(theme.colors.foreground)
-                    .child("Sandbox"),
+                    .child("Worktree sandbox"),
             )
             .child(self.segmented_choice_setting(
                 root,
@@ -859,6 +871,79 @@ impl SettingsDialog {
                     .text_xs()
                     .text_color(theme.colors.foreground_muted)
                     .child("Enable “Deny network” to force offline operation."),
+            )
+            .into_any_element()
+    }
+
+    fn codex_session_defaults_settings(
+        &mut self,
+        root: &Entity<RootView>,
+        window: &mut Window,
+        cx: &mut Context<RootView>,
+    ) -> AnyElement {
+        let theme = theme_for_window(window, cx);
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(theme.spacing.md)
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.colors.foreground)
+                    .child("Session defaults"),
+            )
+            .child(self.segmented_choice_setting(
+                root,
+                "codex_approval_policy_default",
+                "Permissions",
+                &[
+                    ("default", "Default", CodexApprovalPolicyDefault::Default),
+                    (
+                        "unless_trusted",
+                        "Unless trusted",
+                        CodexApprovalPolicyDefault::UnlessTrusted,
+                    ),
+                    ("on_request", "On request", CodexApprovalPolicyDefault::OnRequest),
+                    ("on_failure", "On failure", CodexApprovalPolicyDefault::OnFailure),
+                    ("never", "Never", CodexApprovalPolicyDefault::Never),
+                ],
+                self.draft.session_defaults.codex.approval_policy,
+                |draft, next| draft.session_defaults.codex.approval_policy = next,
+                "Default Codex approvals policy for new sessions.",
+                window,
+                cx,
+            ))
+            .child(self.segmented_choice_setting(
+                root,
+                "codex_sandbox_policy_default",
+                "Sandbox",
+                &[
+                    ("default", "Default", CodexSandboxPolicyDefault::Default),
+                    ("read_only", "Read-only", CodexSandboxPolicyDefault::ReadOnly),
+                    (
+                        "workspace_write",
+                        "Workspace write",
+                        CodexSandboxPolicyDefault::WorkspaceWrite,
+                    ),
+                    (
+                        "danger_full_access",
+                        "Danger: full access",
+                        CodexSandboxPolicyDefault::DangerFullAccess,
+                    ),
+                ],
+                self.draft.session_defaults.codex.sandbox_policy,
+                |draft, next| draft.session_defaults.codex.sandbox_policy = next,
+                "Default Codex sandbox policy for new sessions.",
+                window,
+                cx,
+            ))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.colors.foreground_muted)
+                    .child("You can override these per session from the composer Settings menu."),
             )
             .into_any_element()
     }
