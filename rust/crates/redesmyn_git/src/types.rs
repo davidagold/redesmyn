@@ -80,7 +80,11 @@ impl GitRevision {
         if value.trim().is_empty() {
             return Err(InvalidGitRevisionError { input: value });
         }
-        if value.as_bytes().iter().any(|b| *b == 0) {
+        if value
+            .as_bytes()
+            .iter()
+            .any(|b| *b == 0 || *b == b'\n' || *b == b'\r')
+        {
             return Err(InvalidGitRevisionError { input: value });
         }
         Ok(Self(value))

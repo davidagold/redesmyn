@@ -201,6 +201,8 @@ async fn wait_for_cancel(cancel_rx: &mut tokio::sync::watch::Receiver<bool>) {
             return;
         }
         if cancel_rx.changed().await.is_err() {
+            // If the sender is dropped, treat cancellation as disabled.
+            std::future::pending::<()>().await;
             return;
         }
     }
