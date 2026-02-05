@@ -26,8 +26,8 @@ use redesmyn_ui::UiContext;
 use redesmyn_ui::components::{
     ButtonKind, Callout, CalloutKind, CascadingMenu, CascadingMenuMetrics,
     CascadingMenuSecondarySide, IconButton, OverlaySurfaceKind, ProgressPill, ScrollArea,
-    SplitPane, SplitPaneAxis, SplitPaneEvent, SplitPaneState, TextButton, TextInput,
-    TextInputEvent, overlay_surface,
+    SplitPane, SplitPaneAxis, SplitPaneEvent, SplitPaneResizeMode, SplitPaneState, TextButton,
+    TextInput, TextInputEvent, overlay_surface,
 };
 use redesmyn_ui::settings::ThemePreference;
 use redesmyn_ui::task_filters::{
@@ -175,6 +175,7 @@ impl RootView {
                 split_secondary.into(),
             )
             .min_primary_px(280.0)
+            .resize_mode(SplitPaneResizeMode::Deferred)
         });
 
         let focus_handle = cx.focus_handle();
