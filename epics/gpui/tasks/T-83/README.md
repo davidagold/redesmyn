@@ -1,7 +1,7 @@
 ---
 epic: gpui
 branch:
-  suggested: rn/gpui/T-83-cascading-menu-polish
+  suggested: rn/gpui/T-83-ui-cascading-menu-polish
 rn:
   parent: T-81
 ---
@@ -43,4 +43,3 @@ come). The initial cascading menu work is functional, but:
 - Opening a cascading menu automatically closes any other open cascading menu.
 - Option rows show consistent hover/keyboard highlight and indicator contrast.
 - UI-driver smoke commands stay small/readable and are easy to extend.
-
