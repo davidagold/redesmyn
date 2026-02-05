@@ -175,7 +175,7 @@ impl RootView {
                 split_secondary.into(),
             )
             .min_primary_px(280.0)
-            .resize_mode(SplitPaneResizeMode::Deferred)
+            .resize_mode(SplitPaneResizeMode::Live)
         });
 
         let focus_handle = cx.focus_handle();

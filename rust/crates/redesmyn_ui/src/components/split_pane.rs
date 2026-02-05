@@ -58,6 +58,7 @@ pub struct SplitPane {
     resize_mode: SplitPaneResizeMode,
     dragging: Option<DragState>,
     drag_preview_primary_px: Option<f32>,
+    drag_render_pending: bool,
     primary: gpui::AnyView,
     secondary: gpui::AnyView,
 }
@@ -101,6 +102,7 @@ impl SplitPane {
             resize_mode: SplitPaneResizeMode::default(),
             dragging: None,
             drag_preview_primary_px: None,
+            drag_render_pending: false,
             primary,
             secondary,
         }
@@ -123,8 +125,17 @@ impl SplitPane {
     pub fn toggle_collapsed(&mut self, cx: &mut Context<Self>) {
         self.dragging = None;
         self.drag_preview_primary_px = None;
+        self.drag_render_pending = false;
         self.state.collapsed = !self.state.collapsed;
         cx.emit(SplitPaneEvent::StateChanged(self.state));
+        cx.notify();
+    }
+
+    fn request_drag_render(&mut self, cx: &mut Context<Self>) {
+        if self.drag_render_pending {
+            return;
+        }
+        self.drag_render_pending = true;
         cx.notify();
     }
 
@@ -141,6 +152,7 @@ impl SplitPane {
             origin: event.position,
             start_primary_px: self.state.primary_size_px,
         });
+        self.drag_render_pending = false;
         if self.resize_mode == SplitPaneResizeMode::Deferred {
             self.drag_preview_primary_px = Some(self.state.primary_size_px);
         }
@@ -150,6 +162,7 @@ impl SplitPane {
     fn on_mouse_up(&mut self, _: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let dragging = self.dragging.take();
         if let Some(dragging) = dragging {
+            self.drag_render_pending = false;
             if self.resize_mode == SplitPaneResizeMode::Deferred {
                 if let Some(preview) = self.drag_preview_primary_px.take() {
                     self.state.primary_size_px = preview;
@@ -221,7 +234,7 @@ impl SplitPane {
                 self.drag_preview_primary_px = Some(primary_size_px);
             }
         }
-        cx.notify();
+        self.request_drag_render(cx);
     }
 
     fn on_divider_click(
@@ -238,6 +251,7 @@ impl SplitPane {
 
 impl Render for SplitPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.drag_render_pending = false;
         let theme = theme_for_window(window, cx);
         let axis = self.axis;
 
