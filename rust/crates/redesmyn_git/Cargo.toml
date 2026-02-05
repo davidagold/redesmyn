@@ -7,8 +7,6 @@ version.workspace = true
 publish = false
 
 [dependencies]
-redesmyn_domain.workspace = true
-redesmyn_ids.workspace = true
 redesmyn_logging.workspace = true
 redesmyn_protocol.workspace = true
 thiserror.workspace = true

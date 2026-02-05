@@ -545,13 +545,13 @@ impl GitBackend for GitCliBackend {
                 op: "worktree_add",
                 reason: "worktree path is not utf-8".to_owned(),
             })?;
+            // Prevent option-like paths (e.g. `--help`) from being parsed as flags.
+            args.push("--");
             args.push(path_str);
 
             match target {
                 GitWorktreeTarget::Head => {}
                 GitWorktreeTarget::Revision(rev) => {
-                    // Prevent option-like revs (e.g. `--help`) from being parsed as flags.
-                    args.push("--");
                     args.push(rev.as_str());
                 }
             }
