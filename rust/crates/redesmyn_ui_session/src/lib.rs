@@ -969,7 +969,9 @@ pub struct SessionView {
     timeline_last_scroll_offset: gpui::Pixels,
     timeline_scroll_handler_installed: bool,
     timeline_viewport_width: Option<gpui::Pixels>,
-    timeline_list_reset_scheduled: bool,
+    timeline_list_reset_generation: u64,
+    timeline_list_reset_task: Option<Task<()>>,
+    timeline_list_reset_pending_scroll_top: Option<ListOffset>,
     timeline_autoload_scheduled: bool,
     reasoning_scroll_states: Rc<RefCell<BoundedCache<String, ReasoningScrollState>>>,
     tool_event_scroll_handles: Rc<RefCell<BoundedCache<SessionEventId, ScrollHandle>>>,
@@ -1109,7 +1111,9 @@ impl SessionView {
             timeline_last_scroll_offset: px(0.0),
             timeline_scroll_handler_installed: false,
             timeline_viewport_width: None,
-            timeline_list_reset_scheduled: false,
+            timeline_list_reset_generation: 0,
+            timeline_list_reset_task: None,
+            timeline_list_reset_pending_scroll_top: None,
             timeline_autoload_scheduled: false,
             reasoning_scroll_states: Rc::new(RefCell::new(BoundedCache::new(
                 REASONING_SCROLL_STATE_CACHE_CAPACITY,
@@ -1537,7 +1541,9 @@ impl SessionView {
             self.markdown_cache.borrow_mut().clear();
             self.full_text_message_states.borrow_mut().clear();
             self.set_timeline_items(Vec::new());
-            self.timeline_list_reset_scheduled = false;
+            self.timeline_list_reset_generation = 0;
+            self.timeline_list_reset_task = None;
+            self.timeline_list_reset_pending_scroll_top = None;
             self.timeline_autoload_scheduled = false;
             self.reasoning_shimmer_phase = 0;
             self.reasoning_shimmer_task = None;
@@ -2700,18 +2706,25 @@ impl SessionView {
     }
 
     fn schedule_list_reset(&mut self, scroll_top: ListOffset, cx: &mut Context<Self>) {
-        if self.timeline_list_reset_scheduled {
-            return;
-        }
-
-        self.timeline_list_reset_scheduled = true;
-        let view = cx.entity();
-        cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+        self.timeline_list_reset_pending_scroll_top = Some(scroll_top);
+        self.timeline_list_reset_generation = self.timeline_list_reset_generation.wrapping_add(1);
+        let generation = self.timeline_list_reset_generation;
+        let debounce = ui_test_mode_animation_duration(Duration::from_millis(150));
+        self.timeline_list_reset_task = Some(cx.spawn(move |weak: WeakEntity<Self>, cx: &mut AsyncApp| {
             let cx = cx.clone();
             async move {
+                gpui::Timer::after(debounce).await;
+                let Some(view) = weak.upgrade() else { return };
                 let _ = cx.update(|cx| {
                     view.update(cx, |this, cx| {
-                        this.timeline_list_reset_scheduled = false;
+                        if this.timeline_list_reset_generation != generation {
+                            return;
+                        }
+                        this.timeline_list_reset_task = None;
+                        let Some(scroll_top) = this.timeline_list_reset_pending_scroll_top.take()
+                        else {
+                            return;
+                        };
                         this.timeline_list_state
                             .reset(this.timeline_items.len() + 1);
                         this.timeline_list_state.scroll_to(scroll_top);
@@ -2719,8 +2732,7 @@ impl SessionView {
                     })
                 });
             }
-        })
-        .detach();
+        }));
     }
 
     fn on_timeline_scrolled(
