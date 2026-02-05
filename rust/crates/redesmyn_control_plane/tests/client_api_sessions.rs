@@ -18,8 +18,7 @@ use redesmyn_protocol::client::{
 use redesmyn_protocol::session::{AssistantMessage, SessionEventKind, SessionScope, UserMessage};
 use redesmyn_protocol::{ProtocolEnvelope, RepoScope, SessionEvent, Timestamp};
 use redesmyn_storage::schema::{
-    AgentInterfaceMode as StorageAgentInterfaceMode, AgentKind as StorageAgentKind,
-    AgentSessionScopeKind as StorageAgentSessionScopeKind,
+    AgentKind as StorageAgentKind, AgentSessionScopeKind as StorageAgentSessionScopeKind,
     AgentSessionStatus as StorageAgentSessionStatus,
 };
 use redesmyn_storage::sessions::{AgentSessionRecord, insert_agent_session};
@@ -197,7 +196,6 @@ async fn uds_server_supports_session_query_surfaces() {
         scope_kind: StorageAgentSessionScopeKind::Task,
         task_id: Some(task_id),
         agent_kind: StorageAgentKind::Codex,
-        interface_mode: StorageAgentInterfaceMode::StructuredExec,
         status: StorageAgentSessionStatus::Running,
         external_session_ref: r#"{"type":"none"}"#.to_owned(),
         title: None,

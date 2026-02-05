@@ -235,28 +235,3 @@ impl fmt::Display for AgentKind {
         f.write_str(self.as_str())
     }
 }
-
-/// Agent runtime kind persisted on `agent_sessions.interface_mode`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AgentInterfaceMode {
-    ShellTmux,
-    StructuredExec,
-    AppServer,
-}
-
-impl AgentInterfaceMode {
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::ShellTmux => "shell_tmux",
-            Self::StructuredExec => "structured_exec",
-            Self::AppServer => "app_server",
-        }
-    }
-}
-
-impl fmt::Display for AgentInterfaceMode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}

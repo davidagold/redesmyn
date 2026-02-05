@@ -440,10 +440,9 @@ async fn insert_session_event(
             scope_kind,
             task_id,
             agent_kind,
-            interface_mode,
             status
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, 'task', ?6, 'shell', 'shell_tmux', 'stopped')
+        VALUES (?1, ?2, ?3, ?4, ?5, 'task', ?6, 'shell', 'stopped')
         "#,
     )
     .bind(session_id)

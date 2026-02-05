@@ -23,7 +23,7 @@ use redesmyn_client_api::Client;
 use redesmyn_ids::{ArtifactId, SessionEventId, SessionId, SubscriptionId, TaskId};
 use redesmyn_markdown::{MarkdownDoc, MarkdownParseOptions, parse_markdown};
 use redesmyn_protocol::client::{
-    AgentInterfaceMode, AgentKind, AgentMessageConflictAction, GetLatestTaskSessionRequest,
+    AgentKind, AgentMessageConflictAction, GetLatestTaskSessionRequest,
     GetSessionEventsRequest, GetSessionEventsResponse, ListSessionModelsRequest,
     ListSessionModelsResponse, ModelReasoningEffort, RequestPayload, RespondPermissionRequestRequest,
     RespondPermissionRequestResponse, ResponseResult, SendSessionMessageRequest,
@@ -863,7 +863,6 @@ async fn start_task_agent(
         .request(RequestPayload::StartAgent(StartAgentRequest {
             task_id,
             agent_kind: AgentKind::Codex,
-            interface_mode: AgentInterfaceMode::AppServer,
             initial_prompt: None,
             on_conflict,
         }))

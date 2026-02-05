@@ -5,7 +5,7 @@ use redesmyn_logging::tracing::{Instrument, debug_span};
 use sqlx::{Executor, QueryBuilder, Sqlite};
 
 use crate::StorageError;
-use crate::schema::{AgentInterfaceMode, AgentKind, AgentSessionScopeKind, AgentSessionStatus};
+use crate::schema::{AgentKind, AgentSessionScopeKind, AgentSessionStatus};
 
 const MAX_SESSION_EVENT_PAYLOAD_BYTES: usize = 1024 * 1024;
 
@@ -29,7 +29,6 @@ type AgentSessionRow = (
     String,
     String,
     String,
-    String,
     Option<String>,
     Option<i64>,
     Option<i64>,
@@ -46,7 +45,6 @@ fn decode_agent_session_row(
         scope_kind,
         task_id,
         agent_kind,
-        interface_mode,
         status,
         external_session_ref,
         title,
@@ -76,17 +74,6 @@ fn decode_agent_session_row(
         }
     };
 
-    let interface_mode = match interface_mode.as_str() {
-        "shell_tmux" => AgentInterfaceMode::ShellTmux,
-        "structured_exec" => AgentInterfaceMode::StructuredExec,
-        "app_server" => AgentInterfaceMode::AppServer,
-        _ => {
-            return Err(StorageError::InvalidData {
-                message: format!("unknown agent_sessions.interface_mode={interface_mode}"),
-            });
-        }
-    };
-
     let status = match status.as_str() {
         "running" => AgentSessionStatus::Running,
         "blocked" => AgentSessionStatus::Blocked,
@@ -108,7 +95,6 @@ fn decode_agent_session_row(
         scope_kind,
         task_id,
         agent_kind,
-        interface_mode,
         status,
         external_session_ref,
         title,
@@ -128,7 +114,6 @@ pub struct AgentSessionRecord {
     pub scope_kind: AgentSessionScopeKind,
     pub task_id: Option<TaskId>,
     pub agent_kind: AgentKind,
-    pub interface_mode: AgentInterfaceMode,
     pub status: AgentSessionStatus,
     pub external_session_ref: String,
     pub title: Option<String>,
@@ -227,7 +212,6 @@ where
             scope_kind,
             task_id,
             agent_kind,
-            interface_mode,
             status,
             external_session_ref,
             title,
@@ -235,7 +219,7 @@ where
             ended_at_ms,
             closed_at_ms
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
         "#,
     )
     .bind(session.session_id)
@@ -246,7 +230,6 @@ where
     .bind(session.scope_kind.as_str())
     .bind(session.task_id)
     .bind(session.agent_kind.as_str())
-    .bind(session.interface_mode.as_str())
     .bind(session.status.as_str())
     .bind(&session.external_session_ref)
     .bind(&session.title)
@@ -277,7 +260,6 @@ where
             scope_kind,
             task_id,
             agent_kind,
-            interface_mode,
             status,
             external_session_ref,
             title,
@@ -300,7 +282,6 @@ pub async fn create_chat_session<'e, E>(
     workspace_id: WorkspaceId,
     repo_id: RepoId,
     agent_kind: AgentKind,
-    interface_mode: AgentInterfaceMode,
     title: Option<&str>,
 ) -> Result<SessionId, StorageError>
 where
@@ -319,7 +300,6 @@ where
             scope_kind: AgentSessionScopeKind::Chat,
             task_id: None,
             agent_kind,
-            interface_mode,
             status: AgentSessionStatus::Stopped,
             external_session_ref: r#"{"type":"none"}"#.to_owned(),
             title: title.map(ToOwned::to_owned),
@@ -341,7 +321,6 @@ pub async fn create_task_session<'e, E>(
     repo_id: RepoId,
     task_id: TaskId,
     agent_kind: AgentKind,
-    interface_mode: AgentInterfaceMode,
     title: Option<&str>,
 ) -> Result<SessionId, StorageError>
 where
@@ -360,7 +339,6 @@ where
             scope_kind: AgentSessionScopeKind::Task,
             task_id: Some(task_id),
             agent_kind,
-            interface_mode,
             status: AgentSessionStatus::Stopped,
             external_session_ref: r#"{"type":"none"}"#.to_owned(),
             title: title.map(ToOwned::to_owned),
@@ -399,7 +377,6 @@ where
             scope_kind,
             task_id,
             agent_kind,
-            interface_mode,
             status,
             external_session_ref,
             title,
@@ -442,7 +419,6 @@ where
                 scope_kind,
                 task_id,
                 agent_kind,
-                interface_mode,
                 status,
                 external_session_ref,
                 title,
@@ -475,7 +451,6 @@ where
                 scope_kind,
                 task_id,
                 agent_kind,
-                interface_mode,
                 status,
                 external_session_ref,
                 title,

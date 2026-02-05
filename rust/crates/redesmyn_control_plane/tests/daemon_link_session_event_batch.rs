@@ -9,9 +9,7 @@ use redesmyn_protocol::session::{SessionEventKind, SessionScope, UserMessage};
 use redesmyn_protocol::{
     ProtocolEnvelope, ProtocolVersion, RepoScope, Scope, SessionEvent, Timestamp,
 };
-use redesmyn_storage::schema::{
-    AgentInterfaceMode as StorageAgentInterfaceMode, AgentKind as StorageAgentKind,
-};
+use redesmyn_storage::schema::AgentKind as StorageAgentKind;
 use redesmyn_transport::in_proc::InProcEndpoint;
 
 #[tokio::test]
@@ -58,7 +56,6 @@ async fn daemon_link_persists_session_event_batches() {
         workspace_id,
         repo_id,
         StorageAgentKind::Codex,
-        StorageAgentInterfaceMode::StructuredExec,
         None,
     )
     .await

@@ -3,9 +3,7 @@ use redesmyn_ids::{ArtifactId, RepoId, SessionEventId, WorkspaceId};
 use redesmyn_protocol::artifacts::{ArtifactKind, ArtifactRef, StorageHint};
 use redesmyn_protocol::session::{AssistantMessage, SessionEventKind, SessionScope};
 use redesmyn_protocol::{SessionEvent, Timestamp};
-use redesmyn_storage::schema::{
-    AgentInterfaceMode as StorageAgentInterfaceMode, AgentKind as StorageAgentKind,
-};
+use redesmyn_storage::schema::AgentKind as StorageAgentKind;
 
 #[tokio::test]
 async fn session_event_append_inserts_artifacts() {
@@ -50,7 +48,6 @@ async fn session_event_append_inserts_artifacts() {
         workspace_id,
         repo_id,
         StorageAgentKind::Codex,
-        StorageAgentInterfaceMode::AppServer,
         None,
     )
     .await

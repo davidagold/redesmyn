@@ -528,7 +528,6 @@ message StartAgentRequest {
   // TaskId (ULID bytes, length = 16).
   bytes task_id = 1;
   AgentKind agent_kind = 2;
-  AgentInterfaceMode interface_mode = 3;
   optional string initial_prompt = 4;
   AgentMessageConflictAction on_conflict = 5;
 }
@@ -554,7 +553,6 @@ message RestartAgentRequest {
   // TaskId (ULID bytes, length = 16).
   bytes task_id = 1;
   AgentKind agent_kind = 2;
-  AgentInterfaceMode interface_mode = 3;
   optional string initial_prompt = 4;
 }
 
@@ -571,14 +569,12 @@ message SendTaskAgentMessageRequest {
   AgentMessageConflictAction on_conflict = 3;
   optional bool interrupt = 4;
   AgentKind agent_kind = 5;
-  optional AgentInterfaceMode preferred_interface_mode = 6;
 }
 
 message SendTaskAgentMessageResponse {
   CommandSummary command = 1;
   // SessionId (ULID bytes, length = 16).
   bytes session_id = 2;
-  AgentInterfaceMode agent_interface_mode = 3;
   TaskAgentMessageDelivery delivery = 4;
   TaskAgentMessageConversationContinuity conversation_continuity = 5;
   repeated string warnings = 6;
@@ -670,13 +666,6 @@ enum AgentKind {
   AGENT_KIND_SHELL = 3;
 }
 
-enum AgentInterfaceMode {
-  AGENT_INTERFACE_MODE_UNSPECIFIED = 0;
-  AGENT_INTERFACE_MODE_SHELL_TMUX = 1;
-  AGENT_INTERFACE_MODE_STRUCTURED_EXEC = 2;
-  AGENT_INTERFACE_MODE_APP_SERVER = 3;
-}
-
 enum AgentSessionScopeKind {
   AGENT_SESSION_SCOPE_KIND_UNSPECIFIED = 0;
   AGENT_SESSION_SCOPE_KIND_TASK = 1;
@@ -700,7 +689,6 @@ message AgentSessionSummary {
   bytes task_id = 3;
 
   AgentKind agent_kind = 4;
-  AgentInterfaceMode interface_mode = 5;
   AgentSessionStatus status = 6;
 
   // Optional, chat-focused metadata (T-47).

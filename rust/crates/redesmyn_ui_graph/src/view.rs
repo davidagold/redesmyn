@@ -39,8 +39,8 @@ use crate::scene::{AgentStatus, GraphEdgeId, GraphNodeId, GraphScene, TrunkMarkK
 
 use redesmyn_markdown::{MarkdownParseOptions, parse_markdown};
 use redesmyn_protocol::client::{
-    AgentInterfaceMode, AgentKind, AgentMessageConflictAction, MergeReadiness, RequestPayload,
-    ResponseResult, RestartAgentRequest, StartAgentRequest, StopAgentRequest, TaskState,
+    AgentKind, AgentMessageConflictAction, MergeReadiness, RequestPayload, ResponseResult,
+    RestartAgentRequest, StartAgentRequest, StopAgentRequest, TaskState,
 };
 use redesmyn_protocol::ui_driver::{
     UiGraphCameraState, UiGraphEdgeId as UiDriverGraphEdgeId, UiGraphLoadState,
@@ -3385,14 +3385,12 @@ async fn task_quick_action_request(
         TaskQuickActionKind::Start => RequestPayload::StartAgent(StartAgentRequest {
             task_id,
             agent_kind: AgentKind::Codex,
-            interface_mode: AgentInterfaceMode::AppServer,
             initial_prompt: None,
             on_conflict: AgentMessageConflictAction::Fail,
         }),
         TaskQuickActionKind::Restart => RequestPayload::RestartAgent(RestartAgentRequest {
             task_id,
             agent_kind: AgentKind::Codex,
-            interface_mode: AgentInterfaceMode::AppServer,
             initial_prompt: None,
         }),
         TaskQuickActionKind::Stop => RequestPayload::StopAgent(StopAgentRequest { task_id }),

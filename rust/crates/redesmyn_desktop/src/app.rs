@@ -516,9 +516,7 @@ async fn ensure_session_viewer_fixture_agent_session(
     pool: &sqlx::SqlitePool,
     session_id: redesmyn_ids::SessionId,
 ) -> Result<(), StorageError> {
-    use redesmyn_storage::schema::{
-        AgentInterfaceMode, AgentKind, AgentSessionScopeKind, AgentSessionStatus,
-    };
+    use redesmyn_storage::schema::{AgentKind, AgentSessionScopeKind, AgentSessionStatus};
     use redesmyn_storage::sessions::{AgentSessionRecord, get_agent_session, insert_agent_session};
 
     if get_agent_session(pool, session_id).await?.is_some() {
@@ -566,7 +564,6 @@ async fn ensure_session_viewer_fixture_agent_session(
         scope_kind: AgentSessionScopeKind::Chat,
         task_id: None,
         agent_kind: AgentKind::Codex,
-        interface_mode: AgentInterfaceMode::StructuredExec,
         status: AgentSessionStatus::Stopped,
         external_session_ref: r#"{"type":"none"}"#.to_owned(),
         title: Some("Fixture session".to_owned()),

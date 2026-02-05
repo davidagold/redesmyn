@@ -6,9 +6,9 @@ use redesmyn_protocol::agent_commands::{
     TASK_AGENT_START, TASK_AGENT_STOP,
 };
 use redesmyn_protocol::client::{
-    AgentInterfaceMode, AgentKind, AttachAgentSessionResponse, CommandSummary,
-    SendTaskAgentMessageResponse, StartAgentResponse, StopAgentResponse,
-    TaskAgentMessageConversationContinuity, TaskAgentMessageDelivery,
+    AgentKind, AttachAgentSessionResponse, CommandSummary, SendTaskAgentMessageResponse,
+    StartAgentResponse, StopAgentResponse, TaskAgentMessageConversationContinuity,
+    TaskAgentMessageDelivery,
 };
 use redesmyn_protocol::session::{SessionEnded, SessionEventKind, SessionScope, SessionStarted};
 use redesmyn_protocol::{
@@ -22,7 +22,6 @@ use crate::ControlPlane;
 use super::payloads;
 use super::planner::{InteractiveSendExistingPlan, NewSessionPlan, StructuredResumePlan};
 
-type StorageAgentInterfaceMode = redesmyn_storage::schema::AgentInterfaceMode;
 type StorageAgentKind = redesmyn_storage::schema::AgentKind;
 type StorageAgentSessionScopeKind = redesmyn_storage::schema::AgentSessionScopeKind;
 type StorageAgentSessionStatus = redesmyn_storage::schema::AgentSessionStatus;
@@ -42,7 +41,6 @@ async fn insert_task_session(
     repo_id: RepoId,
     task_id: TaskId,
     agent_kind: AgentKind,
-    interface_mode: AgentInterfaceMode,
 ) -> Result<SessionId, ErrorEnvelope> {
     use redesmyn_storage::sessions::{AgentSessionRecord, insert_agent_session};
 
@@ -53,12 +51,6 @@ async fn insert_task_session(
         AgentKind::Codex => StorageAgentKind::Codex,
         AgentKind::ClaudeCode => StorageAgentKind::ClaudeCode,
         AgentKind::Shell => StorageAgentKind::Shell,
-    };
-
-    let storage_mode = match interface_mode {
-        AgentInterfaceMode::ShellTmux => StorageAgentInterfaceMode::ShellTmux,
-        AgentInterfaceMode::StructuredExec => StorageAgentInterfaceMode::StructuredExec,
-        AgentInterfaceMode::AppServer => StorageAgentInterfaceMode::AppServer,
     };
 
     let external_session_ref = serde_json::to_string(&ExternalSessionRef::None)
@@ -75,7 +67,6 @@ async fn insert_task_session(
             scope_kind: StorageAgentSessionScopeKind::Task,
             task_id: Some(task_id),
             agent_kind: storage_kind,
-            interface_mode: storage_mode,
             status: StorageAgentSessionStatus::Running,
             external_session_ref,
             title: None,
@@ -244,7 +235,6 @@ pub(super) async fn execute_start_agent(
     repo: RepoScope,
     task_id: TaskId,
     agent_kind: AgentKind,
-    interface_mode: AgentInterfaceMode,
     initial_prompt: Option<String>,
     stop_session_ids: Vec<SessionId>,
 ) -> Result<StartAgentResponse, ErrorEnvelope> {
@@ -266,7 +256,6 @@ pub(super) async fn execute_start_agent(
         repo_id,
         task_id,
         agent_kind,
-        interface_mode,
     )
     .await?;
 
@@ -294,7 +283,6 @@ pub(super) async fn execute_start_agent(
         session_id,
         task_id,
         agent_kind,
-        interface_mode,
         initial_prompt,
         Some(policy_snapshot),
         stop_session_ids.clone(),
@@ -407,7 +395,6 @@ pub(super) async fn execute_structured_resume(
     Ok(SendTaskAgentMessageResponse {
         command,
         session_id: plan.session_id,
-        agent_interface_mode: AgentInterfaceMode::StructuredExec,
         delivery: TaskAgentMessageDelivery::StructuredResumed,
         conversation_continuity: TaskAgentMessageConversationContinuity::Kept,
         warnings: Vec::new(),
@@ -419,7 +406,6 @@ pub(super) async fn execute_new_session_send(
     repo: RepoScope,
     task_id: TaskId,
     agent_kind: AgentKind,
-    interface_mode: AgentInterfaceMode,
     message: &str,
     plan: NewSessionPlan,
 ) -> Result<SendTaskAgentMessageResponse, ErrorEnvelope> {
@@ -441,7 +427,6 @@ pub(super) async fn execute_new_session_send(
         repo_id,
         task_id,
         agent_kind,
-        interface_mode,
     )
     .await?;
 
@@ -460,7 +445,6 @@ pub(super) async fn execute_new_session_send(
         session_id,
         task_id,
         agent_kind,
-        interface_mode,
         Some(message.to_string()),
         Some(policy_snapshot),
         plan.stop_session_ids.clone(),
@@ -479,7 +463,6 @@ pub(super) async fn execute_new_session_send(
     Ok(SendTaskAgentMessageResponse {
         command,
         session_id,
-        agent_interface_mode: interface_mode,
         delivery: plan.delivery,
         conversation_continuity: plan.conversation_continuity,
         warnings: Vec::new(),
@@ -516,7 +499,6 @@ pub(super) async fn execute_send_existing_interactive(
     Ok(SendTaskAgentMessageResponse {
         command,
         session_id: plan.session_id,
-        agent_interface_mode: AgentInterfaceMode::ShellTmux,
         delivery: plan.delivery,
         conversation_continuity: plan.conversation_continuity,
         warnings: plan.warnings,

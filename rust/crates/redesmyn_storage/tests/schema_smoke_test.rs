@@ -29,10 +29,9 @@ async fn insert_task_agent_session(
             scope_kind,
             task_id,
             agent_kind,
-            interface_mode,
             status
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
         "#,
     )
     .bind(session_id)
@@ -43,7 +42,6 @@ async fn insert_task_agent_session(
     .bind("task")
     .bind(task_id)
     .bind("shell")
-    .bind("shell_tmux")
     .bind("stopped")
     .execute(&mut *conn)
     .await?;
@@ -777,10 +775,9 @@ async fn can_insert_and_query_core_schema() {
             scope_kind,
             task_id,
             agent_kind,
-            interface_mode,
             status
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
         "#,
     )
     .bind(session_id)
@@ -791,7 +788,6 @@ async fn can_insert_and_query_core_schema() {
     .bind("chat")
     .bind(None::<TaskId>)
     .bind("shell")
-    .bind("shell_tmux")
     .bind("stopped")
     .execute(&pool)
     .await

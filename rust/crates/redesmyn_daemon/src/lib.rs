@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 mod backoff;
+mod agent_driver;
 mod command_router;
 mod control_plane;
 mod host_identity;

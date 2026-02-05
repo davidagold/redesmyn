@@ -2444,32 +2444,6 @@ fn decode_agent_kind(value: i32) -> Result<crate::client::AgentKind, ErrorEnvelo
     }
 }
 
-fn encode_agent_interface_mode(value: crate::client::AgentInterfaceMode) -> i32 {
-    match value {
-        crate::client::AgentInterfaceMode::ShellTmux => pbv1::AgentInterfaceMode::ShellTmux as i32,
-        crate::client::AgentInterfaceMode::StructuredExec => {
-            pbv1::AgentInterfaceMode::StructuredExec as i32
-        }
-        crate::client::AgentInterfaceMode::AppServer => pbv1::AgentInterfaceMode::AppServer as i32,
-    }
-}
-
-fn decode_agent_interface_mode(
-    value: i32,
-) -> Result<crate::client::AgentInterfaceMode, ErrorEnvelope> {
-    match pbv1::AgentInterfaceMode::try_from(value) {
-        Ok(pbv1::AgentInterfaceMode::ShellTmux) => Ok(crate::client::AgentInterfaceMode::ShellTmux),
-        Ok(pbv1::AgentInterfaceMode::StructuredExec) => {
-            Ok(crate::client::AgentInterfaceMode::StructuredExec)
-        }
-        Ok(pbv1::AgentInterfaceMode::AppServer) => Ok(crate::client::AgentInterfaceMode::AppServer),
-        Ok(pbv1::AgentInterfaceMode::Unspecified) | Err(_) => Err(invalid_field(
-            "interface_mode",
-            format!("unknown enum value for AgentInterfaceMode: {value}"),
-        )),
-    }
-}
-
 fn encode_task_agent_message_delivery(value: crate::client::TaskAgentMessageDelivery) -> i32 {
     match value {
         crate::client::TaskAgentMessageDelivery::StructuredStarted => {
@@ -3622,7 +3596,6 @@ impl crate::client::StartAgentRequest {
         pbv1::StartAgentRequest {
             task_id: self.task_id.to_bytes().to_vec(),
             agent_kind: encode_agent_kind(self.agent_kind),
-            interface_mode: encode_agent_interface_mode(self.interface_mode),
             initial_prompt: self.initial_prompt.clone(),
             on_conflict: encode_agent_message_conflict_action(self.on_conflict),
         }
@@ -3632,7 +3605,6 @@ impl crate::client::StartAgentRequest {
         Ok(Self {
             task_id: decode_required_ulid::<TaskId>("task_id", &proto.task_id)?,
             agent_kind: decode_agent_kind(proto.agent_kind)?,
-            interface_mode: decode_agent_interface_mode(proto.interface_mode)?,
             initial_prompt: proto.initial_prompt,
             on_conflict: decode_agent_message_conflict_action(proto.on_conflict)?,
         })
@@ -3660,7 +3632,6 @@ impl crate::client::RestartAgentRequest {
         pbv1::RestartAgentRequest {
             task_id: self.task_id.to_bytes().to_vec(),
             agent_kind: encode_agent_kind(self.agent_kind),
-            interface_mode: encode_agent_interface_mode(self.interface_mode),
             initial_prompt: self.initial_prompt.clone(),
         }
     }
@@ -3669,7 +3640,6 @@ impl crate::client::RestartAgentRequest {
         Ok(Self {
             task_id: decode_required_ulid::<TaskId>("task_id", &proto.task_id)?,
             agent_kind: decode_agent_kind(proto.agent_kind)?,
-            interface_mode: decode_agent_interface_mode(proto.interface_mode)?,
             initial_prompt: proto.initial_prompt,
         })
     }
@@ -3684,9 +3654,6 @@ impl crate::client::SendTaskAgentMessageRequest {
             on_conflict: encode_agent_message_conflict_action(self.on_conflict),
             interrupt: self.interrupt,
             agent_kind: encode_agent_kind(self.agent_kind),
-            preferred_interface_mode: self
-                .preferred_interface_mode
-                .map(encode_agent_interface_mode),
         }
     }
 
@@ -3699,10 +3666,6 @@ impl crate::client::SendTaskAgentMessageRequest {
             on_conflict: decode_agent_message_conflict_action(proto.on_conflict)?,
             interrupt: proto.interrupt,
             agent_kind: decode_agent_kind(proto.agent_kind)?,
-            preferred_interface_mode: proto
-                .preferred_interface_mode
-                .map(decode_agent_interface_mode)
-                .transpose()?,
         })
     }
 }
@@ -4775,7 +4738,6 @@ impl crate::client::SendTaskAgentMessageResponse {
         pbv1::SendTaskAgentMessageResponse {
             command: Some(self.command.to_protobuf()),
             session_id: self.session_id.to_bytes().to_vec(),
-            agent_interface_mode: encode_agent_interface_mode(self.agent_interface_mode),
             delivery: encode_task_agent_message_delivery(self.delivery),
             conversation_continuity: encode_task_agent_message_conversation_continuity(
                 self.conversation_continuity,
@@ -4792,7 +4754,6 @@ impl crate::client::SendTaskAgentMessageResponse {
                 proto.command.ok_or_else(|| missing_required("command"))?,
             )?,
             session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
-            agent_interface_mode: decode_agent_interface_mode(proto.agent_interface_mode)?,
             delivery: decode_task_agent_message_delivery(proto.delivery)?,
             conversation_continuity: decode_task_agent_message_conversation_continuity(
                 proto.conversation_continuity,
@@ -4832,7 +4793,6 @@ impl crate::client::AgentSessionSummary {
                 .map(|id| id.to_bytes().to_vec())
                 .unwrap_or_default(),
             agent_kind: encode_agent_kind(self.agent_kind),
-            interface_mode: encode_agent_interface_mode(self.interface_mode),
             status: encode_agent_session_status(self.status),
             title: self.title.clone().unwrap_or_default(),
             closed_at: self.closed_at.map(encode_timestamp),
@@ -4848,7 +4808,6 @@ impl crate::client::AgentSessionSummary {
             scope_kind: decode_agent_session_scope_kind(proto.scope_kind)?,
             task_id: decode_optional_ulid::<TaskId>("task_id", &proto.task_id)?,
             agent_kind: decode_agent_kind(proto.agent_kind)?,
-            interface_mode: decode_agent_interface_mode(proto.interface_mode)?,
             status: decode_agent_session_status(proto.status)?,
             title: normalize_nonempty_string(proto.title),
             closed_at: proto

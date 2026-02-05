@@ -1,10 +1,10 @@
 use redesmyn_ids::{RepoId, TaskId, WorkspaceId};
 use redesmyn_logging::tracing;
 use redesmyn_protocol::client::{
-    AgentInterfaceMode, AgentMessageConflictAction, AttachAgentSessionRequest,
-    AttachAgentSessionResponse, RestartAgentRequest, RestartAgentResponse,
-    SendTaskAgentMessageRequest, SendTaskAgentMessageResponse, StartAgentRequest,
-    StartAgentResponse, StopAgentRequest, StopAgentResponse,
+    AgentMessageConflictAction, AttachAgentSessionRequest, AttachAgentSessionResponse,
+    RestartAgentRequest, RestartAgentResponse, SendTaskAgentMessageRequest,
+    SendTaskAgentMessageResponse, StartAgentRequest, StartAgentResponse, StopAgentRequest,
+    StopAgentResponse,
 };
 use redesmyn_protocol::{ErrorCategory, ErrorDetail, ErrorEnvelope, RepoScope};
 
@@ -23,7 +23,6 @@ impl ControlPlane {
             "control_plane.agent.start",
             task_id = %req.task_id,
             agent_kind = ?req.agent_kind,
-            interface_mode = ?req.interface_mode,
         );
         let _enter = span.enter();
 
@@ -40,7 +39,6 @@ impl ControlPlane {
             },
             req.task_id,
             req.agent_kind,
-            req.interface_mode,
             req.initial_prompt,
             plan.stop_session_ids,
         )
@@ -75,7 +73,6 @@ impl ControlPlane {
             "control_plane.agent.restart",
             task_id = %req.task_id,
             agent_kind = ?req.agent_kind,
-            interface_mode = ?req.interface_mode,
         );
         let _enter = span.enter();
 
@@ -87,7 +84,6 @@ impl ControlPlane {
         let start = StartAgentRequest {
             task_id: req.task_id,
             agent_kind: req.agent_kind,
-            interface_mode: req.interface_mode,
             initial_prompt: req.initial_prompt,
             on_conflict: AgentMessageConflictAction::StopSessionAndStartNew,
         };
@@ -124,7 +120,6 @@ impl ControlPlane {
             "control_plane.agent.send_task_agent_message",
             task_id = %req.task_id,
             agent_kind = ?req.agent_kind,
-            preferred_interface_mode = ?req.preferred_interface_mode,
             on_conflict = ?req.on_conflict,
             interrupt = ?req.interrupt,
         );
@@ -137,8 +132,6 @@ impl ControlPlane {
 
         ensure_task_exists(self.pool(), workspace_id, repo_id, req.task_id).await?;
 
-        let desired_interface_mode =
-            planner::desired_interface_mode(req.agent_kind, req.preferred_interface_mode);
         let effective_on_conflict = planner::effective_on_conflict(req.on_conflict, req.interrupt);
 
         let recent_sessions =
@@ -147,14 +140,12 @@ impl ControlPlane {
             self.pool(),
             &recent_sessions,
             req.agent_kind,
-            desired_interface_mode,
         )
         .await?;
 
         let plan = planner::plan_send_task_agent_message(
             &recent_sessions,
             req.agent_kind,
-            desired_interface_mode,
             effective_on_conflict,
             resumable_structured.as_ref(),
         )?;
@@ -180,7 +171,6 @@ impl ControlPlane {
                     },
                     req.task_id,
                     req.agent_kind,
-                    AgentInterfaceMode::StructuredExec,
                     trimmed,
                     plan,
                 )
@@ -195,7 +185,6 @@ impl ControlPlane {
                     },
                     req.task_id,
                     req.agent_kind,
-                    desired_interface_mode,
                     trimmed,
                     plan,
                 )

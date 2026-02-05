@@ -1,7 +1,7 @@
 use redesmyn_ids::SessionId;
 use redesmyn_protocol::client::{
-    AgentInterfaceMode, AgentKind, AgentMessageConflictAction,
-    TaskAgentMessageConversationContinuity, TaskAgentMessageDelivery,
+    AgentKind, AgentMessageConflictAction, TaskAgentMessageConversationContinuity,
+    TaskAgentMessageDelivery,
 };
 use redesmyn_protocol::{ErrorEnvelope, ExternalSessionRef};
 
@@ -11,18 +11,8 @@ use super::conflicts::{
 };
 use super::state::{
     ResumableStructuredSession, StorageAgentSessionRecord, is_active_task_session,
-    protocol_agent_kind_from_storage, protocol_interface_mode_from_storage,
+    is_structured_agent_kind, protocol_agent_kind_from_storage,
 };
-
-pub(super) fn desired_interface_mode(
-    agent_kind: AgentKind,
-    preferred: Option<AgentInterfaceMode>,
-) -> AgentInterfaceMode {
-    preferred.unwrap_or(match agent_kind {
-        AgentKind::Codex | AgentKind::ClaudeCode => AgentInterfaceMode::StructuredExec,
-        AgentKind::Shell => AgentInterfaceMode::ShellTmux,
-    })
-}
 
 pub(super) fn effective_on_conflict(
     on_conflict: AgentMessageConflictAction,
@@ -110,17 +100,15 @@ fn sessions_without_end(recent_sessions: &[StorageAgentSessionRecord]) -> Vec<Se
 pub(super) fn plan_send_task_agent_message(
     recent_sessions: &[StorageAgentSessionRecord],
     agent_kind: AgentKind,
-    desired_interface_mode: AgentInterfaceMode,
     effective_on_conflict: AgentMessageConflictAction,
     resumable_structured: Option<&ResumableStructuredSession>,
 ) -> Result<SendTaskAgentMessagePlan, ErrorEnvelope> {
+    let is_structured = is_structured_agent_kind(agent_kind);
     let compatible_sessions: Vec<_> = recent_sessions
         .iter()
         .filter(|row| {
             is_active_task_session(row)
                 && protocol_agent_kind_from_storage(row.agent_kind) == agent_kind
-                && protocol_interface_mode_from_storage(row.interface_mode)
-                    == desired_interface_mode
         })
         .collect();
 
@@ -128,7 +116,7 @@ pub(super) fn plan_send_task_agent_message(
         .iter()
         .find(|row| is_active_task_session(row));
 
-    if desired_interface_mode == AgentInterfaceMode::StructuredExec {
+    if is_structured {
         if let Some(resumable) = resumable_structured {
             if effective_on_conflict == AgentMessageConflictAction::StopSessionAndStartNew {
                 if resumable.turn_in_progress {
@@ -204,9 +192,8 @@ pub(super) fn plan_send_task_agent_message(
             .find(|row| row.session_id == active_any_session_id)
             .expect("active_any points at a row in recent_sessions");
 
-        let active_row_mode = protocol_interface_mode_from_storage(active_row.interface_mode);
-
-        if active_row_mode == AgentInterfaceMode::StructuredExec
+        let active_row_kind = protocol_agent_kind_from_storage(active_row.agent_kind);
+        if is_structured_agent_kind(active_row_kind)
             && effective_on_conflict != AgentMessageConflictAction::StopSessionAndStartNew
         {
             return Err(conflict_envelope(

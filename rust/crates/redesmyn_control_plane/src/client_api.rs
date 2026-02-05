@@ -23,8 +23,8 @@ use redesmyn_protocol::agent_commands::{
     SESSION_AGENT_SET_MODEL, SESSION_AGENT_SET_PERMISSIONS_MODE, SESSION_AGENT_START,
 };
 use redesmyn_protocol::client::{
-    AgentInterfaceMode, AgentKind, AgentMessageConflictAction, AgentSessionScopeKind,
-    AgentSessionStatus, AgentSessionSummary, ClientFrame, ClientMessage, CloseChatSessionResponse,
+    AgentKind, AgentMessageConflictAction, AgentSessionScopeKind, AgentSessionStatus,
+    AgentSessionSummary, ClientFrame, ClientMessage, CloseChatSessionResponse,
     CommandState, CommandSummary, CommandUpdateSummary, CreateChatSessionResponse,
     CreateCommandResponse, DaemonPresenceSummary, EpicGraph, EpicSummary, Event, EventLogEvent,
     EventWaitFilter, GetCommandResponse, GetEpicGraphResponse, GetEpicPinnedChatSessionResponse,
@@ -49,8 +49,7 @@ use redesmyn_transport::client::framed::FramedEndpoint;
 use redesmyn_transport::client::{ClientConnection, ClientTransportError};
 
 use redesmyn_storage::schema::{
-    AgentInterfaceMode as StorageAgentInterfaceMode, AgentKind as StorageAgentKind,
-    AgentSessionScopeKind as StorageAgentSessionScopeKind,
+    AgentKind as StorageAgentKind, AgentSessionScopeKind as StorageAgentSessionScopeKind,
     AgentSessionStatus as StorageAgentSessionStatus, CommandState as StorageCommandState,
 };
 use redesmyn_storage::sessions::AgentSessionRecord;
@@ -737,7 +736,10 @@ async fn handle_request_result(
                 None => {}
             }
 
-            let (session_id, scope, interface_mode) = match (session.scope_kind, session.task_id) {
+            let agent_kind = protocol_agent_kind_from_storage(session.agent_kind);
+            let is_structured_session = is_structured_agent_kind(agent_kind);
+
+            let (session_id, scope) = match (session.scope_kind, session.task_id) {
                 (StorageAgentSessionScopeKind::Chat, _) => {
                     if session.closed_at_ms.is_some() {
                         return Ok(ResponseResult::Error(ErrorEnvelope::new(
@@ -745,17 +747,13 @@ async fn handle_request_result(
                             "Chat session is closed.",
                         )));
                     }
-                    let interface_mode = protocol_interface_mode_from_storage(session.interface_mode);
                     if send.on_conflict == AgentMessageConflictAction::StopSessionAndStartNew {
                         return Ok(ResponseResult::Error(ErrorEnvelope::new(
                             ErrorCategory::InvalidRequest,
                             "stop_session_and_start_new is not supported for chat sessions. Create a new chat session instead.",
                         )));
                     }
-                    if matches!(
-                        interface_mode,
-                        AgentInterfaceMode::StructuredExec | AgentInterfaceMode::AppServer
-                    ) && session.ended_at_ms.is_none()
+                    if is_structured_session && session.ended_at_ms.is_none()
                     {
                         let in_progress = match crate::turn_state::structured_turn_in_progress(
                             control_plane.pool(),
@@ -800,12 +798,11 @@ async fn handle_request_result(
                         }
                     }
 
-                    (session.session_id, SessionScope::Chat, None)
+                    (session.session_id, SessionScope::Chat)
                 }
                 (StorageAgentSessionScopeKind::Task, Some(task_id)) => (
                     session.session_id,
                     SessionScope::Task { task_id },
-                    Some(session.interface_mode),
                 ),
                 (StorageAgentSessionScopeKind::Task, None) => {
                     return Ok(ResponseResult::Error(ErrorEnvelope::new(
@@ -817,22 +814,11 @@ async fn handle_request_result(
 
             let mut stop_session_ids = Vec::new();
 
-            let (session_id, scope) = if let Some(interface_mode) = interface_mode {
-                let task_id = match scope {
-                    SessionScope::Task { task_id } => task_id,
-                    _ => {
-                        return Ok(ResponseResult::Error(ErrorEnvelope::new(
-                            ErrorCategory::Internal,
-                            "Expected task scope for task session.",
-                        )));
-                    }
-                };
+            let (session_id, scope) = if let SessionScope::Task { task_id } = scope {
+                let task_id = task_id;
 
                 let turn_in_progress =
-                    if (interface_mode == StorageAgentInterfaceMode::StructuredExec
-                        || interface_mode == StorageAgentInterfaceMode::AppServer)
-                        && session.ended_at_ms.is_none()
-                    {
+                    if is_structured_session && session.ended_at_ms.is_none() {
                         match crate::turn_state::structured_turn_in_progress(
                             control_plane.pool(),
                             session.session_id,
@@ -937,7 +923,6 @@ async fn handle_request_result(
                             session.scope_repo_id,
                             task_id,
                             session.agent_kind,
-                            interface_mode,
                             None,
                         )
                         .await?;
@@ -946,7 +931,7 @@ async fn handle_request_result(
                     }
                 }
 
-                (session_id, scope)
+                (session_id, SessionScope::Task { task_id })
             } else {
                 (session_id, scope)
             };
@@ -982,17 +967,18 @@ async fn handle_request_result(
             };
 
             let agent_kind = protocol_agent_kind_from_storage(current.agent_kind);
-            let interface_mode = protocol_interface_mode_from_storage(current.interface_mode);
+            let is_structured = is_structured_agent_kind(agent_kind);
             let task_id = current.task_id;
 
-            let turn_in_progress = matches!(
-                interface_mode,
-                AgentInterfaceMode::StructuredExec | AgentInterfaceMode::AppServer
-            ) && match crate::turn_state::structured_turn_in_progress(control_plane.pool(), session_id)
-                .await
-            {
-                Ok(turn_in_progress) => turn_in_progress,
-                Err(err) => return Ok(ResponseResult::Error(err)),
+            let turn_in_progress = if is_structured {
+                match crate::turn_state::structured_turn_in_progress(control_plane.pool(), session_id)
+                    .await
+                {
+                    Ok(turn_in_progress) => turn_in_progress,
+                    Err(err) => return Ok(ResponseResult::Error(err)),
+                }
+            } else {
+                false
             };
 
             let external_session_ref = parse_external_session_ref(&current.external_session_ref)
@@ -1001,10 +987,7 @@ async fn handle_request_result(
             let interrupt_turn = send.on_conflict == AgentMessageConflictAction::InterruptTurn
                 && turn_in_progress;
 
-            let policy_snapshot = if matches!(
-                interface_mode,
-                AgentInterfaceMode::StructuredExec | AgentInterfaceMode::AppServer
-            ) {
+            let policy_snapshot = if is_structured {
                 Some(
                     crate::policy_snapshot::load_session_policy_snapshot(
                         control_plane.session_events(),
@@ -1016,8 +999,7 @@ async fn handle_request_result(
                 None
             };
 
-            let (command_kind, json_payload) = match interface_mode {
-                AgentInterfaceMode::StructuredExec | AgentInterfaceMode::AppServer => {
+            let (command_kind, json_payload) = if is_structured {
                     if let Some(external_session_ref) = external_session_ref {
                         let json_payload = match encode_agent_command_payload(
                             &ResumeByIdTaskAgentTurnCommand {
@@ -1040,7 +1022,6 @@ async fn handle_request_result(
                                 session_id,
                                 task_id,
                                 agent_kind,
-                                interface_mode,
                                 initial_prompt: Some(text.to_string()),
                                 policy_snapshot,
                                 stop_session_ids,
@@ -1052,22 +1033,18 @@ async fn handle_request_result(
 
                         (SESSION_AGENT_START.to_string(), json_payload)
                     }
-                }
-                AgentInterfaceMode::ShellTmux => {
-                    let json_payload = match encode_agent_command_payload(
-                        &SendTaskAgentMessageCommand {
-                            session_id,
-                            text: text.to_string(),
-                            interrupt_turn,
-                            submit: true,
-                        },
-                    ) {
-                        Ok(payload) => payload,
-                        Err(err) => return Ok(ResponseResult::Error(err)),
-                    };
+            } else {
+                let json_payload = match encode_agent_command_payload(&SendTaskAgentMessageCommand {
+                    session_id,
+                    text: text.to_string(),
+                    interrupt_turn,
+                    submit: true,
+                }) {
+                    Ok(payload) => payload,
+                    Err(err) => return Ok(ResponseResult::Error(err)),
+                };
 
-                    (SESSION_AGENT_SEND_MESSAGE.to_string(), json_payload)
-                }
+                (SESSION_AGENT_SEND_MESSAGE.to_string(), json_payload)
             };
 
             let command = control_plane
@@ -1145,11 +1122,8 @@ async fn handle_request_result(
                 None => {}
             }
 
-            let interface_mode = protocol_interface_mode_from_storage(session.interface_mode);
-            if !matches!(
-                interface_mode,
-                AgentInterfaceMode::StructuredExec | AgentInterfaceMode::AppServer
-            ) {
+            let agent_kind = protocol_agent_kind_from_storage(session.agent_kind);
+            if !is_structured_agent_kind(agent_kind) {
                 return Ok(ResponseResult::Error(ErrorEnvelope::new(
                     ErrorCategory::InvalidRequest,
                     "Permissions mode is only supported for structured sessions.",
@@ -1238,11 +1212,8 @@ async fn handle_request_result(
                 None => {}
             }
 
-            let interface_mode = protocol_interface_mode_from_storage(session.interface_mode);
-            if !matches!(
-                interface_mode,
-                AgentInterfaceMode::StructuredExec | AgentInterfaceMode::AppServer
-            ) {
+            let agent_kind = protocol_agent_kind_from_storage(session.agent_kind);
+            if !is_structured_agent_kind(agent_kind) {
                 return Ok(ResponseResult::Error(ErrorEnvelope::new(
                     ErrorCategory::InvalidRequest,
                     "Codex approval policy is only supported for structured sessions.",
@@ -1342,11 +1313,8 @@ async fn handle_request_result(
                 None => {}
             }
 
-            let interface_mode = protocol_interface_mode_from_storage(session.interface_mode);
-            if !matches!(
-                interface_mode,
-                AgentInterfaceMode::StructuredExec | AgentInterfaceMode::AppServer
-            ) {
+            let agent_kind = protocol_agent_kind_from_storage(session.agent_kind);
+            if !is_structured_agent_kind(agent_kind) {
                 return Ok(ResponseResult::Error(ErrorEnvelope::new(
                     ErrorCategory::InvalidRequest,
                     "Codex sandbox policy is only supported for structured sessions.",
@@ -1817,11 +1785,8 @@ async fn handle_request_result(
                 None => {}
             }
 
-            let interface_mode = protocol_interface_mode_from_storage(session.interface_mode);
-            if !matches!(
-                interface_mode,
-                AgentInterfaceMode::StructuredExec | AgentInterfaceMode::AppServer
-            ) {
+            let agent_kind = protocol_agent_kind_from_storage(session.agent_kind);
+            if !is_structured_agent_kind(agent_kind) {
                 return Ok(ResponseResult::Error(ErrorEnvelope::new(
                     ErrorCategory::InvalidRequest,
                     "Permission requests are only supported for structured sessions.",
@@ -2100,15 +2065,14 @@ async fn handle_request_result(
                 Err(err) => return Ok(ResponseResult::Error(err)),
             };
 
-            // TODO: Plumb agent kind / interface mode from the request (or client identity).
-            // For now we default to Codex + app-server so chat sessions can stream structured
-            // events back into the durable session log.
+            // TODO: Plumb agent kind from the request (or client identity).
+            // For now we default to Codex so chat sessions can stream structured events
+            // back into the durable session log.
             let session_id = redesmyn_storage::sessions::create_chat_session(
                 control_plane.pool(),
                 workspace_id,
                 repo_id,
                 StorageAgentKind::Codex,
-                StorageAgentInterfaceMode::AppServer,
                 create.title.as_deref(),
             )
             .await?;
@@ -2338,7 +2302,6 @@ fn agent_session_summary_from_record(record: AgentSessionRecord) -> AgentSession
     };
 
     let agent_kind = protocol_agent_kind_from_storage(record.agent_kind);
-    let interface_mode = protocol_interface_mode_from_storage(record.interface_mode);
 
     let status = match record.status {
         StorageAgentSessionStatus::Running => AgentSessionStatus::Running,
@@ -2352,7 +2315,6 @@ fn agent_session_summary_from_record(record: AgentSessionRecord) -> AgentSession
         scope_kind,
         task_id: record.task_id,
         agent_kind,
-        interface_mode,
         status,
         title: record.title,
         closed_at: record.closed_at_ms.map(timestamp_from_ms),
@@ -2370,13 +2332,10 @@ fn protocol_agent_kind_from_storage(kind: StorageAgentKind) -> AgentKind {
     }
 }
 
-fn protocol_interface_mode_from_storage(mode: StorageAgentInterfaceMode) -> AgentInterfaceMode {
-    match mode {
-        StorageAgentInterfaceMode::ShellTmux => AgentInterfaceMode::ShellTmux,
-        StorageAgentInterfaceMode::StructuredExec => AgentInterfaceMode::StructuredExec,
-        StorageAgentInterfaceMode::AppServer => AgentInterfaceMode::AppServer,
-    }
+fn is_structured_agent_kind(agent_kind: AgentKind) -> bool {
+    matches!(agent_kind, AgentKind::Codex | AgentKind::ClaudeCode)
 }
+
 
 fn parse_external_session_ref(raw: &str) -> Option<ExternalSessionRef> {
     serde_json::from_str(raw).ok()

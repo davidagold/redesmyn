@@ -663,7 +663,6 @@ pub enum TaskAgentMessageConversationContinuity {
 pub struct StartAgentRequest {
     pub task_id: TaskId,
     pub agent_kind: AgentKind,
-    pub interface_mode: AgentInterfaceMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_prompt: Option<String>,
     #[serde(default)]
@@ -692,7 +691,6 @@ pub struct StopAgentResponse {
 pub struct RestartAgentRequest {
     pub task_id: TaskId,
     pub agent_kind: AgentKind,
-    pub interface_mode: AgentInterfaceMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_prompt: Option<String>,
 }
@@ -712,15 +710,12 @@ pub struct SendTaskAgentMessageRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interrupt: Option<bool>,
     pub agent_kind: AgentKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub preferred_interface_mode: Option<AgentInterfaceMode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SendTaskAgentMessageResponse {
     pub command: CommandSummary,
     pub session_id: SessionId,
-    pub agent_interface_mode: AgentInterfaceMode,
     pub delivery: TaskAgentMessageDelivery,
     pub conversation_continuity: TaskAgentMessageConversationContinuity,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -823,14 +818,6 @@ pub enum AgentKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum AgentInterfaceMode {
-    ShellTmux,
-    StructuredExec,
-    AppServer,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum AgentSessionScopeKind {
     Task,
     Chat,
@@ -852,7 +839,6 @@ pub struct AgentSessionSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_id: Option<TaskId>,
     pub agent_kind: AgentKind,
-    pub interface_mode: AgentInterfaceMode,
     pub status: AgentSessionStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,

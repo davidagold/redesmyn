@@ -7,7 +7,7 @@
 
 use redesmyn_ids::{SessionId, TaskId};
 
-use crate::client::{AgentInterfaceMode, AgentKind, ModelReasoningEffort};
+use crate::client::{AgentKind, ModelReasoningEffort};
 use crate::session::{
     CodexApprovalPolicy, CodexSandboxPolicy, ExternalSessionRef, PermissionDecision, PermissionsMode,
 };
@@ -58,7 +58,6 @@ pub struct StartAgentSessionCommand {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_id: Option<TaskId>,
     pub agent_kind: AgentKind,
-    pub interface_mode: AgentInterfaceMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -73,7 +72,6 @@ pub struct StartTaskAgentSessionCommand {
     pub session_id: SessionId,
     pub task_id: TaskId,
     pub agent_kind: AgentKind,
-    pub interface_mode: AgentInterfaceMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

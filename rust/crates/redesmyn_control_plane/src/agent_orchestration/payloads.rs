@@ -5,7 +5,7 @@ use redesmyn_protocol::agent_commands::{
     AttachTaskAgentSessionCommand, ResumeByIdTaskAgentTurnCommand, SendTaskAgentMessageCommand,
     SessionPolicySnapshot, StartTaskAgentSessionCommand, StopTaskAgentSessionCommand,
 };
-use redesmyn_protocol::client::{AgentInterfaceMode, AgentKind};
+use redesmyn_protocol::client::AgentKind;
 use redesmyn_protocol::{ErrorCategory, ErrorDetail, ErrorEnvelope, ExternalSessionRef};
 
 fn encode_payload<T: Serialize>(payload: &T) -> Result<Vec<u8>, ErrorEnvelope> {
@@ -37,7 +37,6 @@ pub(super) fn start_task_session(
     session_id: SessionId,
     task_id: TaskId,
     agent_kind: AgentKind,
-    interface_mode: AgentInterfaceMode,
     initial_prompt: Option<String>,
     policy_snapshot: Option<SessionPolicySnapshot>,
     stop_session_ids: Vec<SessionId>,
@@ -46,7 +45,6 @@ pub(super) fn start_task_session(
         session_id,
         task_id,
         agent_kind,
-        interface_mode,
         initial_prompt,
         policy_snapshot,
         stop_session_ids,

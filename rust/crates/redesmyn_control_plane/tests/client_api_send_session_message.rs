@@ -15,8 +15,7 @@ use redesmyn_protocol::daemon::{DaemonFrame, DaemonMessage};
 use redesmyn_protocol::session::{InterfaceMode, SessionEventKind, SessionScope, TurnStarted};
 use redesmyn_protocol::{ExternalSessionRef, SessionEvent, Timestamp};
 use redesmyn_storage::schema::{
-    AgentInterfaceMode as StorageAgentInterfaceMode, AgentKind as StorageAgentKind,
-    AgentSessionScopeKind as StorageAgentSessionScopeKind,
+    AgentKind as StorageAgentKind, AgentSessionScopeKind as StorageAgentSessionScopeKind,
     AgentSessionStatus as StorageAgentSessionStatus,
 };
 use redesmyn_storage::sessions::{AgentSessionRecord, get_agent_session, insert_agent_session};
@@ -161,7 +160,6 @@ async fn send_session_message_appends_user_message_for_chat_session() {
             scope_kind: StorageAgentSessionScopeKind::Chat,
             task_id: None,
             agent_kind: StorageAgentKind::Codex,
-            interface_mode: StorageAgentInterfaceMode::StructuredExec,
             status: StorageAgentSessionStatus::Stopped,
             external_session_ref: r#"{"type":"none"}"#.to_owned(),
             title: None,
@@ -248,7 +246,6 @@ async fn send_session_message_conflicts_on_structured_turn_in_progress() {
             scope_kind: StorageAgentSessionScopeKind::Task,
             task_id: Some(task_id),
             agent_kind: StorageAgentKind::Codex,
-            interface_mode: StorageAgentInterfaceMode::StructuredExec,
             status: StorageAgentSessionStatus::Running,
             external_session_ref: r#"{"type":"codex_thread","thread_id":"thread-1"}"#.to_owned(),
             title: None,
@@ -370,7 +367,6 @@ async fn send_session_message_stop_and_start_new_returns_new_session_id() {
             scope_kind: StorageAgentSessionScopeKind::Task,
             task_id: Some(task_id),
             agent_kind: StorageAgentKind::Codex,
-            interface_mode: StorageAgentInterfaceMode::StructuredExec,
             status: StorageAgentSessionStatus::Stopped,
             external_session_ref: r#"{"type":"none"}"#.to_owned(),
             title: None,
@@ -394,7 +390,6 @@ async fn send_session_message_stop_and_start_new_returns_new_session_id() {
             scope_kind: StorageAgentSessionScopeKind::Task,
             task_id: Some(task_id),
             agent_kind: StorageAgentKind::Shell,
-            interface_mode: StorageAgentInterfaceMode::ShellTmux,
             status: StorageAgentSessionStatus::Running,
             external_session_ref: r#"{"type":"none"}"#.to_owned(),
             title: None,
@@ -521,7 +516,6 @@ async fn send_session_message_dispatches_session_start_for_chat_session() {
             scope_kind: StorageAgentSessionScopeKind::Chat,
             task_id: None,
             agent_kind: StorageAgentKind::Codex,
-            interface_mode: StorageAgentInterfaceMode::StructuredExec,
             status: StorageAgentSessionStatus::Stopped,
             external_session_ref: r#"{"type":"none"}"#.to_owned(),
             title: None,
@@ -621,7 +615,6 @@ async fn send_session_message_dispatches_resume_by_id_turn_for_chat_session_inte
             scope_kind: StorageAgentSessionScopeKind::Chat,
             task_id: None,
             agent_kind: StorageAgentKind::Codex,
-            interface_mode: StorageAgentInterfaceMode::StructuredExec,
             status: StorageAgentSessionStatus::Stopped,
             external_session_ref: r#"{"type":"codex_thread","thread_id":"thread-1"}"#.to_owned(),
             title: None,

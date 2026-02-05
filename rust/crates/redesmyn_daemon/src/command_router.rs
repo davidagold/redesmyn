@@ -2,13 +2,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use redesmyn_config::DaemonConfig;
-use redesmyn_domain::agent::{AppServerTurnIntent, ExternalSessionRef as DomainExternalSessionRef};
+use redesmyn_domain::agent::ExternalSessionRef as DomainExternalSessionRef;
 use redesmyn_exec::app_server::{
-    AppServerProcess, AppServerRequest, AppServerResponse, AppServerSessionSpec, AppServerSupervisor,
+    AppServerProcess, AppServerRequest, AppServerResponse, AppServerSupervisor,
     AppServerSupervisorConfig,
 };
-use redesmyn_exec::artifact_store::LocalArtifactStore;
 use redesmyn_exec::codex_app_server::{CodexAppServerProcess, CodexAppServerProcessConfig};
+use redesmyn_exec::artifact_store::LocalArtifactStore;
 use redesmyn_logging::tracing;
 use redesmyn_protocol::agent_commands::{
     AGENT_LIST_MODELS, InterruptTaskAgentTurnCommand, ListAgentModelsCommand,
@@ -21,7 +21,7 @@ use redesmyn_protocol::agent_commands::{
     SESSION_AGENT_SET_CODEX_APPROVAL_POLICY, SESSION_AGENT_SET_CODEX_SANDBOX_POLICY,
     SESSION_AGENT_SET_MODEL, SESSION_AGENT_START, TASK_AGENT_START,
 };
-use redesmyn_protocol::client::{AgentInterfaceMode, AgentKind};
+use redesmyn_protocol::client::AgentKind;
 use redesmyn_protocol::daemon::{
     CommandDispatch, CommandProgress, CommandState, CommandUpdate, DaemonFrame, DaemonMessage,
 };
@@ -30,13 +30,14 @@ use redesmyn_protocol::{ErrorCategory, ErrorDetail, ErrorEnvelope, ProtocolEnvel
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
+use crate::agent_driver::{AgentDriver, CodexDriver, ResumeByIdTurnSpec, StartSessionSpec};
 use crate::host_identity::HostIdentity;
 use crate::repo::{RepoRegistry, RepoRegistryError};
 
 #[derive(Clone)]
 struct CommandRouter {
     repo_registry: Arc<dyn RepoRegistry>,
-    app_server: Arc<AppServerSupervisor>,
+    codex_driver: Arc<dyn AgentDriver>,
 }
 
 pub async fn run_command_router(
@@ -69,9 +70,11 @@ pub async fn run_command_router(
         }
     };
 
+    let codex_driver = Arc::new(CodexDriver::new(app_server));
+
     let router = CommandRouter {
         repo_registry,
-        app_server,
+        codex_driver,
     };
 
     let mut tasks = JoinSet::new();
@@ -190,7 +193,6 @@ async fn handle_task_agent_start(
         session_id: cmd.session_id,
         task_id: Some(cmd.task_id),
         agent_kind: cmd.agent_kind,
-        interface_mode: cmd.interface_mode,
         initial_prompt: cmd.initial_prompt,
         policy_snapshot: cmd.policy_snapshot,
         stop_session_ids: cmd.stop_session_ids,
@@ -218,25 +220,6 @@ async fn handle_agent_start(
         return;
     }
 
-    match cmd.interface_mode {
-        AgentInterfaceMode::AppServer => {}
-        AgentInterfaceMode::StructuredExec => {
-            tracing::info!("structured_exec sessions use the app-server runner in this daemon");
-        }
-        AgentInterfaceMode::ShellTmux => {
-            reject_command(
-                frames_tx,
-                dispatch,
-                ErrorEnvelope::new(
-                    ErrorCategory::InvalidRequest,
-                    "shell_tmux sessions are not supported by this daemon yet.",
-                ),
-            )
-            .await;
-            return;
-        }
-    }
-
     if let Err(err) = send_command_update(
         frames_tx,
         &dispatch,
@@ -251,16 +234,6 @@ async fn handle_agent_start(
         tracing::warn!(error = ?err, "failed to send accepted command update");
     }
 
-    for stop_session_id in cmd.stop_session_ids {
-        if let Err(err) = router.app_server.stop_session(stop_session_id).await {
-            tracing::debug!(
-                session_id = %stop_session_id,
-                error = %err,
-                "failed to stop session"
-            );
-        }
-    }
-
     let scope = session_scope(cmd.task_id);
     let repo_root = match resolve_repo_root(&router.repo_registry, dispatch.scope) {
         Ok(path) => path,
@@ -270,57 +243,19 @@ async fn handle_agent_start(
         }
     };
 
-    let process = Arc::new(CodexAppServerProcess::new(CodexAppServerProcessConfig::codex_default(
-        repo_root,
-    )));
-
-    let spec = AppServerSessionSpec {
+    let spec = StartSessionSpec {
+        session_id: cmd.session_id,
+        task_id: cmd.task_id,
         scope,
-        allow_concurrent_for_task: false,
-        process,
+        repo_root,
+        initial_prompt: cmd.initial_prompt,
+        policy_snapshot: cmd.policy_snapshot,
+        stop_session_ids: cmd.stop_session_ids,
     };
 
-    if let Err(err) = router
-        .app_server
-        .start_session(cmd.session_id, cmd.task_id, spec)
-        .await
-    {
-        fail_command(
-            frames_tx,
-            dispatch,
-            ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()),
-        )
-        .await;
+    if let Err(err) = router.codex_driver.start_session(spec).await {
+        fail_command(frames_tx, dispatch, err).await;
         return;
-    }
-
-    if let Some(snapshot) = cmd.policy_snapshot.clone() {
-        if let Err(err) = router
-            .app_server
-            .hydrate_policies(cmd.session_id, snapshot)
-            .await
-        {
-            fail_command(
-                frames_tx,
-                dispatch,
-                ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()),
-            )
-            .await;
-            return;
-        }
-    }
-
-    if let Some(prompt) = cmd.initial_prompt {
-        let intent = AppServerTurnIntent::StartNew { prompt };
-        if let Err(err) = router.app_server.send_message(cmd.session_id, intent).await {
-            fail_command(
-                frames_tx,
-                dispatch,
-                ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()),
-            )
-            .await;
-            return;
-        }
     }
 
     if let Err(err) = send_command_update(
@@ -364,47 +299,6 @@ async fn handle_session_agent_resume_by_id_turn(
         }
     };
 
-    let process = Arc::new(CodexAppServerProcess::new(CodexAppServerProcessConfig::codex_default(
-        repo_root,
-    )));
-
-    let spec = AppServerSessionSpec {
-        scope,
-        allow_concurrent_for_task: false,
-        process,
-    };
-
-    if let Err(err) = router
-        .app_server
-        .start_session(cmd.session_id, cmd.task_id, spec)
-        .await
-    {
-        fail_command(frames_tx, dispatch, ErrorEnvelope::new(ErrorCategory::Internal, err.to_string())).await;
-        return;
-    }
-
-    if let Some(snapshot) = cmd.policy_snapshot.clone() {
-        if let Err(err) = router
-            .app_server
-            .hydrate_policies(cmd.session_id, snapshot)
-            .await
-        {
-            fail_command(
-                frames_tx,
-                dispatch,
-                ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()),
-            )
-            .await;
-            return;
-        }
-    }
-
-    if cmd.interrupt_turn {
-        if let Err(err) = router.app_server.interrupt_session(cmd.session_id).await {
-            tracing::warn!(session_id = %cmd.session_id, error = %err, "failed to interrupt session before resume");
-        }
-    }
-
     let external = match domain_external_session_ref(&cmd.external_session_ref) {
         Ok(external) => external,
         Err(err) => {
@@ -412,14 +306,19 @@ async fn handle_session_agent_resume_by_id_turn(
             return;
         }
     };
-
-    let intent = AppServerTurnIntent::Resume {
-        external,
+    let spec = ResumeByIdTurnSpec {
+        session_id: cmd.session_id,
+        task_id: cmd.task_id,
+        scope,
+        repo_root,
+        external_session_ref: external,
         prompt: cmd.prompt,
+        policy_snapshot: cmd.policy_snapshot,
+        interrupt_turn: cmd.interrupt_turn,
     };
 
-    if let Err(err) = router.app_server.send_message(cmd.session_id, intent).await {
-        fail_command(frames_tx, dispatch, ErrorEnvelope::new(ErrorCategory::Internal, err.to_string())).await;
+    if let Err(err) = router.codex_driver.resume_by_id_turn(spec).await {
+        fail_command(frames_tx, dispatch, err).await;
         return;
     }
 
@@ -445,12 +344,21 @@ async fn handle_session_agent_interrupt_turn(
         tracing::warn!(error = ?err, "failed to send accepted command update");
     }
 
-    match router.app_server.interrupt_session(cmd.session_id).await {
-        Ok(_) => {
-            let _ = send_command_update(frames_tx, &dispatch, CommandState::Succeeded, Some("interrupted".to_owned()), None, None, None).await;
+    match router.codex_driver.interrupt_turn(cmd.session_id).await {
+        Ok(()) => {
+            let _ = send_command_update(
+                frames_tx,
+                &dispatch,
+                CommandState::Succeeded,
+                Some("interrupted".to_owned()),
+                None,
+                None,
+                None,
+            )
+            .await;
         }
         Err(err) => {
-            fail_command(frames_tx, dispatch, ErrorEnvelope::new(ErrorCategory::Internal, err.to_string())).await;
+            fail_command(frames_tx, dispatch, err).await;
         }
     }
 }
@@ -482,21 +390,17 @@ async fn handle_session_agent_set_permissions_mode(
         tracing::warn!(error = ?err, "failed to send accepted command update");
     }
 
-    if let Err(err) = ensure_app_server_session_started(
-        &router,
-        dispatch.scope,
-        cmd.session_id,
-        cmd.task_id,
-    )
-    .await
-    {
-        fail_command(frames_tx, dispatch, err).await;
-        return;
-    }
+    let repo_root = match resolve_repo_root(&router.repo_registry, dispatch.scope) {
+        Ok(path) => path,
+        Err(err) => {
+            fail_command(frames_tx, dispatch, err).await;
+            return;
+        }
+    };
 
     match router
-        .app_server
-        .set_permissions_mode(cmd.session_id, cmd.mode)
+        .codex_driver
+        .set_permissions_mode(repo_root, cmd.session_id, cmd.task_id, cmd.mode)
         .await
     {
         Ok(()) => {
@@ -512,12 +416,7 @@ async fn handle_session_agent_set_permissions_mode(
             .await;
         }
         Err(err) => {
-            fail_command(
-                frames_tx,
-                dispatch,
-                ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()),
-            )
-            .await;
+            fail_command(frames_tx, dispatch, err).await;
         }
     }
 }
@@ -549,21 +448,22 @@ async fn handle_session_agent_set_codex_approval_policy(
         tracing::warn!(error = ?err, "failed to send accepted command update");
     }
 
-    if let Err(err) = ensure_app_server_session_started(
-        &router,
-        dispatch.scope,
-        cmd.session_id,
-        cmd.task_id,
-    )
-    .await
-    {
-        fail_command(frames_tx, dispatch, err).await;
-        return;
-    }
+    let repo_root = match resolve_repo_root(&router.repo_registry, dispatch.scope) {
+        Ok(path) => path,
+        Err(err) => {
+            fail_command(frames_tx, dispatch, err).await;
+            return;
+        }
+    };
 
     match router
-        .app_server
-        .set_codex_approval_policy(cmd.session_id, cmd.approval_policy)
+        .codex_driver
+        .set_codex_approval_policy(
+            repo_root,
+            cmd.session_id,
+            cmd.task_id,
+            cmd.approval_policy,
+        )
         .await
     {
         Ok(()) => {
@@ -579,12 +479,7 @@ async fn handle_session_agent_set_codex_approval_policy(
             .await;
         }
         Err(err) => {
-            fail_command(
-                frames_tx,
-                dispatch,
-                ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()),
-            )
-            .await;
+            fail_command(frames_tx, dispatch, err).await;
         }
     }
 }
@@ -616,21 +511,22 @@ async fn handle_session_agent_set_codex_sandbox_policy(
         tracing::warn!(error = ?err, "failed to send accepted command update");
     }
 
-    if let Err(err) = ensure_app_server_session_started(
-        &router,
-        dispatch.scope,
-        cmd.session_id,
-        cmd.task_id,
-    )
-    .await
-    {
-        fail_command(frames_tx, dispatch, err).await;
-        return;
-    }
+    let repo_root = match resolve_repo_root(&router.repo_registry, dispatch.scope) {
+        Ok(path) => path,
+        Err(err) => {
+            fail_command(frames_tx, dispatch, err).await;
+            return;
+        }
+    };
 
     match router
-        .app_server
-        .set_codex_sandbox_policy(cmd.session_id, cmd.sandbox_policy)
+        .codex_driver
+        .set_codex_sandbox_policy(
+            repo_root,
+            cmd.session_id,
+            cmd.task_id,
+            cmd.sandbox_policy,
+        )
         .await
     {
         Ok(()) => {
@@ -646,12 +542,7 @@ async fn handle_session_agent_set_codex_sandbox_policy(
             .await;
         }
         Err(err) => {
-            fail_command(
-                frames_tx,
-                dispatch,
-                ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()),
-            )
-            .await;
+            fail_command(frames_tx, dispatch, err).await;
         }
     }
 }
@@ -947,7 +838,7 @@ async fn handle_session_agent_respond_permission_request(
     }
 
     match router
-        .app_server
+        .codex_driver
         .respond_permission_request(cmd.session_id, cmd.request_id, cmd.decision)
         .await
     {
@@ -964,12 +855,7 @@ async fn handle_session_agent_respond_permission_request(
             .await;
         }
         Err(err) => {
-            fail_command(
-                frames_tx,
-                dispatch,
-                ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()),
-            )
-            .await;
+            fail_command(frames_tx, dispatch, err).await;
         }
     }
 }
@@ -979,31 +865,6 @@ fn session_scope(task_id: Option<redesmyn_ids::TaskId>) -> SessionScope {
         Some(task_id) => SessionScope::Task { task_id },
         None => SessionScope::Chat,
     }
-}
-
-async fn ensure_app_server_session_started(
-    router: &CommandRouter,
-    repo_scope: RepoScope,
-    session_id: redesmyn_ids::SessionId,
-    task_id: Option<redesmyn_ids::TaskId>,
-) -> Result<(), ErrorEnvelope> {
-    let scope = session_scope(task_id);
-    let repo_root = resolve_repo_root(&router.repo_registry, repo_scope)?;
-    let process = Arc::new(CodexAppServerProcess::new(CodexAppServerProcessConfig::codex_default(
-        repo_root,
-    )));
-    let spec = AppServerSessionSpec {
-        scope,
-        allow_concurrent_for_task: false,
-        process,
-    };
-
-    router
-        .app_server
-        .start_session(session_id, task_id, spec)
-        .await
-        .map(|_| ())
-        .map_err(|err| ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()))
 }
 
 fn daemon_state_dir(daemon: &DaemonConfig) -> PathBuf {

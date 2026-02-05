@@ -16,8 +16,7 @@ use redesmyn_protocol::{
 };
 use redesmyn_storage::StorageError;
 use redesmyn_storage::schema::{
-    AgentInterfaceMode as StorageAgentInterfaceMode, AgentKind as StorageAgentKind,
-    AgentSessionScopeKind as StorageAgentSessionScopeKind,
+    AgentKind as StorageAgentKind, AgentSessionScopeKind as StorageAgentSessionScopeKind,
     AgentSessionStatus as StorageAgentSessionStatus,
 };
 
@@ -528,7 +527,6 @@ async fn ensure_task_agent_session_row(
 
     let now_ms = ms_from_timestamp(event.created_at);
     let agent_kind = infer_agent_kind(event);
-    let interface_mode = infer_interface_mode(event, agent_kind);
     let status = infer_session_status(event);
     let external_session_ref = infer_external_session_ref_json(event);
     let started_at_ms = if matches!(status, StorageAgentSessionStatus::Running) {
@@ -553,7 +551,6 @@ async fn ensure_task_agent_session_row(
             scope_kind,
             task_id,
             agent_kind,
-            interface_mode,
             status,
             external_session_ref,
             title,
@@ -561,7 +558,7 @@ async fn ensure_task_agent_session_row(
             ended_at_ms,
             closed_at_ms
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
         "#,
     )
     .bind(event.session_id)
@@ -572,7 +569,6 @@ async fn ensure_task_agent_session_row(
     .bind(StorageAgentSessionScopeKind::Task.as_str())
     .bind(task_id)
     .bind(agent_kind.as_str())
-    .bind(interface_mode.as_str())
     .bind(status.as_str())
     .bind(external_session_ref)
     .bind(Option::<String>::None)
@@ -620,47 +616,6 @@ fn storage_agent_kind_from_external_ref(external: &ExternalSessionRef) -> Option
         }
         ExternalSessionRef::ClaudeSession { .. } => Some(StorageAgentKind::ClaudeCode),
         ExternalSessionRef::None | ExternalSessionRef::Unknown { .. } => None,
-    }
-}
-
-fn infer_interface_mode(
-    event: &SessionEvent,
-    agent_kind: StorageAgentKind,
-) -> StorageAgentInterfaceMode {
-    match &event.kind {
-        SessionEventKind::TurnStarted(ev) => match ev.interface_mode {
-            redesmyn_protocol::session::InterfaceMode::Interactive => {
-                StorageAgentInterfaceMode::ShellTmux
-            }
-            redesmyn_protocol::session::InterfaceMode::Structured => match agent_kind {
-                StorageAgentKind::Codex => StorageAgentInterfaceMode::AppServer,
-                _ => StorageAgentInterfaceMode::StructuredExec,
-            },
-            redesmyn_protocol::session::InterfaceMode::Unknown => {
-                default_interface_mode(agent_kind)
-            }
-        },
-        SessionEventKind::TurnCompleted(ev) => match ev.interface_mode {
-            redesmyn_protocol::session::InterfaceMode::Interactive => {
-                StorageAgentInterfaceMode::ShellTmux
-            }
-            redesmyn_protocol::session::InterfaceMode::Structured => match agent_kind {
-                StorageAgentKind::Codex => StorageAgentInterfaceMode::AppServer,
-                _ => StorageAgentInterfaceMode::StructuredExec,
-            },
-            redesmyn_protocol::session::InterfaceMode::Unknown => {
-                default_interface_mode(agent_kind)
-            }
-        },
-        _ => default_interface_mode(agent_kind),
-    }
-}
-
-fn default_interface_mode(agent_kind: StorageAgentKind) -> StorageAgentInterfaceMode {
-    match agent_kind {
-        StorageAgentKind::Shell => StorageAgentInterfaceMode::ShellTmux,
-        StorageAgentKind::Codex => StorageAgentInterfaceMode::AppServer,
-        StorageAgentKind::ClaudeCode => StorageAgentInterfaceMode::StructuredExec,
     }
 }
 

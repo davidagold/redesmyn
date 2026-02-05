@@ -3,7 +3,7 @@ use redesmyn_ids::{EpicId, RepoId, WorkspaceId};
 use redesmyn_protocol::pb::redesmyn::protocol::v1 as pbv1;
 use redesmyn_storage::{
     open_test_sqlite_pool,
-    schema::{AgentInterfaceMode, AgentKind},
+    schema::AgentKind,
     sessions::{
         NewSessionEvent, SessionEventCursor, SessionEventsQuery, append_session_event,
         create_chat_session, get_session_events, pin_chat_session_to_epic,
@@ -85,7 +85,6 @@ async fn persists_session_events_with_pagination_and_kind_filter() {
         workspace_id,
         repo_id,
         AgentKind::Codex,
-        AgentInterfaceMode::StructuredExec,
         Some("Chat"),
     )
     .await

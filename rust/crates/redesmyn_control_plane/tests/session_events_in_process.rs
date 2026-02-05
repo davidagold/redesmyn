@@ -9,8 +9,7 @@ use redesmyn_protocol::client::{SessionEventCursor, SessionEventKindFilter};
 use redesmyn_protocol::session::{AssistantMessage, SessionEventKind, SessionScope, UserMessage};
 use redesmyn_protocol::{SessionEvent, Timestamp};
 use redesmyn_storage::schema::{
-    AgentInterfaceMode as StorageAgentInterfaceMode, AgentKind as StorageAgentKind,
-    AgentSessionScopeKind as StorageAgentSessionScopeKind,
+    AgentKind as StorageAgentKind, AgentSessionScopeKind as StorageAgentSessionScopeKind,
     AgentSessionStatus as StorageAgentSessionStatus,
 };
 use redesmyn_storage::sessions::{AgentSessionRecord, insert_agent_session};
@@ -61,7 +60,6 @@ async fn insert_repo_and_chat_session(control_plane: &ControlPlane, session_id: 
             scope_kind: StorageAgentSessionScopeKind::Chat,
             task_id: None,
             agent_kind: StorageAgentKind::Shell,
-            interface_mode: StorageAgentInterfaceMode::ShellTmux,
             status: StorageAgentSessionStatus::Stopped,
             external_session_ref: r#"{"type":"none"}"#.to_owned(),
             title: None,

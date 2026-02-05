@@ -1223,7 +1223,6 @@ async fn ensure_agent_session(
         "workspace_id",
         "repo_id",
         "agent_kind",
-        "interface_mode",
         "status",
         "created_at_ms",
         "updated_at_ms",
@@ -1264,9 +1263,6 @@ async fn ensure_agent_session(
             }
             Some(AgentSessionValueKind::AgentKindShell) => {
                 query = query.bind("shell");
-            }
-            Some(AgentSessionValueKind::InterfaceModeShellTmux) => {
-                query = query.bind("shell_tmux");
             }
             Some(AgentSessionValueKind::StatusStopped) => {
                 query = query.bind("stopped");
@@ -1322,7 +1318,6 @@ enum AgentSessionValueKind {
     WorkspaceId,
     RepoId,
     AgentKindShell,
-    InterfaceModeShellTmux,
     StatusStopped,
     TimestampNowMs,
 }
@@ -1342,7 +1337,6 @@ fn agent_session_value_kind(schema: &AgentSessionsSchema, column: &str) -> Optio
         }
         "repo_id" if !schema.columns.contains("scope_repo_id") => Some(AgentSessionValueKind::RepoId),
         "agent_kind" => Some(AgentSessionValueKind::AgentKindShell),
-        "interface_mode" => Some(AgentSessionValueKind::InterfaceModeShellTmux),
         "status" => Some(AgentSessionValueKind::StatusStopped),
         "created_at_ms" | "updated_at_ms" | "ended_at_ms" => Some(AgentSessionValueKind::TimestampNowMs),
         _ => None,

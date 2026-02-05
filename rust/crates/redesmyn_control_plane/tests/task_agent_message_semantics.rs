@@ -603,7 +603,6 @@ async fn send_task_agent_message_structured_resume_conflict_interrupt() {
             on_conflict: AgentMessageConflictAction::Fail,
             interrupt: None,
             agent_kind: AgentKind::Codex,
-            preferred_interface_mode: None,
         }),
     )
     .await;
@@ -650,7 +649,6 @@ async fn send_task_agent_message_structured_resume_conflict_interrupt() {
             on_conflict: AgentMessageConflictAction::Fail,
             interrupt: None,
             agent_kind: AgentKind::Codex,
-            preferred_interface_mode: None,
         }),
     )
     .await;
@@ -686,7 +684,6 @@ async fn send_task_agent_message_structured_resume_conflict_interrupt() {
             on_conflict: AgentMessageConflictAction::Fail,
             interrupt: None,
             agent_kind: AgentKind::Codex,
-            preferred_interface_mode: None,
         }),
     )
     .await;
@@ -721,7 +718,6 @@ async fn send_task_agent_message_structured_resume_conflict_interrupt() {
             on_conflict: AgentMessageConflictAction::InterruptTurn,
             interrupt: None,
             agent_kind: AgentKind::Codex,
-            preferred_interface_mode: None,
         }),
     )
     .await;

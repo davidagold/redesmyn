@@ -1,9 +1,8 @@
 use redesmyn_ids::{SessionId, TaskId};
-use redesmyn_protocol::client::{AgentInterfaceMode, AgentKind};
+use redesmyn_protocol::client::AgentKind;
 use redesmyn_protocol::{ErrorCategory, ErrorDetail, ErrorEnvelope, ExternalSessionRef};
 use sqlx::SqlitePool;
 
-type StorageAgentInterfaceMode = redesmyn_storage::schema::AgentInterfaceMode;
 type StorageAgentKind = redesmyn_storage::schema::AgentKind;
 type StorageAgentSessionStatus = redesmyn_storage::schema::AgentSessionStatus;
 
@@ -17,14 +16,8 @@ pub(super) fn protocol_agent_kind_from_storage(kind: StorageAgentKind) -> AgentK
     }
 }
 
-pub(super) fn protocol_interface_mode_from_storage(
-    mode: StorageAgentInterfaceMode,
-) -> AgentInterfaceMode {
-    match mode {
-        StorageAgentInterfaceMode::ShellTmux => AgentInterfaceMode::ShellTmux,
-        StorageAgentInterfaceMode::StructuredExec => AgentInterfaceMode::StructuredExec,
-        StorageAgentInterfaceMode::AppServer => AgentInterfaceMode::AppServer,
-    }
+pub(super) fn is_structured_agent_kind(agent_kind: AgentKind) -> bool {
+    matches!(agent_kind, AgentKind::Codex | AgentKind::ClaudeCode)
 }
 
 pub(super) fn is_active_task_session(row: &StorageAgentSessionRecord) -> bool {
@@ -96,16 +89,14 @@ pub(super) async fn load_resumable_structured_session(
     pool: &SqlitePool,
     recent_sessions: &[StorageAgentSessionRecord],
     agent_kind: AgentKind,
-    desired_interface_mode: AgentInterfaceMode,
 ) -> Result<Option<ResumableStructuredSession>, ErrorEnvelope> {
-    if desired_interface_mode != AgentInterfaceMode::StructuredExec {
+    if !is_structured_agent_kind(agent_kind) {
         return Ok(None);
     }
 
     for row in recent_sessions.iter().filter(|row| {
         is_active_task_session(row)
             && protocol_agent_kind_from_storage(row.agent_kind) == agent_kind
-            && protocol_interface_mode_from_storage(row.interface_mode) == desired_interface_mode
     }) {
         let Some(parsed) = parse_external_session_ref(&row.external_session_ref) else {
             continue;
