@@ -111,6 +111,50 @@ pub fn cascading_menu_row(
         })
 }
 
+/// Standard checkbox indicator used for multi-select menu options.
+#[must_use]
+pub fn cascading_menu_checkbox_indicator(theme: &UiTheme, selected: bool, highlighted: bool) -> Div {
+    let border = if highlighted && !selected {
+        theme.colors.foreground_muted.opacity(0.65)
+    } else {
+        theme.colors.border.opacity(0.45)
+    };
+
+    div()
+        .size(px(16.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(theme.radius.sm)
+        .border_1()
+        .border_color(border)
+        .when(selected, |this| {
+            this.border_color(theme.colors.ring.opacity(0.7))
+                .text_color(theme.colors.ring)
+        })
+        .text_xs()
+        .text_color(theme.colors.foreground_muted)
+        .child(if selected { "✓" } else { "" })
+}
+
+/// Standard radio indicator used for single-select menu options.
+#[must_use]
+pub fn cascading_menu_radio_indicator(theme: &UiTheme, selected: bool, highlighted: bool) -> Div {
+    let border = if highlighted && !selected {
+        theme.colors.foreground_muted.opacity(0.65)
+    } else {
+        theme.colors.border.opacity(0.45)
+    };
+
+    div()
+        .flex_shrink_0()
+        .size(px(12.0))
+        .rounded_full()
+        .border_1()
+        .border_color(border)
+        .when(selected, |this| this.bg(theme.colors.ring).border_color(theme.colors.ring))
+}
+
 /// Standardized truncating value label for primary menu rows.
 #[must_use]
 pub fn cascading_menu_row_value(theme: &UiTheme, value: impl IntoElement) -> Div {

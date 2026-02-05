@@ -23,7 +23,8 @@ pub use callout::{Callout, CalloutKind};
 pub use cascading_menu::{
     CascadingMenu, CascadingMenuId, CascadingMenuMetrics, CascadingMenuRowStyle,
     CascadingMenuSecondarySide, CascadingMenuState, CascadingMenuSurfaceStyle, cascading_menu_row,
-    cascading_menu_row_value, cascading_menu_surface, set_open_cascading_menu,
+    cascading_menu_row_value, cascading_menu_surface, cascading_menu_checkbox_indicator,
+    cascading_menu_radio_indicator, set_open_cascading_menu,
 };
 pub use expandable::Expandable;
 pub use markdown::{MarkdownInlineSingleLineContent, MarkdownInlineSingleLineView, MarkdownView};

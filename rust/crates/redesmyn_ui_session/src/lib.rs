@@ -44,7 +44,7 @@ use redesmyn_ui::components::{
     CascadingMenuRowStyle, CascadingMenuState, CascadingMenuSurfaceStyle, Expandable, IconButton,
     MarkdownView, ScrollFade, ScrollbarStyle, StyledScrollbar, TextArea, TextButton, TextInput,
     TextInputEvent, cascading_menu_row, cascading_menu_row_value, cascading_menu_surface,
-    set_open_cascading_menu,
+    cascading_menu_radio_indicator, set_open_cascading_menu,
 };
 use redesmyn_ui::styles::ThemeMode;
 use redesmyn_ui::utils::{
@@ -6139,15 +6139,8 @@ impl Render for SessionView {
                             == SessionSettingsMenuFocus::Secondary
                             && self.session_settings_submenu_index == idx;
 
-                        let indicator = div()
-                            .flex_shrink_0()
-                            .size(px(12.0))
-                            .rounded_full()
-                            .border_1()
-                            .border_color(theme.colors.border)
-                            .when(selected, |this| {
-                                this.bg(theme.colors.ring).border_color(theme.colors.ring)
-                            });
+                        let indicator =
+                            cascading_menu_radio_indicator(&theme, selected, active);
 
                         let mut row = cascading_menu_row(&theme, primary_row_style, active, 0.0)
                             .child(indicator)
@@ -6208,15 +6201,8 @@ impl Render for SessionView {
                             == SessionSettingsMenuFocus::Secondary
                             && self.session_settings_submenu_index == idx;
 
-                        let indicator = div()
-                            .flex_shrink_0()
-                            .size(px(12.0))
-                            .rounded_full()
-                            .border_1()
-                            .border_color(theme.colors.border)
-                            .when(selected, |this| {
-                                this.bg(theme.colors.ring).border_color(theme.colors.ring)
-                            });
+                        let indicator =
+                            cascading_menu_radio_indicator(&theme, selected, active);
 
                         let label_color = match option {
                             SessionSettingsSandboxOption::DangerFullAccess => theme.colors.danger,

@@ -26,10 +26,11 @@ use redesmyn_ui_session::SessionView;
 use redesmyn_ui::UiContext;
 use redesmyn_ui::components::{
     ButtonKind, Callout, CalloutKind, CascadingMenu, CascadingMenuId, CascadingMenuMetrics,
-    CascadingMenuRowStyle, CascadingMenuSecondarySide, CascadingMenuState, CascadingMenuSurfaceStyle,
-    IconButton, OverlaySurfaceKind, ProgressPill, ScrollArea, SplitPane, SplitPaneAxis,
-    SplitPaneEvent, SplitPaneResizeMode, SplitPaneState, TextButton, TextInput, TextInputEvent,
-    Tooltip, cascading_menu_row, cascading_menu_surface, overlay_surface, set_open_cascading_menu,
+    CascadingMenuRowStyle, CascadingMenuSecondarySide, CascadingMenuState,
+    CascadingMenuSurfaceStyle, IconButton, OverlaySurfaceKind, ProgressPill, ScrollArea, SplitPane,
+    SplitPaneAxis, SplitPaneEvent, SplitPaneResizeMode, SplitPaneState, TextButton, TextInput,
+    TextInputEvent, Tooltip, cascading_menu_checkbox_indicator, cascading_menu_row,
+    cascading_menu_surface, overlay_surface, set_open_cascading_menu,
 };
 use redesmyn_ui::settings::ThemePreference;
 use redesmyn_ui::task_filters::{
@@ -5369,29 +5370,6 @@ impl Render for WorkspacePaneHost {
                     let submenu = submenu_state.map(|(category, _row_index)| {
                         let visible_values = self.visible_task_filter_value_indices(category);
                         let mut value_list = div().flex().flex_col().gap(px(0.0));
-                        let checkbox = |selected: bool, highlighted: bool| {
-                            let border = if highlighted && !selected {
-                                theme.colors.foreground_muted.opacity(0.65)
-                            } else {
-                                theme.colors.border.opacity(0.45)
-                            };
-
-                            div()
-                                .size(px(16.0))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded(theme.radius.sm)
-                                .border_1()
-                                .border_color(border)
-                                .when(selected, |this| {
-                                    this.border_color(theme.colors.ring.opacity(0.7))
-                                        .text_color(theme.colors.ring)
-                                })
-                                .text_xs()
-                                .text_color(theme.colors.foreground_muted)
-                                .child(if selected { "✓" } else { "" })
-                        };
 
                         if visible_values.is_empty() {
                             value_list = value_list.child(
@@ -5488,7 +5466,11 @@ impl Render for WorkspacePaneHost {
                                                     });
                                                 }
                                             })
-                                            .child(checkbox(selected, highlighted))
+                                            .child(cascading_menu_checkbox_indicator(
+                                                &theme,
+                                                selected,
+                                                highlighted,
+                                            ))
                                             .child(
                                                 div()
                                                     .flex_1()
@@ -5589,7 +5571,11 @@ impl Render for WorkspacePaneHost {
                                                     });
                                                 }
                                             })
-                                            .child(checkbox(selected, highlighted))
+                                            .child(cascading_menu_checkbox_indicator(
+                                                &theme,
+                                                selected,
+                                                highlighted,
+                                            ))
                                             .child(
                                                 div()
                                                     .flex_1()
@@ -5688,7 +5674,11 @@ impl Render for WorkspacePaneHost {
                                                     });
                                                 }
                                             })
-                                            .child(checkbox(selected, highlighted))
+                                            .child(cascading_menu_checkbox_indicator(
+                                                &theme,
+                                                selected,
+                                                highlighted,
+                                            ))
                                             .child(
                                                 div()
                                                     .flex_1()
