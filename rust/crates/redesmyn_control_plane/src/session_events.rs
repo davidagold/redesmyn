@@ -11,8 +11,15 @@ use redesmyn_protocol::session::{
     ArtifactEmitted, AssistantMessage, SessionEventKind, SessionScope, ToolInvocation, ToolResult,
     UnknownSessionEvent, UserMessage,
 };
-use redesmyn_protocol::{ArtifactKind, ArtifactRef, SessionEvent, SessionLiveEvent, Timestamp};
+use redesmyn_protocol::{
+    ArtifactKind, ArtifactRef, ExternalSessionRef, SessionEvent, SessionLiveEvent, Timestamp,
+};
 use redesmyn_storage::StorageError;
+use redesmyn_storage::schema::{
+    AgentInterfaceMode as StorageAgentInterfaceMode, AgentKind as StorageAgentKind,
+    AgentSessionScopeKind as StorageAgentSessionScopeKind,
+    AgentSessionStatus as StorageAgentSessionStatus,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionEventsResyncReason {
@@ -450,6 +457,13 @@ impl SessionEvents {
         let message_preview = message_preview_from_kind(&event.kind);
         let artifact_id = artifact_id_from_kind(&event.kind);
 
+        if let SessionScope::Task { task_id } = event.scope {
+            if let (Some(workspace_id), Some(repo_id)) = (workspace_id, repo_id) {
+                ensure_task_agent_session_row(&self.pool, event, workspace_id, repo_id, task_id)
+                    .await?;
+            }
+        }
+
         ensure_event_artifacts(
             &self.pool,
             ms_from_timestamp(event.created_at),
@@ -498,6 +512,182 @@ impl SessionEvents {
         let _ = self.hub.send(event.clone());
         Ok(())
     }
+}
+
+async fn ensure_task_agent_session_row(
+    pool: &SqlitePool,
+    event: &SessionEvent,
+    workspace_id: WorkspaceId,
+    repo_id: RepoId,
+    task_id: TaskId,
+) -> Result<(), StorageError> {
+    let existing = redesmyn_storage::sessions::get_agent_session(pool, event.session_id).await?;
+    if existing.is_some() {
+        return Ok(());
+    }
+
+    let now_ms = ms_from_timestamp(event.created_at);
+    let agent_kind = infer_agent_kind(event);
+    let interface_mode = infer_interface_mode(event, agent_kind);
+    let status = infer_session_status(event);
+    let external_session_ref = infer_external_session_ref_json(event);
+    let started_at_ms = if matches!(status, StorageAgentSessionStatus::Running) {
+        Some(now_ms)
+    } else {
+        None
+    };
+    let ended_at_ms = if matches!(status, StorageAgentSessionStatus::Stopped) {
+        Some(now_ms)
+    } else {
+        None
+    };
+
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO agent_sessions (
+            session_id,
+            created_at_ms,
+            updated_at_ms,
+            scope_workspace_id,
+            scope_repo_id,
+            scope_kind,
+            task_id,
+            agent_kind,
+            interface_mode,
+            status,
+            external_session_ref,
+            title,
+            started_at_ms,
+            ended_at_ms,
+            closed_at_ms
+        )
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+        "#,
+    )
+    .bind(event.session_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind(workspace_id)
+    .bind(repo_id)
+    .bind(StorageAgentSessionScopeKind::Task.as_str())
+    .bind(task_id)
+    .bind(agent_kind.as_str())
+    .bind(interface_mode.as_str())
+    .bind(status.as_str())
+    .bind(external_session_ref)
+    .bind(Option::<String>::None)
+    .bind(started_at_ms)
+    .bind(ended_at_ms)
+    .bind(Option::<i64>::None)
+    .execute(pool)
+    .await?;
+
+    let ensured = redesmyn_storage::sessions::get_agent_session(pool, event.session_id).await?;
+    if ensured.is_none() {
+        return Err(StorageError::InvalidData {
+            message: format!(
+                "failed to ensure task agent session row exists for session {}",
+                event.session_id
+            ),
+        });
+    }
+
+    Ok(())
+}
+
+fn infer_agent_kind(event: &SessionEvent) -> StorageAgentKind {
+    match &event.kind {
+        SessionEventKind::TurnStarted(ev) => ev
+            .external_session_ref
+            .as_ref()
+            .and_then(storage_agent_kind_from_external_ref),
+        SessionEventKind::TurnCompleted(ev) => ev
+            .external_session_ref
+            .as_ref()
+            .and_then(storage_agent_kind_from_external_ref),
+        SessionEventKind::CodexApprovalPolicyChanged(_)
+        | SessionEventKind::CodexSandboxPolicyChanged(_) => Some(StorageAgentKind::Codex),
+        _ => None,
+    }
+    .unwrap_or(StorageAgentKind::Shell)
+}
+
+fn storage_agent_kind_from_external_ref(external: &ExternalSessionRef) -> Option<StorageAgentKind> {
+    match external {
+        ExternalSessionRef::CodexThread { .. } | ExternalSessionRef::CodexSession { .. } => {
+            Some(StorageAgentKind::Codex)
+        }
+        ExternalSessionRef::ClaudeSession { .. } => Some(StorageAgentKind::ClaudeCode),
+        ExternalSessionRef::None | ExternalSessionRef::Unknown { .. } => None,
+    }
+}
+
+fn infer_interface_mode(
+    event: &SessionEvent,
+    agent_kind: StorageAgentKind,
+) -> StorageAgentInterfaceMode {
+    match &event.kind {
+        SessionEventKind::TurnStarted(ev) => match ev.interface_mode {
+            redesmyn_protocol::session::InterfaceMode::Interactive => {
+                StorageAgentInterfaceMode::ShellTmux
+            }
+            redesmyn_protocol::session::InterfaceMode::Structured => match agent_kind {
+                StorageAgentKind::Codex => StorageAgentInterfaceMode::AppServer,
+                _ => StorageAgentInterfaceMode::StructuredExec,
+            },
+            redesmyn_protocol::session::InterfaceMode::Unknown => {
+                default_interface_mode(agent_kind)
+            }
+        },
+        SessionEventKind::TurnCompleted(ev) => match ev.interface_mode {
+            redesmyn_protocol::session::InterfaceMode::Interactive => {
+                StorageAgentInterfaceMode::ShellTmux
+            }
+            redesmyn_protocol::session::InterfaceMode::Structured => match agent_kind {
+                StorageAgentKind::Codex => StorageAgentInterfaceMode::AppServer,
+                _ => StorageAgentInterfaceMode::StructuredExec,
+            },
+            redesmyn_protocol::session::InterfaceMode::Unknown => {
+                default_interface_mode(agent_kind)
+            }
+        },
+        _ => default_interface_mode(agent_kind),
+    }
+}
+
+fn default_interface_mode(agent_kind: StorageAgentKind) -> StorageAgentInterfaceMode {
+    match agent_kind {
+        StorageAgentKind::Shell => StorageAgentInterfaceMode::ShellTmux,
+        StorageAgentKind::Codex => StorageAgentInterfaceMode::AppServer,
+        StorageAgentKind::ClaudeCode => StorageAgentInterfaceMode::StructuredExec,
+    }
+}
+
+fn infer_session_status(event: &SessionEvent) -> StorageAgentSessionStatus {
+    match &event.kind {
+        SessionEventKind::TurnStarted(_) => StorageAgentSessionStatus::Running,
+        SessionEventKind::TurnCompleted(ev) => {
+            if ev.error.is_some() {
+                StorageAgentSessionStatus::Error
+            } else {
+                StorageAgentSessionStatus::Blocked
+            }
+        }
+        SessionEventKind::SessionEnded(_) => StorageAgentSessionStatus::Stopped,
+        _ => StorageAgentSessionStatus::Blocked,
+    }
+}
+
+fn infer_external_session_ref_json(event: &SessionEvent) -> String {
+    let external_ref = match &event.kind {
+        SessionEventKind::TurnStarted(ev) => ev.external_session_ref.as_ref(),
+        SessionEventKind::TurnCompleted(ev) => ev.external_session_ref.as_ref(),
+        _ => None,
+    };
+
+    external_ref
+        .and_then(|r| serde_json::to_string(r).ok())
+        .unwrap_or_else(|| r#"{"type":"none"}"#.to_string())
 }
 
 async fn ensure_event_artifacts(
@@ -713,8 +903,12 @@ fn kinds_to_db_values(kinds: &[SessionEventKindFilter]) -> Vec<&'static str> {
             SessionEventKindFilter::ToolResult => Some("tool_result"),
             SessionEventKindFilter::StatusUpdate => Some("status_update"),
             SessionEventKindFilter::PermissionsModeChanged => Some("permissions_mode_changed"),
-            SessionEventKindFilter::CodexApprovalPolicyChanged => Some("codex_approval_policy_changed"),
-            SessionEventKindFilter::CodexSandboxPolicyChanged => Some("codex_sandbox_policy_changed"),
+            SessionEventKindFilter::CodexApprovalPolicyChanged => {
+                Some("codex_approval_policy_changed")
+            }
+            SessionEventKindFilter::CodexSandboxPolicyChanged => {
+                Some("codex_sandbox_policy_changed")
+            }
             SessionEventKindFilter::PermissionRequested => Some("permission_requested"),
             SessionEventKindFilter::PermissionDecided => Some("permission_decided"),
             SessionEventKindFilter::ArtifactEmitted => Some("artifact_emitted"),
@@ -753,13 +947,15 @@ fn message_preview_from_kind(kind: &SessionEventKind) -> Option<String> {
         SessionEventKind::ToolInvocation(ev) => Some(ev.input_preview.clone()),
         SessionEventKind::ToolResult(ev) => Some(ev.output_preview.clone()),
         SessionEventKind::StatusUpdate(ev) => ev.message.clone(),
-        SessionEventKind::PermissionsModeChanged(ev) => Some(match ev.mode {
-            redesmyn_protocol::session::PermissionsMode::Ask => "ask",
-            redesmyn_protocol::session::PermissionsMode::AutoApprove => "auto_approve",
-            redesmyn_protocol::session::PermissionsMode::Deny => "deny",
-            redesmyn_protocol::session::PermissionsMode::Unknown => "unknown",
-        }
-        .to_owned()),
+        SessionEventKind::PermissionsModeChanged(ev) => Some(
+            match ev.mode {
+                redesmyn_protocol::session::PermissionsMode::Ask => "ask",
+                redesmyn_protocol::session::PermissionsMode::AutoApprove => "auto_approve",
+                redesmyn_protocol::session::PermissionsMode::Deny => "deny",
+                redesmyn_protocol::session::PermissionsMode::Unknown => "unknown",
+            }
+            .to_owned(),
+        ),
         SessionEventKind::CodexApprovalPolicyChanged(ev) => Some(
             match ev.approval_policy {
                 None => "default",
@@ -778,9 +974,9 @@ fn message_preview_from_kind(kind: &SessionEventKind) -> Option<String> {
                     "danger_full_access"
                 }
                 Some(redesmyn_protocol::session::CodexSandboxPolicy::ReadOnly) => "read_only",
-                Some(redesmyn_protocol::session::CodexSandboxPolicy::ExternalSandbox { .. }) => {
-                    "external_sandbox"
-                }
+                Some(redesmyn_protocol::session::CodexSandboxPolicy::ExternalSandbox {
+                    ..
+                }) => "external_sandbox",
                 Some(redesmyn_protocol::session::CodexSandboxPolicy::WorkspaceWrite { .. }) => {
                     "workspace_write"
                 }
@@ -789,12 +985,14 @@ fn message_preview_from_kind(kind: &SessionEventKind) -> Option<String> {
             .to_owned(),
         ),
         SessionEventKind::PermissionRequested(ev) => Some(ev.summary.clone()),
-        SessionEventKind::PermissionDecided(ev) => Some(match ev.decision {
-            redesmyn_protocol::session::PermissionDecision::Approve => "approve",
-            redesmyn_protocol::session::PermissionDecision::Deny => "deny",
-            redesmyn_protocol::session::PermissionDecision::Unknown => "unknown",
-        }
-        .to_owned()),
+        SessionEventKind::PermissionDecided(ev) => Some(
+            match ev.decision {
+                redesmyn_protocol::session::PermissionDecision::Approve => "approve",
+                redesmyn_protocol::session::PermissionDecision::Deny => "deny",
+                redesmyn_protocol::session::PermissionDecision::Unknown => "unknown",
+            }
+            .to_owned(),
+        ),
         _ => None,
     }
 }

@@ -4,7 +4,7 @@ use redesmyn_control_plane::ControlPlane;
 use redesmyn_control_plane::session_events::{
     SessionEventsResyncReason, SessionEventsSubscription, SessionEventsSubscriptionItem,
 };
-use redesmyn_ids::{RepoId, SessionEventId, SessionId, WorkspaceId};
+use redesmyn_ids::{EpicId, RepoId, SessionEventId, SessionId, TaskId, WorkspaceId};
 use redesmyn_protocol::client::{SessionEventCursor, SessionEventKindFilter};
 use redesmyn_protocol::session::{AssistantMessage, SessionEventKind, SessionScope, UserMessage};
 use redesmyn_protocol::{SessionEvent, Timestamp};
@@ -118,6 +118,108 @@ fn assistant_event(
             full_text_artifact: None,
         }),
     }
+}
+
+#[tokio::test]
+async fn append_session_event_creates_missing_task_session_row() {
+    let control_plane = ControlPlane::open_test().await.expect("control plane");
+
+    let workspace_id = WorkspaceId::new();
+    let repo_id = RepoId::new();
+    let epic_id = EpicId::new();
+    let task_id = TaskId::new();
+    let now_ms = 0_i64;
+
+    sqlx::query(
+        r#"
+        INSERT INTO workspaces (id, created_at_ms, updated_at_ms, name)
+        VALUES (?, ?, ?, ?)
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind("test-workspace")
+    .execute(control_plane.pool())
+    .await
+    .expect("insert workspace");
+
+    sqlx::query(
+        r#"
+        INSERT INTO repositories (id, workspace_id, created_at_ms, updated_at_ms, slug, title)
+        VALUES (?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(repo_id)
+    .bind(workspace_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind("test-repo")
+    .bind("Test Repo")
+    .execute(control_plane.pool())
+    .await
+    .expect("insert repository");
+
+    sqlx::query(
+        r#"
+        INSERT INTO epics (id, repo_id, created_at_ms, updated_at_ms, slug, title)
+        VALUES (?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(epic_id)
+    .bind(repo_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind("test-epic")
+    .bind("Test Epic")
+    .execute(control_plane.pool())
+    .await
+    .expect("insert epic");
+
+    sqlx::query(
+        r#"
+        INSERT INTO tasks (id, epic_id, created_at_ms, updated_at_ms, title, merge_readiness)
+        VALUES (?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(task_id)
+    .bind(epic_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind("Test Task")
+    .bind("unknown")
+    .execute(control_plane.pool())
+    .await
+    .expect("insert task");
+
+    let session_id = SessionId::new();
+    let event = SessionEvent {
+        session_event_id: SessionEventId::new(),
+        created_at: Timestamp::now_utc(),
+        scope: SessionScope::Task { task_id },
+        session_id,
+        turn_id: None,
+        kind: SessionEventKind::UserMessage(UserMessage {
+            text: "hello".to_string(),
+            preview: "hello".to_string(),
+            full_text_artifact: None,
+        }),
+    };
+
+    control_plane
+        .session_events()
+        .append_session_event(&event)
+        .await
+        .expect("append session event");
+
+    let session = redesmyn_storage::sessions::get_agent_session(control_plane.pool(), session_id)
+        .await
+        .expect("get agent session")
+        .expect("missing agent session row");
+    assert_eq!(session.scope_kind, StorageAgentSessionScopeKind::Task);
+    assert_eq!(session.task_id, Some(task_id));
+    assert_eq!(session.scope_workspace_id, workspace_id);
+    assert_eq!(session.scope_repo_id, repo_id);
 }
 
 #[tokio::test]
