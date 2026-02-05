@@ -26,10 +26,10 @@ use redesmyn_ui_session::SessionView;
 use redesmyn_ui::UiContext;
 use redesmyn_ui::components::{
     ButtonKind, Callout, CalloutKind, CascadingMenu, CascadingMenuId, CascadingMenuMetrics,
-    CascadingMenuRowStyle, CascadingMenuSecondarySide, CascadingMenuSurfaceStyle,
-    CloseCascadingMenus, IconButton, OverlaySurfaceKind, ProgressPill, ScrollArea, SplitPane,
-    SplitPaneAxis, SplitPaneEvent, SplitPaneResizeMode, SplitPaneState, TextButton, TextInput,
-    TextInputEvent, Tooltip, cascading_menu_row, cascading_menu_surface, overlay_surface,
+    CascadingMenuRowStyle, CascadingMenuSecondarySide, CascadingMenuState, CascadingMenuSurfaceStyle,
+    IconButton, OverlaySurfaceKind, ProgressPill, ScrollArea, SplitPane, SplitPaneAxis,
+    SplitPaneEvent, SplitPaneResizeMode, SplitPaneState, TextButton, TextInput, TextInputEvent,
+    Tooltip, cascading_menu_row, cascading_menu_surface, overlay_surface, set_open_cascading_menu,
 };
 use redesmyn_ui::settings::ThemePreference;
 use redesmyn_ui::task_filters::{
@@ -198,6 +198,9 @@ impl RootView {
 
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.observe_global::<UiContext>(|this, cx| this.notify_ui_updated(cx)));
+        subscriptions.push(cx.observe_global::<CascadingMenuState>(|this, cx| {
+            this.sync_cascading_menu_state(cx)
+        }));
 
         subscriptions.push(cx.subscribe(&split_pane, |this, _, event, cx| match event {
             SplitPaneEvent::StateChanged(state) => {
@@ -400,7 +403,44 @@ impl RootView {
         }
     }
 
+    fn sync_cascading_menu_state(&mut self, cx: &mut Context<Self>) {
+        let open_menu = cx
+            .try_global::<CascadingMenuState>()
+            .map(|state| state.open_menu())
+            .unwrap_or(None);
+
+        let task_filters_should_open = open_menu == Some(CascadingMenuId::TaskFilters);
+        let session_settings_should_open = open_menu == Some(CascadingMenuId::SessionSettings);
+
+        self.workspace_pane.update(cx, |pane, cx| {
+            if pane.task_filters_open == task_filters_should_open {
+                return;
+            }
+
+            pane.set_task_filters_open(
+                task_filters_should_open,
+                pane.task_filters_active_category,
+                None,
+                TaskFiltersInputSource::Mouse,
+                cx,
+            );
+
+            if !task_filters_should_open {
+                pane.task_filters_menu_opacity.remove(&"task_filters_menu");
+            }
+        });
+
+        self.session_pane.update(cx, |pane, cx| {
+            pane.session_view
+                .update(cx, |view, cx| view.set_settings_menu_open(session_settings_should_open, cx));
+        });
+
+        self.notify_ui_updated(cx);
+    }
+
     fn close_all_cascading_menus(&mut self, cx: &mut Context<Self>) {
+        set_open_cascading_menu(None, cx);
+
         self.workspace_pane.update(cx, |pane, cx| {
             if pane.task_filters_open {
                 pane.set_task_filters_open(
@@ -418,37 +458,6 @@ impl RootView {
             pane.session_view
                 .update(cx, |view, cx| view.close_settings_menu(cx));
         });
-
-        self.notify_ui_updated(cx);
-    }
-
-    fn close_cascading_menus(
-        &mut self,
-        action: &CloseCascadingMenus,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if action.keep_menu != CascadingMenuId::TaskFilters {
-            self.workspace_pane.update(cx, |pane, cx| {
-                if pane.task_filters_open {
-                    pane.set_task_filters_open(
-                        false,
-                        pane.task_filters_active_category,
-                        None,
-                        TaskFiltersInputSource::Mouse,
-                        cx,
-                    );
-                }
-                pane.task_filters_menu_opacity.remove(&"task_filters_menu");
-            });
-        }
-
-        if action.keep_menu != CascadingMenuId::SessionSettings {
-            self.session_pane.update(cx, |pane, cx| {
-                pane.session_view
-                    .update(cx, |view, cx| view.close_settings_menu(cx));
-            });
-        }
 
         self.notify_ui_updated(cx);
     }
@@ -1599,27 +1608,6 @@ async fn handle_ui_driver_request(
                     ));
                 };
 
-                if open {
-                    let workspace_pane = {
-                        let root_ref = root.read(cx);
-                        root_ref.workspace_pane.clone()
-                    };
-
-                    workspace_pane.update(cx, |pane, cx| {
-                        if !pane.task_filters_open {
-                            return;
-                        }
-
-                        pane.set_task_filters_open(
-                            false,
-                            pane.task_filters_active_category,
-                            None,
-                            TaskFiltersInputSource::Mouse,
-                            cx,
-                        );
-                    });
-                }
-
                 let session_view = {
                     let root_ref = root.read(cx);
                     root_ref.session_pane.read(cx).session_view.clone()
@@ -1710,14 +1698,6 @@ async fn handle_ui_driver_request(
                         "UI is unavailable.",
                     ));
                 };
-
-                if open {
-                    let session_view = {
-                        let root_ref = root.read(cx);
-                        root_ref.session_pane.read(cx).session_view.clone()
-                    };
-                    session_view.update(cx, |view, cx| view.close_settings_menu(cx));
-                }
 
                 let workspace_pane = {
                     let root_ref = root.read(cx);
@@ -2852,7 +2832,6 @@ impl Render for RootView {
             .relative()
             .key_context("Desktop")
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(Self::close_cascading_menus))
             .on_action(cx.listener(Self::toggle_command_palette))
             .on_action(cx.listener(Self::close_command_palette))
             .on_action(cx.listener(Self::select_previous_command))
@@ -4238,6 +4217,19 @@ impl WorkspacePaneHost {
         input_source: TaskFiltersInputSource,
         cx: &mut Context<Self>,
     ) -> FocusHandle {
+        let open_menu = cx
+            .try_global::<CascadingMenuState>()
+            .map(|state| state.open_menu())
+            .unwrap_or(None);
+
+        if open {
+            if open_menu != Some(CascadingMenuId::TaskFilters) {
+                set_open_cascading_menu(Some(CascadingMenuId::TaskFilters), cx);
+            }
+        } else if open_menu == Some(CascadingMenuId::TaskFilters) {
+            set_open_cascading_menu(None, cx);
+        }
+
         // When the filter menu is open, preserve its keyboard focus while still allowing trackpad
         // pan/zoom interactions on the graph.
         self.task_filters_open = open;
@@ -4276,11 +4268,6 @@ impl WorkspacePaneHost {
     ) {
         let span = redesmyn_logging::redesmyn_info_span!("ui.workspace.filters.open");
         let _guard = span.enter();
-
-        let action = CloseCascadingMenus {
-            keep_menu: CascadingMenuId::TaskFilters,
-        };
-        cx.dispatch_action(&action);
 
         let focus = self.set_task_filters_open(
             true,
@@ -4887,10 +4874,8 @@ impl Render for WorkspacePaneHost {
             .on_click({
                 let workspace = workspace.clone();
                 move |_, window, cx| {
-                    let mut did_open = false;
                     let focus = workspace.update(cx, |this, cx| {
                         let open = !this.task_filters_open;
-                        did_open = open;
                         Some(this.set_task_filters_open(
                             open,
                             this.task_filters_active_category,
@@ -4899,13 +4884,6 @@ impl Render for WorkspacePaneHost {
                             cx,
                         ))
                     });
-
-                    if did_open {
-                        let action = CloseCascadingMenus {
-                            keep_menu: CascadingMenuId::TaskFilters,
-                        };
-                        cx.dispatch_action(&action);
-                    }
 
                     if let Some(focus) = focus {
                         window.focus(&focus);
@@ -5119,9 +5097,21 @@ impl Render for WorkspacePaneHost {
                 let tab_top = (px(44.0) - filter_tab_height) * 0.5;
                 let tab_left = theme.spacing.md;
 
+                let open_menu = cx
+                    .try_global::<CascadingMenuState>()
+                    .map(|state| state.open_menu())
+                    .unwrap_or(None);
+                let task_filters_menu_open = open_menu == Some(CascadingMenuId::TaskFilters);
+
+                // When switching to another cascading menu, remove any fade-out transition so it's
+                // impossible for multiple menus to be visible at once.
+                if open_menu == Some(CascadingMenuId::SessionSettings) {
+                    self.task_filters_menu_opacity.remove(&"task_filters_menu");
+                }
+
                 let menu_opacity = self.task_filters_menu_opacity.opacity_for_render(
                     "task_filters_menu",
-                    self.task_filters_open,
+                    task_filters_menu_open,
                     ui_test_mode_animation_duration(
                         theme
                             .animation
@@ -5137,7 +5127,7 @@ impl Render for WorkspacePaneHost {
                         .flex()
                         .flex_row()
                         .items_center()
-                        .when(self.task_filters_open, |this| {
+                        .when(task_filters_menu_open, |this| {
                             this.border_color(theme.colors.ring.opacity(0.7))
                         })
                         .child(filter_button);
@@ -5236,7 +5226,6 @@ impl Render for WorkspacePaneHost {
                             };
 
                             let arrow = div()
-                                .text_color(theme.colors.foreground_muted)
                                 .child("›");
 
                             let row = cascading_menu_row(

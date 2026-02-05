@@ -1,4 +1,4 @@
-use gpui::{Action, AnyElement, Div, Pixels, RenderOnce, Window, div, prelude::*, px};
+use gpui::{AnyElement, Div, Global, Pixels, RenderOnce, Window, div, prelude::*, px};
 
 use crate::styles::UiTheme;
 use super::overlay_surface::{OverlaySurfaceKind, overlay_surface};
@@ -9,10 +9,27 @@ pub enum CascadingMenuId {
     SessionSettings,
 }
 
-#[derive(Debug, Clone, PartialEq, Action)]
-#[action(namespace = redesmyn_ui_cascading_menu, no_json)]
-pub struct CloseCascadingMenus {
-    pub keep_menu: CascadingMenuId,
+#[derive(Debug, Default)]
+pub struct CascadingMenuState {
+    open_menu: Option<CascadingMenuId>,
+}
+
+impl Global for CascadingMenuState {}
+
+impl CascadingMenuState {
+    pub fn open_menu(&self) -> Option<CascadingMenuId> {
+        self.open_menu
+    }
+
+    pub fn set_open_menu(&mut self, menu: Option<CascadingMenuId>) {
+        self.open_menu = menu;
+    }
+}
+
+pub fn set_open_cascading_menu(menu: Option<CascadingMenuId>, cx: &mut impl BorrowAppContext) {
+    cx.update_default_global::<CascadingMenuState, _>(|state, _cx| {
+        state.set_open_menu(menu);
+    });
 }
 
 /// Visual styling defaults shared across cascading menus.
@@ -78,12 +95,19 @@ pub fn cascading_menu_row(
         .h(style.height)
         .rounded(style.radius)
         .text_xs()
+        // Default the row's foreground to a muted color so icons can simply inherit it.
+        // When highlighted, bump the row color for contrast against the hover background.
+        .text_color(theme.colors.foreground_muted)
         .when(keyboard_selected, move |this| this.bg(selected_bg))
+        .when(keyboard_selected, move |this| this.text_color(theme.colors.foreground))
         .when(hover_opacity > 1e-3, move |this| {
-            this.bg(theme
-                .colors
-                .foreground
-                .opacity(style.hover_bg_alpha * hover_opacity))
+            this.bg(
+                theme
+                    .colors
+                    .foreground
+                    .opacity(style.hover_bg_alpha * hover_opacity),
+            )
+            .text_color(theme.colors.foreground)
         })
 }
 

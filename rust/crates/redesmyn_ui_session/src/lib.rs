@@ -41,9 +41,10 @@ use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 use redesmyn_session_view_model::{SessionEventItemContent, SessionFeedState, SessionTimelineItem};
 use redesmyn_ui::components::{
     ButtonKind, Callout, CalloutKind, CascadingMenu, CascadingMenuId, CascadingMenuMetrics,
-    CascadingMenuRowStyle, CascadingMenuSurfaceStyle, CloseCascadingMenus, Expandable, IconButton,
+    CascadingMenuRowStyle, CascadingMenuState, CascadingMenuSurfaceStyle, Expandable, IconButton,
     MarkdownView, ScrollFade, ScrollbarStyle, StyledScrollbar, TextArea, TextButton, TextInput,
     TextInputEvent, cascading_menu_row, cascading_menu_row_value, cascading_menu_surface,
+    set_open_cascading_menu,
 };
 use redesmyn_ui::styles::ThemeMode;
 use redesmyn_ui::utils::{
@@ -1579,17 +1580,37 @@ impl SessionView {
 
     pub fn set_settings_menu_open(&mut self, open: bool, cx: &mut Context<Self>) {
         if open {
-            if self.session_settings_open {
-                return;
-            }
-
-            self.session_settings_open = true;
-            self.session_settings_hovered = None;
-            self.session_settings_focus = SessionSettingsMenuFocus::Primary;
-            self.session_settings_submenu_index = 0;
-            cx.notify();
+            self.open_session_settings_menu(cx);
         } else {
             self.close_session_settings_menu(cx);
+        }
+    }
+
+    fn open_session_settings_menu(&mut self, cx: &mut Context<Self>) {
+        if self.session_settings_open {
+            return;
+        }
+
+        let already_open = cx
+            .try_global::<CascadingMenuState>()
+            .map(|state| state.open_menu() == Some(CascadingMenuId::SessionSettings))
+            .unwrap_or(false);
+        if !already_open {
+            set_open_cascading_menu(Some(CascadingMenuId::SessionSettings), cx);
+        }
+
+        self.session_settings_open = true;
+        self.session_settings_hovered = None;
+        self.session_settings_focus = SessionSettingsMenuFocus::Primary;
+        self.session_settings_submenu_index = 0;
+        cx.notify();
+    }
+
+    fn toggle_session_settings_menu(&mut self, cx: &mut Context<Self>) {
+        if self.session_settings_open {
+            self.close_session_settings_menu(cx);
+        } else {
+            self.open_session_settings_menu(cx);
         }
     }
 
@@ -2004,6 +2025,14 @@ impl SessionView {
     fn close_session_settings_menu(&mut self, cx: &mut Context<Self>) {
         if !self.session_settings_open {
             return;
+        }
+
+        let should_clear = cx
+            .try_global::<CascadingMenuState>()
+            .map(|state| state.open_menu() == Some(CascadingMenuId::SessionSettings))
+            .unwrap_or(false);
+        if should_clear {
+            set_open_cascading_menu(None, cx);
         }
 
         self.session_settings_open = false;
@@ -5930,7 +5959,12 @@ impl Render for SessionView {
         };
 
         let settings_disabled = self.client.is_none() || self.feed.is_none();
-        let settings_open = self.session_settings_open;
+        let open_menu = cx
+            .try_global::<CascadingMenuState>()
+            .map(|state| state.open_menu())
+            .unwrap_or(None);
+        let settings_open = self.session_settings_open
+            && open_menu == Some(CascadingMenuId::SessionSettings);
         let settings_hover_bg = theme.colors.accent;
         let settings_open_hover_bg = theme.colors.accent.opacity(0.65);
         let settings_open_border = theme.colors.ring.opacity(0.5);
@@ -5955,7 +5989,7 @@ impl Render for SessionView {
                 style.border_color = Some(theme.colors.ring);
                 style
             })
-            .when(self.session_settings_open, |this| {
+            .when(settings_open, |this| {
                 this.bg(theme.colors.accent.opacity(0.55))
                     .border_color(settings_open_border)
                     .text_color(settings_foreground)
@@ -5988,34 +6022,14 @@ impl Render for SessionView {
             settings_button = settings_button.on_mouse_down(gpui::MouseButton::Left, {
                 let view = view.clone();
                 move |_, _, app| {
-                    let mut did_open = false;
                     view.update(app, |this, cx| {
-                        if this.session_settings_open {
-                            this.session_settings_open = false;
-                            this.session_settings_hovered = None;
-                            this.session_settings_focus = SessionSettingsMenuFocus::Primary;
-                            this.session_settings_submenu_index = 0;
-                        } else {
-                            this.session_settings_open = true;
-                            this.session_settings_hovered = None;
-                            this.session_settings_focus = SessionSettingsMenuFocus::Primary;
-                            this.session_settings_submenu_index = 0;
-                            did_open = true;
-                        }
-                        cx.notify();
+                        this.toggle_session_settings_menu(cx);
                     });
-
-                    if did_open {
-                        let action = CloseCascadingMenus {
-                            keep_menu: CascadingMenuId::SessionSettings,
-                        };
-                        app.dispatch_action(&action);
-                    }
                 }
             });
         }
 
-        let settings_menu = if self.session_settings_open && !settings_disabled {
+        let settings_menu = if settings_open && !settings_disabled {
             let row_style = CascadingMenuRowStyle::compact(&theme);
             let surface_style = CascadingMenuSurfaceStyle::compact(&theme);
             let primary_row_style = CascadingMenuRowStyle {
@@ -6078,7 +6092,6 @@ impl Render for SessionView {
                                 .child(
                                     div()
                                         .flex_shrink_0()
-                                        .text_color(theme.colors.foreground_muted)
                                         .child("›"),
                                 ),
                         );

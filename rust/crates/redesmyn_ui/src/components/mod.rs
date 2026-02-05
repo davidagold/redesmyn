@@ -22,8 +22,8 @@ pub use button::{ButtonKind, IconButton, TextButton};
 pub use callout::{Callout, CalloutKind};
 pub use cascading_menu::{
     CascadingMenu, CascadingMenuId, CascadingMenuMetrics, CascadingMenuRowStyle,
-    CascadingMenuSecondarySide, CascadingMenuSurfaceStyle, CloseCascadingMenus, cascading_menu_row,
-    cascading_menu_row_value, cascading_menu_surface,
+    CascadingMenuSecondarySide, CascadingMenuState, CascadingMenuSurfaceStyle, cascading_menu_row,
+    cascading_menu_row_value, cascading_menu_surface, set_open_cascading_menu,
 };
 pub use expandable::Expandable;
 pub use markdown::{MarkdownInlineSingleLineContent, MarkdownInlineSingleLineView, MarkdownView};
