@@ -2065,28 +2065,6 @@ impl Render for RootView {
             "No epics available"
         };
 
-        let preference = cx
-            .try_global::<UiContext>()
-            .map(|ui| ui.theme_preference())
-            .unwrap_or(ThemePreference::System);
-
-        let theme_pref_button = |id, label: &'static str, pref| {
-            let kind = if preference == pref {
-                ButtonKind::Primary
-            } else {
-                ButtonKind::Secondary
-            };
-
-            TextButton::new((id, cx.entity_id()), label)
-                .kind(kind)
-                .on_click({
-                    let root = root.clone();
-                    move |_, _, cx| {
-                        root.update(cx, |this, cx| this.set_theme_preference(pref, cx));
-                    }
-                })
-        };
-
         let control_plane_expected =
             model.chrome_control_plane_client.is_some() || model.config.desktop.embed_control_plane;
         let control_plane_is_healthy = self.chrome.control_plane_status.is_some();
