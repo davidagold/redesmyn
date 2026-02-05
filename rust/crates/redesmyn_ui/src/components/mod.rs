@@ -29,7 +29,7 @@ pub use rounded_styled_text::{RoundedBackgroundStyle, RoundedStyledText};
 pub use scroll_area::ScrollArea;
 pub use scroll_fade::ScrollFade;
 pub use select::{Select, SelectOption};
-pub use split_pane::{SplitPane, SplitPaneAxis, SplitPaneEvent, SplitPaneState};
+pub use split_pane::{SplitPane, SplitPaneAxis, SplitPaneEvent, SplitPaneResizeMode, SplitPaneState};
 pub use styled_scrollbar::{ScrollbarAxis, ScrollbarStyle, ScrollbarTarget, StyledScrollbar};
 pub use text_input::{TextArea, TextInput, TextInputEvent, bind_text_input_keys};
 pub use tooltip::Tooltip;

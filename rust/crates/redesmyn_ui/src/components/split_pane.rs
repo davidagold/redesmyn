@@ -13,6 +13,23 @@ pub enum SplitPaneAxis {
     Vertical,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitPaneResizeMode {
+    /// Resize panes live while dragging the divider.
+    Live,
+    /// Keep pane layout fixed while dragging the divider, and only apply the new size on mouse up.
+    ///
+    /// This can dramatically improve performance when pane contents are expensive to reflow
+    /// (e.g. markdown/chat history) by avoiding per-pixel re-layout during the drag gesture.
+    Deferred,
+}
+
+impl Default for SplitPaneResizeMode {
+    fn default() -> Self {
+        Self::Live
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum SplitPaneEvent {
     StateChanged(SplitPaneState),
@@ -38,7 +55,9 @@ pub struct SplitPane {
     axis: SplitPaneAxis,
     state: SplitPaneState,
     min_primary_px: f32,
+    resize_mode: SplitPaneResizeMode,
     dragging: Option<DragState>,
+    drag_preview_primary_px: Option<f32>,
     primary: gpui::AnyView,
     secondary: gpui::AnyView,
 }
@@ -79,7 +98,9 @@ impl SplitPane {
             axis,
             state,
             min_primary_px: 240.0,
+            resize_mode: SplitPaneResizeMode::default(),
             dragging: None,
+            drag_preview_primary_px: None,
             primary,
             secondary,
         }
@@ -90,11 +111,18 @@ impl SplitPane {
         self
     }
 
+    pub fn resize_mode(mut self, resize_mode: SplitPaneResizeMode) -> Self {
+        self.resize_mode = resize_mode;
+        self
+    }
+
     pub fn state(&self) -> SplitPaneState {
         self.state
     }
 
     pub fn toggle_collapsed(&mut self, cx: &mut Context<Self>) {
+        self.dragging = None;
+        self.drag_preview_primary_px = None;
         self.state.collapsed = !self.state.collapsed;
         cx.emit(SplitPaneEvent::StateChanged(self.state));
         cx.notify();
@@ -113,12 +141,22 @@ impl SplitPane {
             origin: event.position,
             start_primary_px: self.state.primary_size_px,
         });
+        if self.resize_mode == SplitPaneResizeMode::Deferred {
+            self.drag_preview_primary_px = Some(self.state.primary_size_px);
+        }
         cx.notify();
     }
 
     fn on_mouse_up(&mut self, _: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let dragging = self.dragging.take();
         if let Some(dragging) = dragging {
+            if self.resize_mode == SplitPaneResizeMode::Deferred {
+                if let Some(preview) = self.drag_preview_primary_px.take() {
+                    self.state.primary_size_px = preview;
+                }
+            } else {
+                self.drag_preview_primary_px = None;
+            }
             if dragging.start_primary_px != self.state.primary_size_px {
                 cx.emit(SplitPaneEvent::StateChanged(self.state));
             }
@@ -164,11 +202,25 @@ impl SplitPane {
             .clamp(self.min_primary_px, max_primary_px)
             .max(0.0);
 
-        if (primary_size_px - self.state.primary_size_px).abs() <= f32::EPSILON {
+        let current_primary_px = match self.resize_mode {
+            SplitPaneResizeMode::Live => self.state.primary_size_px,
+            SplitPaneResizeMode::Deferred => self
+                .drag_preview_primary_px
+                .unwrap_or(self.state.primary_size_px),
+        };
+
+        if (primary_size_px - current_primary_px).abs() <= f32::EPSILON {
             return;
         }
 
-        self.state.primary_size_px = primary_size_px;
+        match self.resize_mode {
+            SplitPaneResizeMode::Live => {
+                self.state.primary_size_px = primary_size_px;
+            }
+            SplitPaneResizeMode::Deferred => {
+                self.drag_preview_primary_px = Some(primary_size_px);
+            }
+        }
         cx.notify();
     }
 
@@ -198,6 +250,10 @@ impl Render for SplitPane {
 
         let divider_line_thickness = px(1.0);
         let divider_hit_inset = px(-3.0);
+
+        let show_drag_ghost = self.resize_mode == SplitPaneResizeMode::Deferred
+            && self.dragging.is_some()
+            && !self.state.collapsed;
 
         let divider_hit = div()
             .id(("split_pane_divider_hit", cx.entity_id()))
@@ -243,8 +299,38 @@ impl Render for SplitPane {
                     .when(axis == SplitPaneAxis::Vertical, |this| {
                         this.h(divider_line_thickness).w_full()
                     })
-                    .bg(divider_line_color),
+                    .bg(divider_line_color)
+                    .opacity(if show_drag_ghost { 0.0 } else { 1.0 }),
             );
+
+        let drag_ghost = if show_drag_ghost {
+            let preview_px = self
+                .drag_preview_primary_px
+                .unwrap_or(self.state.primary_size_px);
+            let preview = px(preview_px);
+            let ghost_color = theme.colors.ring.opacity(0.35);
+
+            Some(
+                div()
+                    .id(("split_pane_divider_ghost", cx.entity_id()))
+                    .absolute()
+                    .when(axis == SplitPaneAxis::Horizontal, |this| {
+                        this.top(px(0.0))
+                            .bottom(px(0.0))
+                            .left(preview)
+                            .w(divider_line_thickness)
+                    })
+                    .when(axis == SplitPaneAxis::Vertical, |this| {
+                        this.left(px(0.0))
+                            .right(px(0.0))
+                            .top(preview)
+                            .h(divider_line_thickness)
+                    })
+                    .bg(ghost_color),
+            )
+        } else {
+            None
+        };
 
         let primary_size = if self.state.collapsed {
             px(0.0)
@@ -265,8 +351,9 @@ impl Render for SplitPane {
             .overflow_hidden()
             .child(self.secondary.clone());
 
-        div()
+        let mut root = div()
             .id(("split_pane_root", cx.entity_id()))
+            .relative()
             .flex()
             .size_full()
             .when(axis == SplitPaneAxis::Horizontal, |this| this.flex_row())
@@ -277,7 +364,13 @@ impl Render for SplitPane {
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .child(primary)
             .child(divider)
-            .child(secondary)
+            .child(secondary);
+
+        if let Some(ghost) = drag_ghost {
+            root = root.child(ghost);
+        }
+
+        root
     }
 }
 
