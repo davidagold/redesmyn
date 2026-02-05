@@ -196,6 +196,7 @@ impl RootView {
         let palette_input = command_palette.input_entity();
         let settings_dialog = SettingsDialog::new(focus_handle.clone(), cx);
         let settings_prelude_input = settings_dialog.prelude_input_entity();
+        let settings_codex_model_input = settings_dialog.codex_model_input_entity();
 
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.observe_global::<UiContext>(|this, cx| this.notify_ui_updated(cx)));
@@ -222,6 +223,11 @@ impl RootView {
         subscriptions.push(cx.subscribe(&settings_prelude_input, |this, _, event, cx| {
             this.settings_dialog
                 .handle_prelude_input_event(event.clone(), cx);
+            this.ui_updates.bump();
+        }));
+        subscriptions.push(cx.subscribe(&settings_codex_model_input, |this, _, event, cx| {
+            this.settings_dialog
+                .handle_codex_model_input_event(event.clone(), cx);
             this.ui_updates.bump();
         }));
 

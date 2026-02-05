@@ -190,9 +190,27 @@ impl std::str::FromStr for CodexSandboxPolicyDefault {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodexModelName(String);
+
+impl CodexModelName {
+    pub fn parse(value: &str) -> Option<Self> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("default") {
+            return None;
+        }
+        Some(Self(trimmed.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodexSessionDefaults {
     pub approval_policy: CodexApprovalPolicyDefault,
     pub sandbox_policy: CodexSandboxPolicyDefault,
+    pub model: Option<CodexModelName>,
 }
 
 impl Default for CodexSessionDefaults {
@@ -200,6 +218,7 @@ impl Default for CodexSessionDefaults {
         Self {
             approval_policy: CodexApprovalPolicyDefault::Default,
             sandbox_policy: CodexSandboxPolicyDefault::Default,
+            model: None,
         }
     }
 }
@@ -286,6 +305,7 @@ struct PartialSessionDefaults {
 struct PartialCodexSessionDefaults {
     approval_policy: Option<CodexApprovalPolicyDefault>,
     sandbox_policy: Option<CodexSandboxPolicyDefault>,
+    model: Option<Option<CodexModelName>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -441,6 +461,15 @@ fn parse_partial_from_doc(doc: &DocumentMut) -> PartialOrchestrationDefaults {
                 .get("sandbox_policy")
                 .and_then(|item| item.as_str())
                 .and_then(|value| value.parse::<CodexSandboxPolicyDefault>().ok());
+
+            if codex.contains_key("model") {
+                partial.session_defaults.codex.model = Some(
+                    codex
+                        .get("model")
+                        .and_then(|item| item.as_str())
+                        .and_then(CodexModelName::parse),
+                );
+            }
         }
     }
 
@@ -479,6 +508,9 @@ fn apply_partial(defaults: &mut OrchestrationDefaults, partial: PartialOrchestra
     }
     if let Some(sandbox_policy) = partial.session_defaults.codex.sandbox_policy {
         defaults.session_defaults.codex.sandbox_policy = sandbox_policy;
+    }
+    if let Some(model) = partial.session_defaults.codex.model {
+        defaults.session_defaults.codex.model = model;
     }
 }
 
@@ -571,6 +603,15 @@ fn write_defaults_to_path(
         }
         other => {
             codex["sandbox_policy"] = value(other.as_str());
+        }
+    }
+
+    match defaults.session_defaults.codex.model.as_ref() {
+        Some(model) => {
+            codex["model"] = value(model.as_str());
+        }
+        None => {
+            codex.remove("model");
         }
     }
 
