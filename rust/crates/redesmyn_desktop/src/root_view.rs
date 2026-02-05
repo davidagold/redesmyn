@@ -2926,15 +2926,24 @@ struct EpicSessionPaneHost {
 
 impl EpicSessionPaneHost {
     fn new(model: Entity<DesktopModel>, cx: &mut Context<Self>) -> Self {
-        let (session_client, fixture) = model.update(cx, |model, _cx| {
+        let (session_client, fixture, artifact_store_root) = model.update(cx, |model, _cx| {
+            let artifact_store_root = model
+                .config
+                .daemon
+                .repo_registry_dir
+                .parent()
+                .map(|path| path.to_path_buf());
             (
                 model.take_control_plane_client(),
                 model.take_session_viewer_fixture(),
+                artifact_store_root,
             )
         });
         let control_plane_client = model.read(cx).chrome_control_plane_client.clone();
         let fallback_session_id = fixture.as_ref().map(|fixture| fixture.session_id());
-        let session_view = cx.new(|cx| SessionView::new(session_client, fallback_session_id, cx));
+        let session_view = cx.new(|cx| {
+            SessionView::new(session_client, fallback_session_id, artifact_store_root, cx)
+        });
         Self {
             session_view,
             control_plane_client,
@@ -4101,9 +4110,17 @@ impl WorkspacePaneHost {
             ),
         );
 
-        let task_session_client =
-            model.update(cx, |model, _cx| model.take_task_control_plane_client());
-        let task_session_view = cx.new(|cx| SessionView::new(task_session_client, None, cx));
+        let (task_session_client, artifact_store_root) = model.update(cx, |model, _cx| {
+            let artifact_store_root = model
+                .config
+                .daemon
+                .repo_registry_dir
+                .parent()
+                .map(|path| path.to_path_buf());
+            (model.take_task_control_plane_client(), artifact_store_root)
+        });
+        let task_session_view =
+            cx.new(|cx| SessionView::new(task_session_client, None, artifact_store_root, cx));
         let graph_session_view = task_session_view.clone();
         let graph_view = cx.new(|cx| GraphView::new_empty(graph_session_view, cx));
         subscriptions.push(

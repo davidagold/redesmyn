@@ -5,6 +5,7 @@
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::str::FromStr as _;
 use std::sync::Arc;
@@ -19,7 +20,7 @@ use gpui::{
 use gpui::prelude::*;
 
 use redesmyn_client_api::Client;
-use redesmyn_ids::{SessionEventId, SessionId, SubscriptionId, TaskId};
+use redesmyn_ids::{ArtifactId, SessionEventId, SessionId, SubscriptionId, TaskId};
 use redesmyn_markdown::{MarkdownDoc, MarkdownParseOptions, parse_markdown};
 use redesmyn_protocol::client::{
     AgentInterfaceMode, AgentKind, AgentMessageConflictAction, GetLatestTaskSessionRequest,
@@ -67,6 +68,27 @@ fn stable_str_key(input: &str) -> u64 {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
+}
+
+fn resolve_artifact_path_from_storage_hint(
+    hint: &StorageHint,
+    artifact_store_root: Option<&Path>,
+) -> Result<PathBuf, String> {
+    match hint {
+        StorageHint::LocalPath { local_path } => Ok(PathBuf::from(local_path)),
+        StorageHint::BlobKey { blob_key } => {
+            let root = artifact_store_root
+                .ok_or_else(|| "artifact store root not configured".to_string())?;
+            let artifact_id_str = blob_key
+                .rsplit('/')
+                .next()
+                .ok_or_else(|| format!("invalid blob_key: {blob_key}"))?;
+            let artifact_id = ArtifactId::from_str(artifact_id_str)
+                .map_err(|_| format!("invalid artifact id in blob_key: {blob_key}"))?;
+            Ok(root.join("artifacts").join(format!("{artifact_id}.bin")))
+        }
+        _ => Err("unsupported artifact storage hint".to_string()),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1001,6 +1023,7 @@ pub struct SessionView {
     tool_event_group_membership: Rc<HashMap<SessionEventId, ToolEventGroupMembership>>,
     markdown_cache: Rc<RefCell<HashMap<SessionEventId, Arc<MarkdownDoc>>>>,
     full_text_message_states: Rc<RefCell<HashMap<SessionEventId, FullTextMessageLoadState>>>,
+    artifact_store_root: Option<PathBuf>,
     client: Option<Client>,
     _client_task: Option<Task<()>>,
     subscription_task: Option<Task<()>>,
@@ -1053,6 +1076,7 @@ impl SessionView {
     pub fn new(
         control_plane_client: Option<ClientInProcEndpoint>,
         initial_session_id: Option<SessionId>,
+        artifact_store_root: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
@@ -1149,6 +1173,7 @@ impl SessionView {
             tool_event_group_membership: Rc::new(HashMap::new()),
             markdown_cache: Rc::new(RefCell::new(HashMap::new())),
             full_text_message_states: Rc::new(RefCell::new(HashMap::new())),
+            artifact_store_root,
             client,
             _client_task: client_task,
             subscription_task: None,
@@ -3217,19 +3242,46 @@ impl SessionView {
         self.set_timeline_items(items);
     }
 
+    fn full_text_message_artifact_path(
+        &self,
+        full_text_artifact: &ArtifactRef,
+    ) -> Result<PathBuf, String> {
+        let hint = full_text_artifact
+            .storage_hint
+            .as_ref()
+            .ok_or_else(|| "artifact storage hint missing".to_string())?;
+        resolve_artifact_path_from_storage_hint(hint, self.artifact_store_root.as_deref())
+    }
+
     fn ensure_full_text_message_loaded(
         &mut self,
         session_event_id: SessionEventId,
         full_text_artifact: ArtifactRef,
         cx: &mut Context<Self>,
     ) {
-        let Some(StorageHint::LocalPath { local_path }) = full_text_artifact.storage_hint.as_ref()
-        else {
+        let path = match self.full_text_message_artifact_path(&full_text_artifact) {
+            Ok(path) => path,
+            Err(err) => {
+                redesmyn_logging::tracing::warn!(
+                    session_event_id = %session_event_id,
+                    artifact_id = %full_text_artifact.artifact_id,
+                    storage_hint = ?full_text_artifact.storage_hint,
+                    error = %err,
+                    "unsupported full-text message artifact storage hint"
+                );
+                self.full_text_message_states
+                    .borrow_mut()
+                    .insert(session_event_id, FullTextMessageLoadState::Failed);
+                return;
+            }
+        };
+
+        if path.as_os_str().is_empty() {
             self.full_text_message_states
                 .borrow_mut()
                 .insert(session_event_id, FullTextMessageLoadState::Failed);
             return;
-        };
+        }
 
         let should_start = {
             let mut states = self.full_text_message_states.borrow_mut();
@@ -3249,7 +3301,6 @@ impl SessionView {
         }
 
         let view = cx.entity();
-        let path = local_path.clone();
         let path_for_log = path.clone();
         cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
             let cx = cx.clone();
@@ -3275,7 +3326,7 @@ impl SessionView {
                             Err(err) => {
                                 redesmyn_logging::tracing::warn!(
                                     session_event_id = %session_event_id,
-                                    path = %path_for_log,
+                                    path = %path_for_log.display(),
                                     error = %err,
                                     "failed to load full-text message artifact"
                                 );
@@ -6361,5 +6412,57 @@ impl Render for SessionView {
         }
 
         root
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_storage_hint_local_path() {
+        let hint = StorageHint::LocalPath {
+            local_path: "/tmp/redesmyn_message.md".to_string(),
+        };
+        let path = resolve_artifact_path_from_storage_hint(&hint, None).unwrap();
+        assert_eq!(path, PathBuf::from("/tmp/redesmyn_message.md"));
+    }
+
+    #[test]
+    fn resolve_storage_hint_blob_key() {
+        let root = PathBuf::from("/tmp/redesmyn_state");
+        let artifact_id = ArtifactId::new();
+        let hint = StorageHint::BlobKey {
+            blob_key: format!("artifact/{artifact_id}"),
+        };
+        let path = resolve_artifact_path_from_storage_hint(&hint, Some(root.as_path())).unwrap();
+        assert_eq!(
+            path,
+            root.join("artifacts").join(format!("{artifact_id}.bin"))
+        );
+    }
+
+    #[test]
+    fn resolve_storage_hint_blob_key_with_prefix() {
+        let root = PathBuf::from("/tmp/redesmyn_state");
+        let artifact_id = ArtifactId::new();
+        let hint = StorageHint::BlobKey {
+            blob_key: format!("local://artifact/{artifact_id}"),
+        };
+        let path = resolve_artifact_path_from_storage_hint(&hint, Some(root.as_path())).unwrap();
+        assert_eq!(
+            path,
+            root.join("artifacts").join(format!("{artifact_id}.bin"))
+        );
+    }
+
+    #[test]
+    fn resolve_storage_hint_blob_key_requires_root() {
+        let artifact_id = ArtifactId::new();
+        let hint = StorageHint::BlobKey {
+            blob_key: format!("artifact/{artifact_id}"),
+        };
+        let err = resolve_artifact_path_from_storage_hint(&hint, None).unwrap_err();
+        assert!(err.contains("root"), "err={err}");
     }
 }
