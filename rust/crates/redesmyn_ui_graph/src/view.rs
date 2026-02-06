@@ -40,9 +40,8 @@ use crate::scene::{AgentStatus, GraphEdgeId, GraphNodeId, GraphScene, TrunkMarkK
 
 use redesmyn_markdown::{MarkdownParseOptions, parse_markdown};
 use redesmyn_protocol::client::{
-    AgentKind, AgentMessageConflictAction, MergeReadiness, ModelReasoningEffort, RequestPayload,
-    ResponseResult, RestartAgentRequest, SessionModelSelection, StartAgentRequest,
-    StopAgentRequest, TaskState,
+    AgentKind, AgentMessageConflictAction, MergeReadiness, RequestPayload, ResponseResult,
+    RestartAgentRequest, SessionModelSelection, StartAgentRequest, StopAgentRequest, TaskState,
 };
 use redesmyn_protocol::ui_driver::{
     UiGraphCameraState, UiGraphEdgeId as UiDriverGraphEdgeId, UiGraphLoadState,
@@ -3003,21 +3002,9 @@ impl Render for GraphView {
 
                                                             let task_session_view =
                                                                 self.task_session_view.clone();
-                                                            let start_defaults_label = {
-                                                                let selection = self
-                                                                    .task_session_view
-                                                                    .read(cx)
-                                                                    .task_start_model_selection_snapshot();
-                                                                format_start_model_selection_label(
-                                                                    selection.as_ref(),
-                                                                )
-                                                            };
-                                                            let no_session_message = format!(
-                                                                "No session yet. Start agent will use {start_defaults_label}."
-                                                            );
 
                                                             this = this.child(
-                                                                Callout::new(no_session_message)
+                                                                Callout::new("No session yet.")
                                                                     .kind(CalloutKind::Info)
                                                                     .title("Session")
                                                                     .action(
@@ -3543,40 +3530,6 @@ fn lerp_world_rect(from: NodeWorldRect, to: NodeWorldRect, t: f32) -> NodeWorldR
 
 fn approx_eq_point(a: gpui::Point<f32>, b: gpui::Point<f32>) -> bool {
     (a.x - b.x).abs() < 1e-3 && (a.y - b.y).abs() < 1e-3
-}
-
-fn start_model_reasoning_effort_label(effort: ModelReasoningEffort) -> &'static str {
-    match effort {
-        ModelReasoningEffort::Minimal => "minimal",
-        ModelReasoningEffort::Low => "low",
-        ModelReasoningEffort::Medium => "medium",
-        ModelReasoningEffort::High => "high",
-        ModelReasoningEffort::Xhigh => "xhigh",
-        ModelReasoningEffort::Unknown => "default",
-    }
-}
-
-fn format_start_model_selection_label(selection: Option<&SessionModelSelection>) -> String {
-    let Some(selection) = selection else {
-        return "runtime defaults".to_string();
-    };
-
-    let model_id = selection
-        .model_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let reasoning = selection.reasoning_effort.and_then(|effort| {
-        (!matches!(effort, ModelReasoningEffort::Unknown))
-            .then(|| format!("{} reasoning", start_model_reasoning_effort_label(effort)))
-    });
-
-    match (model_id, reasoning) {
-        (Some(model_id), Some(reasoning)) => format!("{model_id} with {reasoning}"),
-        (Some(model_id), None) => model_id.to_string(),
-        (None, Some(reasoning)) => reasoning,
-        (None, None) => "runtime defaults".to_string(),
-    }
 }
 
 fn truncate_shared_string(value: &gpui::SharedString, max_chars: usize) -> gpui::SharedString {

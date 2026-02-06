@@ -50,7 +50,7 @@ use redesmyn_ui::components::{
     ButtonKind, Callout, CalloutKind, CascadingMenu, CascadingMenuId, CascadingMenuMetrics,
     CascadingMenuRowStyle, CascadingMenuState, CascadingMenuSurfaceStyle, Expandable, IconButton,
     MarkdownView, OverlaySurfaceKind, ScrollFade, ScrollbarStyle, StyledScrollbar, TextArea,
-    TextButton, TextInput, TextInputEvent, TextInputPastedImage,
+    TextButton, TextInput, TextInputEvent, TextInputPastedImage, Tooltip,
     cascading_menu_move_left_to_primary, cascading_menu_radio_indicator, cascading_menu_row,
     cascading_menu_row_value, cascading_menu_surface, cascading_select_menu_item, overlay_surface,
     set_open_cascading_menu,
@@ -282,6 +282,16 @@ fn normalize_optional_session_model_selection(
         (normalized.model_id.is_some() || normalized.reasoning_effort.is_some())
             .then_some(normalized)
     })
+}
+
+const STRUCTURED_SESSION_MODELS_ONLY_MESSAGE: &str =
+    "Session model selection is only supported for structured sessions.";
+const UNSTRUCTURED_SESSION_MODELS_TOOLTIP: &str =
+    "Model and reasoning controls are unavailable for unstructured sessions.";
+
+fn is_unstructured_session_models_error(err: &ErrorEnvelope) -> bool {
+    err.category == ErrorCategory::InvalidRequest
+        && err.message.contains(STRUCTURED_SESSION_MODELS_ONLY_MESSAGE)
 }
 
 fn model_reasoning_effort_label(effort: Option<ModelReasoningEffort>) -> &'static str {
@@ -1207,6 +1217,7 @@ pub struct SessionView {
     set_session_model_task: Option<Task<()>>,
     model_fetch_generation: u64,
     model_fetch_in_flight: bool,
+    session_model_controls_unavailable_reason: Option<SharedString>,
     model_fetch_error: Option<SharedString>,
     model_fetch_task: Option<Task<()>>,
     session_settings_open: bool,
@@ -1378,6 +1389,7 @@ impl SessionView {
             set_session_model_task: None,
             model_fetch_generation: 0,
             model_fetch_in_flight: false,
+            session_model_controls_unavailable_reason: None,
             model_fetch_error: None,
             model_fetch_task: None,
             session_settings_open: false,
@@ -1479,6 +1491,7 @@ impl SessionView {
             });
             self.pending_session_model_selection = None;
             self.model_fetch_in_flight = false;
+            self.session_model_controls_unavailable_reason = None;
             self.model_fetch_error = None;
             self.model_fetch_task = None;
             self.set_session_model_menu_index_from_selection();
@@ -1797,6 +1810,7 @@ impl SessionView {
             self.set_session_model_task = None;
             self.model_fetch_generation = self.model_fetch_generation.wrapping_add(1);
             self.model_fetch_in_flight = false;
+            self.session_model_controls_unavailable_reason = None;
             self.model_fetch_error = None;
             self.model_fetch_task = None;
             self.set_session_model_menu_index_from_selection();
@@ -1960,6 +1974,7 @@ impl SessionView {
         self.set_session_model_task = None;
         self.model_fetch_generation = self.model_fetch_generation.wrapping_add(1);
         self.model_fetch_in_flight = true;
+        self.session_model_controls_unavailable_reason = None;
         self.model_fetch_error = None;
         self.model_fetch_task = None;
         self.session_settings_open = false;
@@ -2560,14 +2575,23 @@ impl SessionView {
                     self.session_model_options = resp.options;
                     self.session_model_selection =
                         normalize_session_model_selection(resp.selection);
+                    self.session_model_controls_unavailable_reason = None;
                     self.model_fetch_error = None;
                     self.session_model_action.clear_error();
                 }
             }
             Err(err) => {
-                self.model_fetch_error = Some(err.message.clone().into());
-                if self.session_model_options.is_empty() {
-                    self.session_model_action.fail(err.message);
+                if is_unstructured_session_models_error(&err) {
+                    self.session_model_controls_unavailable_reason =
+                        Some(UNSTRUCTURED_SESSION_MODELS_TOOLTIP.into());
+                    self.model_fetch_error = None;
+                    self.session_model_action.clear_error();
+                } else {
+                    self.session_model_controls_unavailable_reason = None;
+                    self.model_fetch_error = Some(err.message.clone().into());
+                    if self.session_model_options.is_empty() {
+                        self.session_model_action.fail(err.message);
+                    }
                 }
             }
         }
@@ -2582,6 +2606,7 @@ impl SessionView {
 
         self.model_fetch_generation = self.model_fetch_generation.wrapping_add(1);
         self.model_fetch_in_flight = true;
+        self.session_model_controls_unavailable_reason = None;
         self.model_fetch_error = None;
         self.model_fetch_task = None;
         let generation = self.model_fetch_generation;
@@ -2696,6 +2721,14 @@ impl SessionView {
                 .clone()
                 .unwrap_or_else(|| self.session_model_selection.clone()),
         )
+    }
+
+    fn session_model_selectors_disabled(&self) -> bool {
+        self.client.is_none()
+            || self.feed.is_none()
+            || self.session_model_action.in_flight
+            || (self.model_fetch_in_flight && self.session_model_options.is_empty())
+            || self.session_model_controls_unavailable_reason.is_some()
     }
 
     fn selected_model_option_for_selection<'a>(
@@ -2923,7 +2956,7 @@ impl SessionView {
         let available = self
             .session_model_shortcut_availability
             .is_action_available_or(window, cx, &OpenSessionModelSelector, false);
-        if !available {
+        if !available || self.session_model_selectors_disabled() {
             return;
         }
         self.session_settings_open = false;
@@ -2942,7 +2975,7 @@ impl SessionView {
         let available = self
             .session_reasoning_shortcut_availability
             .is_action_available_or(window, cx, &OpenSessionReasoningSelector, false);
-        if !available {
+        if !available || self.session_model_selectors_disabled() {
             return;
         }
         self.session_settings_open = false;
@@ -6986,22 +7019,6 @@ impl Render for SessionView {
         } else {
             None
         };
-        let start_defaults_status = if self.feed.is_none() && self.task_binding_task_id.is_some() {
-            let label = if self.task_start_model_selection.is_some() {
-                "Applies on Start agent"
-            } else {
-                "Uses runtime defaults on Start agent"
-            };
-            Some(
-                div()
-                    .text_color(theme.colors.foreground_muted)
-                    .text_size(theme.typography.caption.size)
-                    .child(label),
-            )
-        } else {
-            None
-        };
-
         let settings_disabled = self.client.is_none() || self.feed.is_none();
         let open_menu = cx
             .try_global::<CascadingMenuState>()
@@ -7377,10 +7394,21 @@ impl Render for SessionView {
 
         let model_menu_open = open_menu == Some(CascadingMenuId::SessionModel);
         let reasoning_menu_open = open_menu == Some(CascadingMenuId::SessionReasoning);
-        let model_selector_disabled = self.client.is_none()
-            || self.feed.is_none()
-            || self.session_model_action.in_flight
-            || (self.model_fetch_in_flight && self.session_model_options.is_empty());
+        let pre_start_model_tooltip: Option<SharedString> =
+            if self.feed.is_none() && self.task_binding_task_id.is_some() {
+                Some("These defaults are applied when Start agent is clicked.".into())
+            } else {
+                None
+            };
+        let model_selector_tooltip = self
+            .session_model_controls_unavailable_reason
+            .clone()
+            .or(pre_start_model_tooltip.clone());
+        let reasoning_selector_tooltip = self
+            .session_model_controls_unavailable_reason
+            .clone()
+            .or(pre_start_model_tooltip);
+        let model_selector_disabled = self.session_model_selectors_disabled();
         let reasoning_selector_disabled = model_selector_disabled;
 
         let selector_open_border = theme.colors.ring.opacity(0.5);
@@ -7426,6 +7454,9 @@ impl Render for SessionView {
             })
             .when(model_selector_disabled, |this| {
                 this.opacity(0.55).cursor_not_allowed()
+            })
+            .when_some(model_selector_tooltip.clone(), |this, tooltip| {
+                this.tooltip(move |_, cx| cx.new(|_| Tooltip::new(tooltip.clone())).into())
             })
             .child("◈")
             .child(div().max_w(px(120.0)).truncate().child(model_value.clone()))
@@ -7617,6 +7648,9 @@ impl Render for SessionView {
             .when(reasoning_selector_disabled, |this| {
                 this.opacity(0.55).cursor_not_allowed()
             })
+            .when_some(reasoning_selector_tooltip.clone(), |this, tooltip| {
+                this.tooltip(move |_, cx| cx.new(|_| Tooltip::new(tooltip.clone())).into())
+            })
             .child("◎")
             .child(reasoning_value.clone())
             .child(
@@ -7736,8 +7770,7 @@ impl Render for SessionView {
                     .child(model_selector_anchor)
                     .child(reasoning_selector_anchor)
                     .child(settings_anchor)
-                    .when_some(policies_status, |this, status| this.child(status))
-                    .when_some(start_defaults_status, |this, status| this.child(status)),
+                    .when_some(policies_status, |this, status| this.child(status)),
             )
             .child(send_button);
 

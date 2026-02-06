@@ -30,6 +30,8 @@
 - Prefer calm-but-visible progress affordances: animated ellipses, subtle glow/pulse, or similar low-noise motion.
 - Prevent accidental duplicate requests: disable the triggering control while in flight unless concurrent actions are explicitly safe.
 - Keep progress indicators accessible (visible in light/dark, keyboard-safe, no focus traps); on error, keep messages actionable and preserve user input when possible (e.g. don’t drop drafts).
+- Avoid repeating the same fact in multiple places (e.g. callout + inline label + status text). Pick one primary surface to carry the message, then keep secondary surfaces quiet unless they add new information.
+- Let the main UI element convey intent directly through state, placement, and wording; reserve helper copy/tooltips for brief clarification, not restating what is already visible.
 
 ## Projections vs. Live State
 
