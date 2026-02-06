@@ -6,9 +6,9 @@ use redesmyn_protocol::agent_commands::{
     TASK_AGENT_STOP,
 };
 use redesmyn_protocol::client::{
-    AgentKind, AttachAgentSessionResponse, CommandSummary, SendTaskAgentMessageResponse,
-    StartAgentResponse, StopAgentResponse, TaskAgentMessageConversationContinuity,
-    TaskAgentMessageDelivery,
+    AgentKind, AttachAgentSessionResponse, CommandState, CommandSummary,
+    SendTaskAgentMessageResponse, StartAgentResponse, StopAgentResponse,
+    TaskAgentMessageConversationContinuity, TaskAgentMessageDelivery,
 };
 use redesmyn_protocol::session::{SessionEnded, SessionEventKind, SessionScope, SessionStarted};
 use redesmyn_protocol::{
@@ -231,6 +231,31 @@ async fn issue_repo_command(
         })
 }
 
+async fn rollback_failed_start_session(
+    control_plane: &ControlPlane,
+    session_id: SessionId,
+    task_id: TaskId,
+) -> Option<String> {
+    let mut cleanup_errors = Vec::new();
+
+    if let Err(err) = end_sessions(control_plane.pool(), &[session_id]).await {
+        cleanup_errors.push(format!("failed to stop session: {}", err.message));
+    }
+
+    if let Err(err) = append_session_ended(control_plane, session_id, task_id).await {
+        cleanup_errors.push(format!(
+            "failed to append session_ended event: {}",
+            err.message
+        ));
+    }
+
+    if cleanup_errors.is_empty() {
+        None
+    } else {
+        Some(cleanup_errors.join("; "))
+    }
+}
+
 pub(super) async fn execute_start_agent(
     control_plane: &ControlPlane,
     repo: RepoScope,
@@ -303,6 +328,28 @@ pub(super) async fn execute_start_agent(
         json_payload,
     )
     .await?;
+
+    if command.state == CommandState::Failed {
+        let mut detail = ErrorDetail::from([
+            ("command_id".to_string(), command.command_id.to_string()),
+            ("session_id".to_string(), session_id.to_string()),
+            ("task_id".to_string(), task_id.to_string()),
+        ]);
+
+        if let Some(cleanup_error) =
+            rollback_failed_start_session(control_plane, session_id, task_id).await
+        {
+            detail.insert("cleanup_error".to_string(), cleanup_error);
+        }
+
+        let message = command
+            .last_update
+            .as_ref()
+            .and_then(|update| update.message.clone())
+            .unwrap_or_else(|| "Failed to start agent.".to_string());
+
+        return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, message).with_detail(detail));
+    }
 
     Ok(StartAgentResponse {
         command,
