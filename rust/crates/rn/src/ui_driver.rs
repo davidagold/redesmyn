@@ -13,8 +13,8 @@ use redesmyn_ids::{RequestId, TaskId};
 use redesmyn_protocol::pb::redesmyn::protocol::v1 as pbv1;
 use redesmyn_protocol::ui_driver::{
     CaptureScreenshotRequest, CaptureScreenshotResponse, CreateChatSessionRequest,
-    CreateChatSessionResponse, OpenEpicRequest, SelectGraphNodeRequest, SelectTaskRequest,
-    SessionSettingsMenuSendKeyRequest, SessionSettingsMenuSetOpenRequest,
+    CreateChatSessionResponse, GetUiSnapshotRequest, OpenEpicRequest, SelectGraphNodeRequest,
+    SelectTaskRequest, SessionSettingsMenuSendKeyRequest, SessionSettingsMenuSetOpenRequest,
     SetLeftPaneCollapsedRequest, SetSettingsDialogOpenRequest, SetSettingsDialogSectionRequest,
     SettingsDialogSection, TaskFiltersMenuSetOpenRequest, TriggerRefreshRequest, UiDriverFrame,
     UiDriverMessage, UiDriverRequest, UiDriverRequestPayload, UiDriverResponseResult,
@@ -576,6 +576,23 @@ impl UiDriverSmokeHarness {
             other => Err(ErrorEnvelope::new(
                 ErrorCategory::InvalidRequest,
                 format!("Unexpected wait_for_snapshot response: {other:?}"),
+            )),
+        }
+    }
+
+    fn get_snapshot(
+        &mut self,
+        read_timeout: Duration,
+    ) -> Result<redesmyn_protocol::ui_driver::UiSnapshot, ErrorEnvelope> {
+        match self.send(
+            UiDriverRequestPayload::GetSnapshot(GetUiSnapshotRequest {}),
+            read_timeout,
+        )? {
+            UiDriverResponseResult::GetSnapshot(resp) => Ok(resp.snapshot),
+            UiDriverResponseResult::Error(err) => Err(err),
+            other => Err(ErrorEnvelope::new(
+                ErrorCategory::InvalidRequest,
+                format!("Unexpected get_snapshot response: {other:?}"),
             )),
         }
     }
@@ -1285,20 +1302,14 @@ fn ui_driver_graph_smoke(args: UiDriverGraphSmokeArgs, output: &Output) -> Comma
             return CommandOutcome::Failure(err);
         }
 
-        let wait_selection_predicate = UiSnapshotPredicate {
-            primary_view: None,
-            epic_slug: String::new(),
-            in_flight_empty: None,
-            selected_task_id: task_slug.as_ref().map(|_| None).unwrap_or(Some(task_id)),
-            graph_layout_settled: None,
-            graph_selection_settled: Some(true),
-        };
-        let snapshot = match harness.wait_for_snapshot(
+        let snapshot = match wait_for_expanded_task_selection(
+            &mut harness,
+            task_id,
+            task_slug.as_deref(),
             args.timeout_ms,
-            wait_selection_predicate,
             wait_timeout,
         ) {
-            Ok(resp) => resp.snapshot,
+            Ok(snapshot) => snapshot,
             Err(err) => return CommandOutcome::Failure(err),
         };
 
@@ -1378,6 +1389,52 @@ fn ui_driver_graph_smoke(args: UiDriverGraphSmokeArgs, output: &Output) -> Comma
                 )),
             },
         }
+    }
+}
+
+#[cfg(unix)]
+fn wait_for_expanded_task_selection(
+    harness: &mut UiDriverSmokeHarness,
+    task_id: TaskId,
+    task_slug: Option<&str>,
+    timeout_ms: u64,
+    read_timeout: Duration,
+) -> Result<redesmyn_protocol::ui_driver::UiSnapshot, ErrorEnvelope> {
+    let timeout = if timeout_ms == 0 {
+        Duration::from_millis(2_000)
+    } else {
+        Duration::from_millis(timeout_ms)
+    };
+
+    let start = Instant::now();
+
+    loop {
+        let snapshot = harness.get_snapshot(read_timeout)?;
+        let id_match = if let Some(expected_slug) = task_slug {
+            snapshot.selection.task_slug == expected_slug
+        } else {
+            snapshot.graph.expanded_task_id == Some(task_id)
+                || snapshot.selection.task_id == Some(task_id)
+        };
+
+        if snapshot.graph.expanded_task_card_open && id_match {
+            return Ok(snapshot);
+        }
+
+        if start.elapsed() >= timeout {
+            return Err(ErrorEnvelope::new(
+                ErrorCategory::Unavailable,
+                format!(
+                    "Timed out waiting for expanded task card selection; last snapshot: expanded_open={}, expanded_task_id={:?}, selection.task_id={:?}, selection.task_slug={:?}, selection_settled={}",
+                    snapshot.graph.expanded_task_card_open,
+                    snapshot.graph.expanded_task_id,
+                    snapshot.selection.task_id,
+                    snapshot.selection.task_slug,
+                    snapshot.graph.selection_settled
+                ),
+            ));
+        }
+        thread::sleep(Duration::from_millis(40));
     }
 }
 
