@@ -140,6 +140,7 @@ impl Daemon {
             host_identity,
             config.daemon.clone(),
             config.repo_registry.clone(),
+            config.git_backend.clone(),
             command_dispatch_rx,
             frames_tx,
             shutdown_rx.clone(),

@@ -1515,6 +1515,7 @@ impl GraphView {
         let client = session_view.client();
         let repo_scope = session_view.repo_scope_snapshot();
         let start_model_selection = session_view.task_start_model_selection_snapshot();
+        let start_initial_prompt = session_view.task_start_initial_prompt_snapshot();
 
         let state = self.quick_action_state_mut(task_id);
         let (action, task_slot) = match kind {
@@ -1546,6 +1547,7 @@ impl GraphView {
             cx.spawn(move |_: gpui::WeakEntity<Self>, cx: &mut AsyncApp| {
                 let client = client.clone();
                 let start_model_selection = start_model_selection.clone();
+                let start_initial_prompt = start_initial_prompt.clone();
                 let cx = cx.clone();
                 async move {
                     let result = task_quick_action_request(
@@ -1553,6 +1555,7 @@ impl GraphView {
                         repo_scope,
                         task_id,
                         kind,
+                        start_initial_prompt.clone(),
                         start_model_selection.clone(),
                     )
                     .await;
@@ -3547,13 +3550,14 @@ async fn task_quick_action_request(
     repo_scope: RepoScope,
     task_id: TaskId,
     kind: TaskQuickActionKind,
+    start_initial_prompt: Option<String>,
     start_model_selection: Option<SessionModelSelection>,
 ) -> Result<ResponseResult, redesmyn_protocol::ErrorEnvelope> {
     let payload = match kind {
         TaskQuickActionKind::Start => RequestPayload::StartAgent(StartAgentRequest {
             task_id,
             agent_kind: AgentKind::Codex,
-            initial_prompt: None,
+            initial_prompt: start_initial_prompt,
             on_conflict: AgentMessageConflictAction::Fail,
             session_model_selection: start_model_selection,
         }),

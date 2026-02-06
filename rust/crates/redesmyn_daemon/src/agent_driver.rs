@@ -22,6 +22,7 @@ pub struct StartSessionSpec {
     pub task_id: Option<TaskId>,
     pub scope: SessionScope,
     pub repo_root: PathBuf,
+    pub working_directory: PathBuf,
     pub initial_prompt: Option<String>,
     pub image_attachments: Vec<ImageAttachment>,
     pub policy_snapshot: Option<SessionPolicySnapshot>,
@@ -102,13 +103,13 @@ impl CodexDriver {
 
     async fn ensure_session_started(
         &self,
-        repo_root: PathBuf,
+        working_directory: PathBuf,
         session_id: SessionId,
         task_id: Option<TaskId>,
         scope: SessionScope,
     ) -> Result<(), ErrorEnvelope> {
         let process = Arc::new(CodexAppServerProcess::new(
-            CodexAppServerProcessConfig::codex_default(repo_root),
+            CodexAppServerProcessConfig::codex_default(working_directory),
         ));
         let spec = AppServerSessionSpec {
             scope,
@@ -139,7 +140,7 @@ impl AgentDriver for CodexDriver {
             }
 
             let process = Arc::new(CodexAppServerProcess::new(
-                CodexAppServerProcessConfig::codex_default(spec.repo_root),
+                CodexAppServerProcessConfig::codex_default(spec.working_directory),
             ));
             let session_spec = AppServerSessionSpec {
                 scope: spec.scope,

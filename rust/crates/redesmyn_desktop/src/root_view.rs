@@ -2034,6 +2034,41 @@ fn load_default_session_model_selection() -> Option<SessionModelSelection> {
     })
 }
 
+fn load_task_start_initial_prompt() -> Option<String> {
+    let repo_root = match repo_root_from_cwd() {
+        Ok(repo_root) => repo_root,
+        Err(err) => {
+            redesmyn_logging::tracing::warn!(
+                error = %err,
+                "unable to resolve repo root for task start defaults"
+            );
+            return None;
+        }
+    };
+
+    let defaults = match load_effective_defaults(&repo_root) {
+        Ok(defaults) => defaults,
+        Err(err) => {
+            redesmyn_logging::tracing::warn!(
+                error = %err,
+                repo_root = %repo_root.display(),
+                "unable to load orchestration defaults for task start"
+            );
+            return None;
+        }
+    };
+
+    if !defaults.harness.send_prelude {
+        return None;
+    }
+
+    defaults
+        .harness
+        .prelude
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 async fn apply_default_session_model_selection(
     client: &ControlPlaneClient,
     scope: RepoScope,
@@ -4398,8 +4433,10 @@ impl WorkspacePaneHost {
         let task_session_view =
             cx.new(|cx| SessionView::new(task_session_client, None, artifact_store_root, cx));
         let task_start_model_selection = load_default_session_model_selection();
+        let task_start_initial_prompt = load_task_start_initial_prompt();
         task_session_view.update(cx, |view, cx| {
             view.set_task_start_model_selection(task_start_model_selection, cx);
+            view.set_task_start_initial_prompt(task_start_initial_prompt, cx);
         });
         let graph_session_view = task_session_view.clone();
         let graph_view = cx.new(|cx| GraphView::new_empty(graph_session_view, cx));

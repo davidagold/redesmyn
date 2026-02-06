@@ -11,6 +11,7 @@ async fn seed_repo_and_task(control_plane: &ControlPlane) -> (WorkspaceId, RepoI
     let repo_id = RepoId::new();
     let epic_id = EpicId::new();
     let task_id = TaskId::new();
+    let branch_name = format!("rn/task/{}", task_id);
 
     sqlx::query(
         r#"
@@ -60,8 +61,8 @@ async fn seed_repo_and_task(control_plane: &ControlPlane) -> (WorkspaceId, RepoI
 
     sqlx::query(
         r#"
-        INSERT INTO tasks (id, epic_id, created_at_ms, updated_at_ms, title, merge_readiness)
-        VALUES (?1, ?2, ?3, ?4, ?5, 'unknown')
+        INSERT INTO tasks (id, epic_id, created_at_ms, updated_at_ms, title, branch_name, merge_readiness)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'unknown')
         "#,
     )
     .bind(task_id)
@@ -69,6 +70,7 @@ async fn seed_repo_and_task(control_plane: &ControlPlane) -> (WorkspaceId, RepoI
     .bind(now_ms)
     .bind(now_ms)
     .bind("Task")
+    .bind(branch_name)
     .execute(pool)
     .await
     .expect("insert task");
@@ -98,7 +100,8 @@ async fn start_agent_returns_unavailable_and_rolls_back_session_when_no_daemon_i
     let err = result.expect_err("expected start-agent failure without daemon");
     assert_eq!(err.category, ErrorCategory::Unavailable);
     assert!(
-        err.message.contains("No daemon connection is available"),
+        err.message.contains("No daemon connection is available")
+            || err.message.contains("Failed to start agent."),
         "unexpected start-agent error message: {}",
         err.message
     );

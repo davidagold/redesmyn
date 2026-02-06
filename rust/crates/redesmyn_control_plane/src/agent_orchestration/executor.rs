@@ -87,6 +87,44 @@ async fn insert_task_session(
     Ok(session_id)
 }
 
+async fn load_task_branch_name(
+    pool: &SqlitePool,
+    task_id: TaskId,
+) -> Result<String, ErrorEnvelope> {
+    let branch_name: Option<String> = sqlx::query_scalar(
+        r#"
+        SELECT branch_name
+        FROM tasks
+        WHERE id = ?1
+        LIMIT 1
+        "#,
+    )
+    .bind(task_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|err| {
+        ErrorEnvelope::new(ErrorCategory::Internal, "Failed to load task branch.")
+            .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
+    })?
+    .flatten();
+
+    let branch_name = branch_name
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ErrorEnvelope::new(
+                ErrorCategory::InvalidRequest,
+                "Task branch is required to start an agent session.",
+            )
+            .with_detail(ErrorDetail::from([(
+                "task_id".to_string(),
+                task_id.to_string(),
+            )]))
+        })?;
+
+    Ok(branch_name)
+}
+
 async fn end_sessions(pool: &SqlitePool, session_ids: &[SessionId]) -> Result<(), ErrorEnvelope> {
     if session_ids.is_empty() {
         return Ok(());
@@ -380,10 +418,12 @@ pub(super) async fn execute_start_agent(
         )
         .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
     })?;
+    let task_branch_name = load_task_branch_name(control_plane.pool(), task_id).await?;
 
     let json_payload = payloads::start_task_session(
         session_id,
         task_id,
+        Some(task_branch_name),
         agent_kind,
         initial_prompt,
         Some(policy_snapshot),
@@ -572,10 +612,12 @@ pub(super) async fn execute_new_session_send(
         )
         .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
     })?;
+    let task_branch_name = load_task_branch_name(control_plane.pool(), task_id).await?;
 
     let json_payload = payloads::start_task_session(
         session_id,
         task_id,
+        Some(task_branch_name),
         agent_kind,
         Some(message.to_string()),
         Some(policy_snapshot),

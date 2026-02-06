@@ -124,10 +124,11 @@ async fn insert_epic(pool: &redesmyn_storage::SqlitePool, repo_id: RepoId) -> re
 async fn insert_task(pool: &redesmyn_storage::SqlitePool, epic_id: redesmyn_ids::EpicId) -> TaskId {
     let task_id = TaskId::new();
     let now_ms = 4_i64;
+    let branch_name = format!("rn/task/{}", task_id);
     sqlx::query(
         r#"
-        INSERT INTO tasks (id, epic_id, created_at_ms, updated_at_ms, title, merge_readiness)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        INSERT INTO tasks (id, epic_id, created_at_ms, updated_at_ms, title, branch_name, merge_readiness)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
         "#,
     )
     .bind(task_id)
@@ -135,6 +136,7 @@ async fn insert_task(pool: &redesmyn_storage::SqlitePool, epic_id: redesmyn_ids:
     .bind(now_ms)
     .bind(now_ms)
     .bind("Task")
+    .bind(branch_name)
     .bind("unknown")
     .execute(pool)
     .await

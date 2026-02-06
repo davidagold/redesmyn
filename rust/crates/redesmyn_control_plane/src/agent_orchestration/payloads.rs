@@ -36,6 +36,7 @@ pub(super) fn stop_task_sessions(
 pub(super) fn start_task_session(
     session_id: SessionId,
     task_id: TaskId,
+    task_branch_name: Option<String>,
     agent_kind: AgentKind,
     initial_prompt: Option<String>,
     policy_snapshot: Option<SessionPolicySnapshot>,
@@ -44,6 +45,7 @@ pub(super) fn start_task_session(
     encode_payload(&StartTaskAgentSessionCommand {
         session_id,
         task_id,
+        task_branch_name,
         agent_kind,
         initial_prompt,
         policy_snapshot,

@@ -52,6 +52,7 @@ async fn seed_repo_and_task(control_plane: &ControlPlane) -> (RepoScope, TaskId)
     let repo_id = RepoId::new();
     let epic_id = EpicId::new();
     let task_id = TaskId::new();
+    let branch_name = format!("rn/task/{}", task_id);
 
     sqlx::query(
         r#"
@@ -101,8 +102,8 @@ async fn seed_repo_and_task(control_plane: &ControlPlane) -> (RepoScope, TaskId)
 
     sqlx::query(
         r#"
-        INSERT INTO tasks (id, epic_id, created_at_ms, updated_at_ms, title, merge_readiness)
-        VALUES (?1, ?2, ?3, ?4, ?5, 'unknown')
+        INSERT INTO tasks (id, epic_id, created_at_ms, updated_at_ms, title, branch_name, merge_readiness)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'unknown')
         "#,
     )
     .bind(task_id)
@@ -110,6 +111,7 @@ async fn seed_repo_and_task(control_plane: &ControlPlane) -> (RepoScope, TaskId)
     .bind(now_ms)
     .bind(now_ms)
     .bind("Task")
+    .bind(branch_name)
     .execute(pool)
     .await
     .expect("insert task");

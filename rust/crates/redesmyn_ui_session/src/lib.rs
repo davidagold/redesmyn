@@ -933,13 +933,14 @@ async fn start_task_agent(
     client: &Client,
     repo_scope: RepoScope,
     task_id: TaskId,
+    initial_prompt: Option<String>,
     session_model_selection: Option<SessionModelSelection>,
     on_conflict: AgentMessageConflictAction,
 ) -> Result<StartAgentResponse, ErrorEnvelope> {
     let payload = RequestPayload::StartAgent(StartAgentRequest {
         task_id,
         agent_kind: AgentKind::Codex,
-        initial_prompt: None,
+        initial_prompt,
         on_conflict,
         session_model_selection,
     });
@@ -1216,6 +1217,7 @@ pub struct SessionView {
     set_codex_sandbox_policy_task: Option<Task<()>>,
     codex_sandbox_policy_timeout_task: Option<Task<()>>,
     task_start_model_selection: Option<SessionModelSelection>,
+    task_start_initial_prompt: Option<String>,
     session_model_options: Vec<SessionModelOption>,
     session_model_selection: SessionModelSelection,
     pending_session_model_selection: Option<SessionModelSelection>,
@@ -1386,6 +1388,7 @@ impl SessionView {
             set_codex_sandbox_policy_task: None,
             codex_sandbox_policy_timeout_task: None,
             task_start_model_selection: None,
+            task_start_initial_prompt: None,
             session_model_options: Vec::new(),
             session_model_selection: SessionModelSelection {
                 model_id: None,
@@ -1480,6 +1483,11 @@ impl SessionView {
         self.task_start_model_selection.clone()
     }
 
+    #[must_use]
+    pub fn task_start_initial_prompt_snapshot(&self) -> Option<String> {
+        self.task_start_initial_prompt.clone()
+    }
+
     pub fn set_task_start_model_selection(
         &mut self,
         selection: Option<SessionModelSelection>,
@@ -1504,6 +1512,24 @@ impl SessionView {
             self.model_fetch_task = None;
             self.set_session_model_menu_index_from_selection();
             self.set_session_reasoning_menu_index_from_selection();
+            cx.notify();
+        }
+    }
+
+    pub fn set_task_start_initial_prompt(
+        &mut self,
+        initial_prompt: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let normalized = initial_prompt
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        if self.task_start_initial_prompt == normalized {
+            return;
+        }
+
+        self.task_start_initial_prompt = normalized;
+        if self.feed.is_none() {
             cx.notify();
         }
     }
@@ -1696,6 +1722,7 @@ impl SessionView {
         };
 
         let session_model_selection = self.task_start_model_selection.clone();
+        let initial_prompt = self.task_start_initial_prompt.clone();
         self.start_agent_generation = self.start_agent_generation.wrapping_add(1);
         let generation = self.start_agent_generation;
         self.task_operation = Some(TaskSessionOperation::StartAgent);
@@ -1716,6 +1743,7 @@ impl SessionView {
                     &client,
                     repo_scope,
                     task_id,
+                    initial_prompt.clone(),
                     session_model_selection.clone(),
                     AgentMessageConflictAction::Fail,
                 )
@@ -8024,12 +8052,23 @@ impl Render for SessionView {
                     .child(composer_action_bar),
             );
 
-        let mut timeline = div()
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_h(px(0.0))
-            .child(feed_list);
+        let show_empty_session_hint =
+            self.feed.is_some() && self.timeline_items.is_empty() && self.error.is_none();
+
+        let mut timeline = div().flex().flex_col().flex_1().min_h(px(0.0));
+
+        if show_empty_session_hint {
+            timeline = timeline.child(
+                div()
+                    .px(theme.spacing.sm)
+                    .py(theme.spacing.xs)
+                    .text_size(theme.typography.caption.size)
+                    .text_color(theme.colors.foreground_muted)
+                    .child("Session started. Send a message to begin."),
+            );
+        }
+
+        timeline = timeline.child(feed_list);
 
         if let Some(callout) = composer_callout {
             timeline = timeline.child(callout);
