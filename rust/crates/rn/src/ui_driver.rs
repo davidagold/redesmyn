@@ -15,11 +15,11 @@ use redesmyn_protocol::ui_driver::{
     CaptureScreenshotRequest, CaptureScreenshotResponse, CreateChatSessionRequest,
     CreateChatSessionResponse, OpenEpicRequest, SelectGraphNodeRequest, SelectTaskRequest,
     SessionSettingsMenuSendKeyRequest, SessionSettingsMenuSetOpenRequest,
-    SetSettingsDialogOpenRequest, SetSettingsDialogSectionRequest, SettingsDialogSection,
-    TaskFiltersMenuSetOpenRequest, TriggerRefreshRequest, UiDriverFrame, UiDriverMessage,
-    UiDriverRequest, UiDriverRequestPayload, UiDriverResponseResult, UiPrimaryView,
-    UiScreenshotWindow, UiSnapshotPredicate, WaitForUiIdleRequest, WaitForUiSnapshotRequest,
-    WaitForUiSnapshotResponse,
+    SetLeftPaneCollapsedRequest, SetSettingsDialogOpenRequest, SetSettingsDialogSectionRequest,
+    SettingsDialogSection, TaskFiltersMenuSetOpenRequest, TriggerRefreshRequest, UiDriverFrame,
+    UiDriverMessage, UiDriverRequest, UiDriverRequestPayload, UiDriverResponseResult,
+    UiPrimaryView, UiScreenshotWindow, UiSnapshotPredicate, WaitForUiIdleRequest,
+    WaitForUiSnapshotRequest, WaitForUiSnapshotResponse,
 };
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, ProtocolEnvelope};
 use serde::Serialize;
@@ -132,6 +132,10 @@ pub(crate) struct UiDriverGraphSmokeArgs {
     /// Artifact label for `CaptureScreenshot`.
     #[arg(long, default_value = "graph_smoke")]
     label: String,
+
+    /// Collapse left pane before selecting/capturing to maximize graph/card space.
+    #[arg(long, default_value_t = false)]
+    collapse_left_pane: bool,
 
     /// Timeout for wait operations (milliseconds).
     #[arg(long, default_value_t = 20_000)]
@@ -500,6 +504,18 @@ impl UiDriverSmokeHarness {
         self.require_ok(
             UiDriverRequestPayload::SelectTask(SelectTaskRequest { task_slug }),
             "select_task",
+            read_timeout,
+        )
+    }
+
+    fn set_left_pane_collapsed(
+        &mut self,
+        collapsed: bool,
+        read_timeout: Duration,
+    ) -> Result<(), ErrorEnvelope> {
+        self.require_ok(
+            UiDriverRequestPayload::SetLeftPaneCollapsed(SetLeftPaneCollapsedRequest { collapsed }),
+            "set_left_pane_collapsed",
             read_timeout,
         )
     }
@@ -1231,6 +1247,17 @@ fn ui_driver_graph_smoke(args: UiDriverGraphSmokeArgs, output: &Output) -> Comma
             return CommandOutcome::Failure(err);
         }
 
+        if args.collapse_left_pane {
+            if let Err(err) = harness.set_left_pane_collapsed(true, wait_timeout) {
+                return CommandOutcome::Failure(err);
+            }
+            if let Err(err) =
+                harness.wait_for_idle(args.timeout_ms, args.quiescence_ms, wait_timeout)
+            {
+                return CommandOutcome::Failure(err);
+            }
+        }
+
         if let Err(err) = harness.require_ok(
             UiDriverRequestPayload::TriggerRefresh(TriggerRefreshRequest {
                 epic_slug: args.epic.clone(),
@@ -1510,6 +1537,7 @@ fn require_ok_response(
         UiDriverResponseResult::OpenEpic(_)
         | UiDriverResponseResult::SelectTask(_)
         | UiDriverResponseResult::TriggerRefresh(_)
+        | UiDriverResponseResult::SetLeftPaneCollapsed(_)
         | UiDriverResponseResult::SetSettingsDialogOpen(_)
         | UiDriverResponseResult::SetSettingsDialogSection(_)
         | UiDriverResponseResult::WaitForSnapshot(_)
