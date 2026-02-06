@@ -4607,6 +4607,14 @@ impl WorkspacePaneHost {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self
+            .task_session_view
+            .read(cx)
+            .is_composer_focused(window, cx)
+        {
+            return;
+        }
+
         let span = redesmyn_logging::redesmyn_info_span!("ui.workspace.filters.open");
         let _guard = span.enter();
 
@@ -5321,6 +5329,10 @@ impl Render for WorkspacePaneHost {
 
         let entity_id = cx.entity_id();
         let workspace = cx.entity();
+        let task_composer_focused = self
+            .task_session_view
+            .read(cx)
+            .is_composer_focused(window, cx);
 
         let filter_shortcut_enabled = self
             .task_filters_action_availability
@@ -5329,7 +5341,8 @@ impl Render for WorkspacePaneHost {
                 cx,
                 &OpenTaskFilters,
                 self.graph_view.focus_handle(cx).is_focused(window),
-            );
+            )
+            && !task_composer_focused;
         let filter_tab_height = px(28.0);
         let keycap = |label: &'static str| {
             div()

@@ -1965,6 +1965,10 @@ impl SessionView {
         cx.notify();
     }
 
+    pub fn is_composer_focused(&self, window: &Window, cx: &App) -> bool {
+        self.composer_input.focus_handle(cx).is_focused(window)
+    }
+
     pub fn set_settings_menu_open(&mut self, open: bool, cx: &mut Context<Self>) {
         if open {
             self.open_session_settings_menu(cx);
