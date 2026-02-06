@@ -3160,9 +3160,7 @@ impl Render for GraphView {
 	                                                                                button_id,
 	                                                                                "Start agent",
 	                                                                            )
-	                                                                            .kind(
-	                                                                                ButtonKind::Secondary,
-	                                                                            )
+	                                                                            .kind(ButtonKind::Ghost)
 	                                                                            .small()
 	                                                                            .disabled(start_disabled)
 	                                                                            .disabled_reason(
@@ -3253,19 +3251,18 @@ impl Render for GraphView {
 	                                                                        );
 	                                                                    }
 
+	                                                                    row = row.child(
+	                                                                        TextButton::new(
+	                                                                            refresh_session_button_id,
+	                                                                            "Refresh session",
+	                                                                        )
+	                                                                        .kind(ButtonKind::Ghost)
+	                                                                        .small()
+	                                                                        .on_click(refresh_task_session),
+	                                                                    );
+
 	                                                                    row
-	                                                                })
-	                                                                .child(
-	                                                                    TextButton::new(
-	                                                                        refresh_session_button_id,
-	                                                                        "Refresh session",
-	                                                                    )
-	                                                                    .kind(ButtonKind::Ghost)
-	                                                                    .small()
-	                                                                    .on_click(
-	                                                                        refresh_task_session,
-	                                                                    ),
-	                                                                ),
+	                                                                }),
 	                                                            &theme,
 	                                                        ))
 	                                                        .child(div().h(theme.spacing.md)),
@@ -4064,19 +4061,26 @@ fn task_details_overview_section(
                 theme,
             ))
             .when_some(branch_name, |this, name| {
-                this.child(details_kv_row(
-                    "Branch",
+                this.child(
                     div()
-                        .items_center()
-                        .rounded(theme.radius.sm)
-                        .px(theme.spacing.xs)
-                        .py(px(2.0))
-                        .bg(theme.colors.surface_elevated.opacity(0.28))
-                        .font(theme.typography.mono.font.clone())
-                        .text_size(theme.typography.mono.size)
-                        .child(name),
-                    theme,
-                ))
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.0))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.colors.foreground_muted)
+                                .child("Branch"),
+                        )
+                        .child(
+                            div()
+                                .min_w_0()
+                                .font(theme.typography.mono.font.clone())
+                                .text_size(theme.typography.mono.size)
+                                .text_color(theme.colors.foreground)
+                                .child(name),
+                        ),
+                )
             })
             .when_some(
                 latest_command.and_then(|command| command.last_message),
