@@ -2601,6 +2601,7 @@ impl SessionView {
         self.session_settings_open = false;
         self.set_session_model_menu_index_from_selection();
         set_open_cascading_menu(Some(CascadingMenuId::SessionModel), cx);
+        window.focus(&self.focus_handle);
         cx.notify();
     }
 
@@ -2619,6 +2620,7 @@ impl SessionView {
         self.session_settings_open = false;
         self.set_session_reasoning_menu_index_from_selection();
         set_open_cascading_menu(Some(CascadingMenuId::SessionReasoning), cx);
+        window.focus(&self.focus_handle);
         cx.notify();
     }
 
