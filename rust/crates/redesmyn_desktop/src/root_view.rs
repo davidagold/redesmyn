@@ -30,8 +30,8 @@ use redesmyn_ui::components::{
     CascadingMenuRowStyle, CascadingMenuSecondarySide, CascadingMenuState,
     CascadingMenuSurfaceStyle, IconButton, OverlaySurfaceKind, ProgressPill, ScrollArea, SplitPane,
     SplitPaneAxis, SplitPaneEvent, SplitPaneResizeMode, SplitPaneState, TextButton, TextInput,
-    TextInputEvent, cascading_menu_checkbox_indicator, cascading_menu_row, cascading_menu_surface,
-    overlay_surface, set_open_cascading_menu,
+    TextInputEvent, cascading_menu_checkbox_indicator, cascading_menu_move_left_to_primary,
+    cascading_menu_row, cascading_menu_surface, overlay_surface, set_open_cascading_menu,
 };
 use redesmyn_ui::settings::ThemePreference;
 use redesmyn_ui::task_filters::{
@@ -4838,12 +4838,17 @@ impl WorkspacePaneHost {
                 self.task_filters_hovered_category = None;
             }
             TaskFiltersFocus::Values => {
-                self.task_filters_focus = TaskFiltersFocus::Categories;
-                self.task_filters_hovered_category = None;
-                self.task_filters_value_search = "".into();
-                self.task_filters_value_search_input
-                    .update(cx, |input, cx| input.set_text("", cx));
-                window.focus(&self.task_filters_search_input.focus_handle(cx));
+                if cascading_menu_move_left_to_primary(
+                    &mut self.task_filters_focus,
+                    TaskFiltersFocus::Values,
+                    TaskFiltersFocus::Categories,
+                    &mut self.task_filters_hovered_category,
+                ) {
+                    self.task_filters_value_search = "".into();
+                    self.task_filters_value_search_input
+                        .update(cx, |input, cx| input.set_text("", cx));
+                    window.focus(&self.task_filters_search_input.focus_handle(cx));
+                }
             }
             TaskFiltersFocus::Chips => {
                 self.move_task_filter_chip(-1);

@@ -46,8 +46,9 @@ use redesmyn_ui::components::{
     ButtonKind, Callout, CalloutKind, CascadingMenu, CascadingMenuId, CascadingMenuMetrics,
     CascadingMenuRowStyle, CascadingMenuState, CascadingMenuSurfaceStyle, Expandable, IconButton,
     MarkdownView, ScrollFade, ScrollbarStyle, StyledScrollbar, TextArea, TextButton, TextInput,
-    TextInputEvent, cascading_menu_radio_indicator, cascading_menu_row, cascading_menu_row_value,
-    cascading_menu_surface, cascading_select_menu_item, set_open_cascading_menu,
+    TextInputEvent, cascading_menu_row, cascading_menu_row_value, cascading_menu_surface,
+    cascading_menu_move_left_to_primary, cascading_menu_radio_indicator,
+    cascading_select_menu_item, set_open_cascading_menu,
 };
 use redesmyn_ui::styles::ThemeMode;
 use redesmyn_ui::utils::{
@@ -2792,8 +2793,12 @@ impl SessionView {
                 true
             }
             "left" => {
-                if self.session_settings_focus == SessionSettingsMenuFocus::Secondary {
-                    self.session_settings_focus = SessionSettingsMenuFocus::Primary;
+                if cascading_menu_move_left_to_primary(
+                    &mut self.session_settings_focus,
+                    SessionSettingsMenuFocus::Secondary,
+                    SessionSettingsMenuFocus::Primary,
+                    &mut self.session_settings_hovered,
+                ) {
                     cx.notify();
                     true
                 } else {
@@ -6880,10 +6885,10 @@ impl Render for SessionView {
                 .border_color(theme.colors.border.opacity(0.35))
                 .text_xs()
                 .text_color(theme.colors.foreground_muted)
-                .opacity(if enabled { 0.55 } else { 1.0 })
+                .opacity(if enabled { 1.0 } else { 0.4 })
                 .child(label)
         };
-        let selector_shortcut_fallback = false;
+        let selector_shortcut_fallback = self.composer_input.focus_handle(cx).is_focused(window);
         let model_shortcut_enabled = self
             .session_model_shortcut_availability
             .is_action_available_or(

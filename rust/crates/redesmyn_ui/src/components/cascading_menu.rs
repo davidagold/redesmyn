@@ -34,6 +34,28 @@ pub fn set_open_cascading_menu(menu: Option<CascadingMenuId>, cx: &mut impl Borr
     });
 }
 
+/// Shared keyboard behavior for two-level cascading menus:
+/// pressing Left while focused in the secondary pane returns focus to the primary pane and closes
+/// the secondary pane anchor.
+#[must_use]
+pub fn cascading_menu_move_left_to_primary<Focus, Category>(
+    focus: &mut Focus,
+    secondary_focus: Focus,
+    primary_focus: Focus,
+    hovered_category: &mut Option<Category>,
+) -> bool
+where
+    Focus: Copy + PartialEq,
+{
+    if *focus != secondary_focus {
+        return false;
+    }
+
+    *focus = primary_focus;
+    *hovered_category = None;
+    true
+}
+
 /// Visual styling defaults shared across cascading menus.
 #[derive(Debug, Clone, Copy)]
 pub struct CascadingMenuRowStyle {
