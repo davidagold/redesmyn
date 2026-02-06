@@ -386,7 +386,11 @@ fn build_inline_single_line_styled_text(
         }
 
         let background_color = atom_style.code.then_some(code_bg);
-        let color = if atom_style.code { code_color } else { default_color };
+        let color = if atom_style.code {
+            code_color
+        } else {
+            default_color
+        };
 
         runs.push(TextRun {
             len: atom_text.len(),
@@ -756,7 +760,11 @@ fn styled_text_div(
         }
 
         let background_color = atom_style.code.then_some(code_bg);
-        let color = if atom_style.code { code_color } else { default_color };
+        let color = if atom_style.code {
+            code_color
+        } else {
+            default_color
+        };
 
         runs.push(TextRun {
             len: atom_text.len(),
@@ -769,21 +777,17 @@ fn styled_text_div(
         text.push_str(&atom_text);
     }
 
-    div()
-        .id(id)
-        .min_w_0()
-        .flex_shrink()
-        .child(
-            RoundedStyledText::new(text)
-                .with_runs(runs)
-                .background_style(RoundedBackgroundStyle {
-                    corner_radius: theme.radius.sm,
-                    trim_horizontal: true,
-                    padding_x: px(5.0),
-                    padding_y: px(2.5),
-                    ..Default::default()
-                }),
-        )
+    div().id(id).min_w_0().flex_shrink().child(
+        RoundedStyledText::new(text)
+            .with_runs(runs)
+            .background_style(RoundedBackgroundStyle {
+                corner_radius: theme.radius.sm,
+                trim_horizontal: true,
+                padding_x: px(5.0),
+                padding_y: px(2.5),
+                ..Default::default()
+            }),
+    )
 }
 
 fn styled_text_block(
@@ -861,7 +865,11 @@ fn styled_text_block(
         }
 
         let background_color = atom_style.code.then_some(code_bg);
-        let color = if atom_style.code { code_color } else { default_color };
+        let color = if atom_style.code {
+            code_color
+        } else {
+            default_color
+        };
 
         runs.push(TextRun {
             len: atom_text.len(),
@@ -874,21 +882,17 @@ fn styled_text_block(
         text.push_str(&atom_text);
     }
 
-    div()
-        .id(id)
-        .min_w_0()
-        .w_full()
-        .child(
-            RoundedStyledText::new(text)
-                .with_runs(runs)
-                .background_style(RoundedBackgroundStyle {
-                    corner_radius: theme.radius.sm,
-                    trim_horizontal: true,
-                    padding_x: px(5.0),
-                    padding_y: px(2.5),
-                    ..Default::default()
-                }),
-        )
+    div().id(id).min_w_0().w_full().child(
+        RoundedStyledText::new(text)
+            .with_runs(runs)
+            .background_style(RoundedBackgroundStyle {
+                corner_radius: theme.radius.sm,
+                trim_horizontal: true,
+                padding_x: px(5.0),
+                padding_y: px(2.5),
+                ..Default::default()
+            }),
+    )
 }
 
 enum InlineItem {

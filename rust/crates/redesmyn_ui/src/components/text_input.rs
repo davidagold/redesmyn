@@ -2784,24 +2784,22 @@ impl Render for TextArea {
             .line_height(line_height)
             .text_size(window.text_style().font_size)
             .text_left()
-            .child(
-                StyledScrollbar::for_scroll_handle(
-                    ("text_area_scrollbar", cx.entity_id()),
-                    self.scroll_handle.clone(),
-                    div()
-                        .id(("text_area_scroll", cx.entity_id()))
-                        .min_h(min_h)
-                        .max_h(max_h)
-                        .w_full()
-                        .overflow_y_scroll()
-                        .track_scroll(&self.scroll_handle)
-                        .px(theme.spacing.sm)
-                        .pt(content_pt)
-                        .pb(content_pb)
-                        .text_left()
-                        .child(TextAreaElement { input: cx.entity() }),
-                ),
-            )
+            .child(StyledScrollbar::for_scroll_handle(
+                ("text_area_scrollbar", cx.entity_id()),
+                self.scroll_handle.clone(),
+                div()
+                    .id(("text_area_scroll", cx.entity_id()))
+                    .min_h(min_h)
+                    .max_h(max_h)
+                    .w_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll_handle)
+                    .px(theme.spacing.sm)
+                    .pt(content_pt)
+                    .pb(content_pb)
+                    .text_left()
+                    .child(TextAreaElement { input: cx.entity() }),
+            ))
     }
 }
 

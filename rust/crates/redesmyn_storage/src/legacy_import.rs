@@ -128,7 +128,9 @@ struct LegacySessionPreviewPlan {
     created_at_ms: i64,
 }
 
-pub async fn import_legacy(options: ImportLegacyOptions) -> Result<ImportLegacyOutcome, StorageError> {
+pub async fn import_legacy(
+    options: ImportLegacyOptions,
+) -> Result<ImportLegacyOutcome, StorageError> {
     let repo_root_display = options.repo_root.display().to_string();
     let legacy_db_display = options.legacy_db_path.display().to_string();
     let rust_db_display = options.rust_db_path.display().to_string();
@@ -365,15 +367,16 @@ async fn import_into_rust_db(
     let schema_features = detect_rust_schema_features(conn).await?;
 
     for task in &legacy_tasks {
-        let epic_id = epic_id_by_legacy_id.get(&task.epic_id).copied().ok_or_else(|| {
-            StorageError::InvalidData {
+        let epic_id = epic_id_by_legacy_id
+            .get(&task.epic_id)
+            .copied()
+            .ok_or_else(|| StorageError::InvalidData {
                 message: format!(
                     "legacy task references missing epic_id: task_id={task_id} epic_id={epic_id}",
                     task_id = task.id,
                     epic_id = task.epic_id
                 ),
-            }
-        })?;
+            })?;
 
         let task_ulid = get_or_create_mapped_ulid(conn, now_ms, "tasks", task.id).await?;
         let task_id = TaskId::from_ulid(task_ulid);
@@ -858,8 +861,8 @@ async fn plan_legacy_session_previews(
 fn parse_rfc3339_ms(value: &str) -> Option<i64> {
     // Keep parsing lightweight: accept the common `"2026-01-20T12:34:56.789Z"` shape.
     // If it fails, fall back to "now" without failing the import.
-    let parsed = time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339)
-        .ok()?;
+    let parsed =
+        time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).ok()?;
     let millis = parsed.unix_timestamp_nanos() / 1_000_000;
     i64::try_from(millis).ok()
 }
@@ -882,9 +885,7 @@ async fn read_legacy_alembic_version(pool: &SqlitePool) -> Result<Option<String>
     Ok(version)
 }
 
-async fn read_sqlx_schema_version_if_present(
-    db_path: &Path,
-) -> Result<Option<i64>, StorageError> {
+async fn read_sqlx_schema_version_if_present(db_path: &Path) -> Result<Option<i64>, StorageError> {
     if !db_path.exists() {
         return Ok(None);
     }
@@ -1032,18 +1033,22 @@ impl LegacyDbSnapshot {
             source: err,
         })?;
 
-        let file_name = legacy_db_path.file_name().ok_or_else(|| StorageError::InvalidData {
-            message: format!(
-                "legacy DB path does not have a file name: {}",
-                legacy_db_path.display()
-            ),
-        })?;
+        let file_name = legacy_db_path
+            .file_name()
+            .ok_or_else(|| StorageError::InvalidData {
+                message: format!(
+                    "legacy DB path does not have a file name: {}",
+                    legacy_db_path.display()
+                ),
+            })?;
 
         let snapshot_db_path = dir.path().join(file_name);
 
-        std::fs::copy(legacy_db_path, &snapshot_db_path).map_err(|err| StorageError::LegacyDbSnapshot {
-            path: legacy_db_path.to_path_buf(),
-            source: err,
+        std::fs::copy(legacy_db_path, &snapshot_db_path).map_err(|err| {
+            StorageError::LegacyDbSnapshot {
+                path: legacy_db_path.to_path_buf(),
+                source: err,
+            }
         })?;
 
         for suffix in ["-wal", "-shm"] {
@@ -1129,9 +1134,7 @@ async fn sqlite_column_exists(
         });
     }
 
-    let query = format!(
-        "SELECT 1 FROM pragma_table_info('{table_name}') WHERE name = ?1 LIMIT 1"
-    );
+    let query = format!("SELECT 1 FROM pragma_table_info('{table_name}') WHERE name = ?1 LIMIT 1");
 
     let found: Option<i64> = sqlx::query_scalar(&query)
         .bind(column_name)
@@ -1292,9 +1295,7 @@ async fn ensure_agent_session(
         });
     }
 
-    let exists_sql = format!(
-        "SELECT 1 FROM agent_sessions WHERE {pk_column} = ?1 LIMIT 1"
-    );
+    let exists_sql = format!("SELECT 1 FROM agent_sessions WHERE {pk_column} = ?1 LIMIT 1");
     let exists: Option<i64> = sqlx::query_scalar(&exists_sql)
         .bind(session_id)
         .fetch_optional(&mut *conn)
@@ -1322,7 +1323,10 @@ enum AgentSessionValueKind {
     TimestampNowMs,
 }
 
-fn agent_session_value_kind(schema: &AgentSessionsSchema, column: &str) -> Option<AgentSessionValueKind> {
+fn agent_session_value_kind(
+    schema: &AgentSessionsSchema,
+    column: &str,
+) -> Option<AgentSessionValueKind> {
     if column == schema.pk_column {
         return Some(AgentSessionValueKind::SessionId);
     }
@@ -1335,10 +1339,14 @@ fn agent_session_value_kind(schema: &AgentSessionsSchema, column: &str) -> Optio
         "workspace_id" if !schema.columns.contains("scope_workspace_id") => {
             Some(AgentSessionValueKind::WorkspaceId)
         }
-        "repo_id" if !schema.columns.contains("scope_repo_id") => Some(AgentSessionValueKind::RepoId),
+        "repo_id" if !schema.columns.contains("scope_repo_id") => {
+            Some(AgentSessionValueKind::RepoId)
+        }
         "agent_kind" => Some(AgentSessionValueKind::AgentKindShell),
         "status" => Some(AgentSessionValueKind::StatusStopped),
-        "created_at_ms" | "updated_at_ms" | "ended_at_ms" => Some(AgentSessionValueKind::TimestampNowMs),
+        "created_at_ms" | "updated_at_ms" | "ended_at_ms" => {
+            Some(AgentSessionValueKind::TimestampNowMs)
+        }
         _ => None,
     }
 }

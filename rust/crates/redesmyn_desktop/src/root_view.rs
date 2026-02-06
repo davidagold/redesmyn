@@ -10,6 +10,7 @@ use gpui::{
 };
 use tokio::sync::{mpsc, watch};
 
+use redesmyn_protocol::client::{ModelReasoningEffort, SessionModelSelection};
 use redesmyn_protocol::ui_driver::{
     CaptureScreenshotResponse, ClearGraphSelectionResponse, CreateChatSessionResponse,
     MultiSelectAddNodeResponse, MultiSelectRemoveNodeResponse, SelectGraphNodeResponse,
@@ -19,7 +20,6 @@ use redesmyn_protocol::ui_driver::{
     UiSnapshotPredicate, WaitForUiIdleRequest, WaitForUiIdleResponse, WaitForUiSnapshotRequest,
     WaitForUiSnapshotResponse,
 };
-use redesmyn_protocol::client::{ModelReasoningEffort, SessionModelSelection};
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, RepoScope, Timestamp};
 use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 use redesmyn_ui_session::SessionView;
@@ -30,8 +30,8 @@ use redesmyn_ui::components::{
     CascadingMenuRowStyle, CascadingMenuSecondarySide, CascadingMenuState,
     CascadingMenuSurfaceStyle, IconButton, OverlaySurfaceKind, ProgressPill, ScrollArea, SplitPane,
     SplitPaneAxis, SplitPaneEvent, SplitPaneResizeMode, SplitPaneState, TextButton, TextInput,
-    TextInputEvent, cascading_menu_checkbox_indicator, cascading_menu_row,
-    cascading_menu_surface, overlay_surface, set_open_cascading_menu,
+    TextInputEvent, cascading_menu_checkbox_indicator, cascading_menu_row, cascading_menu_surface,
+    overlay_surface, set_open_cascading_menu,
 };
 use redesmyn_ui::settings::ThemePreference;
 use redesmyn_ui::task_filters::{
@@ -49,7 +49,9 @@ use crate::command_palette::{
     CloseCommandPalette, SelectNextCommand, SelectPreviousCommand, ToggleCommandPalette,
 };
 use crate::control_plane_client::{ControlPlaneClient, ControlPlaneClientError};
-use crate::orchestration_config::{CodexReasoningEffortDefault, load_effective_defaults, repo_root_from_cwd};
+use crate::orchestration_config::{
+    CodexReasoningEffortDefault, load_effective_defaults, repo_root_from_cwd,
+};
 use crate::settings_dialog_keys::{CloseSettingsDialog, ToggleSettingsDialog};
 use crate::task_filters::{
     CloseTaskFilters, OpenTaskFilters, TaskFiltersActivate, TaskFiltersClearFocusedChip,
@@ -202,9 +204,9 @@ impl RootView {
 
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.observe_global::<UiContext>(|this, cx| this.notify_ui_updated(cx)));
-        subscriptions.push(cx.observe_global::<CascadingMenuState>(|this, cx| {
-            this.sync_cascading_menu_state(cx)
-        }));
+        subscriptions.push(
+            cx.observe_global::<CascadingMenuState>(|this, cx| this.sync_cascading_menu_state(cx)),
+        );
 
         subscriptions.push(cx.subscribe(&split_pane, |this, _, event, cx| match event {
             SplitPaneEvent::StateChanged(state) => {
@@ -433,8 +435,8 @@ impl RootView {
         self.settings_dialog.set_codex_model_options_loading(true);
         cx.notify();
 
-        self.settings_model_catalog_task = Some(cx.spawn(
-            move |weak: WeakEntity<Self>, cx: &mut AsyncApp| {
+        self.settings_model_catalog_task =
+            Some(cx.spawn(move |weak: WeakEntity<Self>, cx: &mut AsyncApp| {
                 let cx = cx.clone();
                 async move {
                     let result = async {
@@ -478,8 +480,7 @@ impl RootView {
                         });
                     });
                 }
-            },
-        ));
+            }));
     }
 
     fn sync_cascading_menu_state(&mut self, cx: &mut Context<Self>) {
@@ -510,8 +511,9 @@ impl RootView {
         });
 
         self.session_pane.update(cx, |pane, cx| {
-            pane.session_view
-                .update(cx, |view, cx| view.set_settings_menu_open(session_settings_should_open, cx));
+            pane.session_view.update(cx, |view, cx| {
+                view.set_settings_menu_open(session_settings_should_open, cx)
+            });
         });
 
         self.notify_ui_updated(cx);
@@ -1770,10 +1772,8 @@ async fn handle_ui_driver_request(
         }
         UiDriverRequestPayload::TaskFiltersMenuSetOpen(req) => {
             let open = req.open;
-            let span = redesmyn_logging::redesmyn_info_span!(
-                "ui_driver.task_filters_menu_set_open",
-                open
-            );
+            let span =
+                redesmyn_logging::redesmyn_info_span!("ui_driver.task_filters_menu_set_open", open);
             let _guard = span.enter();
 
             let result: Result<(), ErrorEnvelope> = match cx.update(|cx| {
@@ -3019,7 +3019,8 @@ impl Render for RootView {
             .read(cx)
             .session_model_options_snapshot();
         if !codex_model_options.is_empty() {
-            self.settings_dialog.set_codex_model_options(codex_model_options);
+            self.settings_dialog
+                .set_codex_model_options(codex_model_options);
         }
         if settings_open
             && self.settings_dialog.codex_model_options().is_empty()
@@ -5446,8 +5447,7 @@ impl Render for WorkspacePaneHost {
                                 None
                             };
 
-                            let arrow = div()
-                                .child("›");
+                            let arrow = div().child("›");
 
                             let row = cascading_menu_row(
                                 &theme,
@@ -5461,64 +5461,61 @@ impl Render for WorkspacePaneHost {
                                 gpui::ElementId::from(("task_filters_category", entity_id)),
                                 category.title(),
                             ))
-                                .cursor_pointer()
-                                .on_mouse_move(cx.listener(move |this, _, _, cx| {
-                                    let mut did_change = false;
-                                    if this.task_filters_input_source
-                                        != TaskFiltersInputSource::Mouse
-                                    {
-                                        this.task_filters_input_source =
-                                            TaskFiltersInputSource::Mouse;
-                                        did_change = true;
-                                    }
-                                    if this.task_filters_active_category != category {
-                                        this.task_filters_active_category = category;
-                                        did_change = true;
-                                    }
-                                    if this.task_filters_hovered_category != Some(category) {
-                                        this.task_filters_hovered_category = Some(category);
-                                        did_change = true;
-                                    }
-                                    if this.task_filters_focus != TaskFiltersFocus::Categories {
-                                        this.task_filters_focus = TaskFiltersFocus::Categories;
-                                        did_change = true;
-                                    }
+                            .cursor_pointer()
+                            .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                                let mut did_change = false;
+                                if this.task_filters_input_source != TaskFiltersInputSource::Mouse {
+                                    this.task_filters_input_source = TaskFiltersInputSource::Mouse;
+                                    did_change = true;
+                                }
+                                if this.task_filters_active_category != category {
+                                    this.task_filters_active_category = category;
+                                    did_change = true;
+                                }
+                                if this.task_filters_hovered_category != Some(category) {
+                                    this.task_filters_hovered_category = Some(category);
+                                    did_change = true;
+                                }
+                                if this.task_filters_focus != TaskFiltersFocus::Categories {
+                                    this.task_filters_focus = TaskFiltersFocus::Categories;
+                                    did_change = true;
+                                }
 
-                                    if did_change {
+                                if did_change {
+                                    this.task_filters_active_value_index = 0;
+                                    this.task_filters_value_search = "".into();
+                                    this.task_filters_value_search_input
+                                        .update(cx, |input, cx| input.set_text("", cx));
+                                    cx.notify();
+                                }
+                            }))
+                            .on_mouse_down(gpui::MouseButton::Left, {
+                                let workspace = workspace.clone();
+                                move |_, window, cx| {
+                                    let focus = workspace.update(cx, |this, cx| {
+                                        this.task_filters_active_category = category;
+                                        this.task_filters_hovered_category = Some(category);
+                                        this.task_filters_focus = TaskFiltersFocus::Values;
                                         this.task_filters_active_value_index = 0;
                                         this.task_filters_value_search = "".into();
                                         this.task_filters_value_search_input
                                             .update(cx, |input, cx| input.set_text("", cx));
                                         cx.notify();
-                                    }
-                                }))
-                                .on_mouse_down(gpui::MouseButton::Left, {
-                                    let workspace = workspace.clone();
-                                    move |_, window, cx| {
-                                        let focus = workspace.update(cx, |this, cx| {
-                                            this.task_filters_active_category = category;
-                                            this.task_filters_hovered_category = Some(category);
-                                            this.task_filters_focus = TaskFiltersFocus::Values;
-                                            this.task_filters_active_value_index = 0;
-                                            this.task_filters_value_search = "".into();
-                                            this.task_filters_value_search_input
-                                                .update(cx, |input, cx| input.set_text("", cx));
-                                            cx.notify();
-                                            this.task_filters_focus_handle.clone()
-                                        });
-                                        window.focus(&focus);
-                                    }
-                                })
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .text_color(theme.colors.foreground)
-                                        .truncate()
-                                        .child(category.title()),
-                                )
-                                .when_some(badge, |this, badge| this.child(badge))
-                                .child(arrow);
+                                        this.task_filters_focus_handle.clone()
+                                    });
+                                    window.focus(&focus);
+                                }
+                            })
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_color(theme.colors.foreground)
+                                    .truncate()
+                                    .child(category.title()),
+                            )
+                            .when_some(badge, |this, badge| this.child(badge))
+                            .child(arrow);
 
                             category_list = category_list.child(row);
                         }
@@ -5645,60 +5642,56 @@ impl Render for WorkspacePaneHost {
                                                     == TaskFiltersInputSource::Keyboard,
                                             hover_opacity,
                                         )
-                                            .id(row_id)
-                                            .cursor_pointer()
-                                            .on_mouse_move(cx.listener(move |this, _, _, cx| {
-                                                let mut did_change = false;
-                                                if this.task_filters_input_source
-                                                    != TaskFiltersInputSource::Mouse
-                                                {
-                                                    this.task_filters_input_source =
-                                                        TaskFiltersInputSource::Mouse;
-                                                    did_change = true;
-                                                }
-                                                if this.task_filters_active_value_index
-                                                    != display_index
-                                                {
-                                                    this.task_filters_active_value_index =
-                                                        display_index;
-                                                    did_change = true;
-                                                }
-                                                if this.task_filters_focus
-                                                    != TaskFiltersFocus::Values
-                                                {
+                                        .id(row_id)
+                                        .cursor_pointer()
+                                        .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                                            let mut did_change = false;
+                                            if this.task_filters_input_source
+                                                != TaskFiltersInputSource::Mouse
+                                            {
+                                                this.task_filters_input_source =
+                                                    TaskFiltersInputSource::Mouse;
+                                                did_change = true;
+                                            }
+                                            if this.task_filters_active_value_index != display_index
+                                            {
+                                                this.task_filters_active_value_index =
+                                                    display_index;
+                                                did_change = true;
+                                            }
+                                            if this.task_filters_focus != TaskFiltersFocus::Values {
+                                                this.task_filters_focus = TaskFiltersFocus::Values;
+                                                did_change = true;
+                                            }
+                                            if did_change {
+                                                cx.notify();
+                                            }
+                                        }))
+                                        .on_mouse_down(gpui::MouseButton::Left, {
+                                            let workspace = workspace.clone();
+                                            move |_, _, cx| {
+                                                workspace.update(cx, |this, cx| {
                                                     this.task_filters_focus =
                                                         TaskFiltersFocus::Values;
-                                                    did_change = true;
-                                                }
-                                                if did_change {
-                                                    cx.notify();
-                                                }
-                                            }))
-                                            .on_mouse_down(gpui::MouseButton::Left, {
-                                                let workspace = workspace.clone();
-                                                move |_, _, cx| {
-                                                    workspace.update(cx, |this, cx| {
-                                                        this.task_filters_focus =
-                                                            TaskFiltersFocus::Values;
-                                                        this.task_filters_active_value_index =
-                                                            display_index;
-                                                        this.toggle_task_state_filter(value, cx);
-                                                    });
-                                                }
-                                            })
-                                            .child(cascading_menu_checkbox_indicator(
-                                                &theme,
-                                                selected,
-                                                highlighted,
-                                            ))
-                                            .child(
-                                                div()
-                                                    .flex_1()
-                                                    .min_w_0()
-                                                    .text_color(theme.colors.foreground)
-                                                    .truncate()
-                                                    .child(label),
-                                            );
+                                                    this.task_filters_active_value_index =
+                                                        display_index;
+                                                    this.toggle_task_state_filter(value, cx);
+                                                });
+                                            }
+                                        })
+                                        .child(cascading_menu_checkbox_indicator(
+                                            &theme,
+                                            selected,
+                                            highlighted,
+                                        ))
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .text_color(theme.colors.foreground)
+                                                .truncate()
+                                                .child(label),
+                                        );
 
                                         value_list = value_list.child(row);
                                     }
@@ -5748,62 +5741,56 @@ impl Render for WorkspacePaneHost {
                                                     == TaskFiltersInputSource::Keyboard,
                                             hover_opacity,
                                         )
-                                            .id(row_id)
-                                            .cursor_pointer()
-                                            .on_mouse_move(cx.listener(move |this, _, _, cx| {
-                                                let mut did_change = false;
-                                                if this.task_filters_input_source
-                                                    != TaskFiltersInputSource::Mouse
-                                                {
-                                                    this.task_filters_input_source =
-                                                        TaskFiltersInputSource::Mouse;
-                                                    did_change = true;
-                                                }
-                                                if this.task_filters_active_value_index
-                                                    != display_index
-                                                {
-                                                    this.task_filters_active_value_index =
-                                                        display_index;
-                                                    did_change = true;
-                                                }
-                                                if this.task_filters_focus
-                                                    != TaskFiltersFocus::Values
-                                                {
+                                        .id(row_id)
+                                        .cursor_pointer()
+                                        .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                                            let mut did_change = false;
+                                            if this.task_filters_input_source
+                                                != TaskFiltersInputSource::Mouse
+                                            {
+                                                this.task_filters_input_source =
+                                                    TaskFiltersInputSource::Mouse;
+                                                did_change = true;
+                                            }
+                                            if this.task_filters_active_value_index != display_index
+                                            {
+                                                this.task_filters_active_value_index =
+                                                    display_index;
+                                                did_change = true;
+                                            }
+                                            if this.task_filters_focus != TaskFiltersFocus::Values {
+                                                this.task_filters_focus = TaskFiltersFocus::Values;
+                                                did_change = true;
+                                            }
+                                            if did_change {
+                                                cx.notify();
+                                            }
+                                        }))
+                                        .on_mouse_down(gpui::MouseButton::Left, {
+                                            let workspace = workspace.clone();
+                                            move |_, _, cx| {
+                                                workspace.update(cx, |this, cx| {
                                                     this.task_filters_focus =
                                                         TaskFiltersFocus::Values;
-                                                    did_change = true;
-                                                }
-                                                if did_change {
-                                                    cx.notify();
-                                                }
-                                            }))
-                                            .on_mouse_down(gpui::MouseButton::Left, {
-                                                let workspace = workspace.clone();
-                                                move |_, _, cx| {
-                                                    workspace.update(cx, |this, cx| {
-                                                        this.task_filters_focus =
-                                                            TaskFiltersFocus::Values;
-                                                        this.task_filters_active_value_index =
-                                                            display_index;
-                                                        this.toggle_merge_readiness_filter(
-                                                            value, cx,
-                                                        );
-                                                    });
-                                                }
-                                            })
-                                            .child(cascading_menu_checkbox_indicator(
-                                                &theme,
-                                                selected,
-                                                highlighted,
-                                            ))
-                                            .child(
-                                                div()
-                                                    .flex_1()
-                                                    .min_w_0()
-                                                    .text_color(theme.colors.foreground)
-                                                    .truncate()
-                                                    .child(label),
-                                            );
+                                                    this.task_filters_active_value_index =
+                                                        display_index;
+                                                    this.toggle_merge_readiness_filter(value, cx);
+                                                });
+                                            }
+                                        })
+                                        .child(cascading_menu_checkbox_indicator(
+                                            &theme,
+                                            selected,
+                                            highlighted,
+                                        ))
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .text_color(theme.colors.foreground)
+                                                .truncate()
+                                                .child(label),
+                                        );
 
                                         value_list = value_list.child(row);
                                     }
@@ -5853,60 +5840,56 @@ impl Render for WorkspacePaneHost {
                                                     == TaskFiltersInputSource::Keyboard,
                                             hover_opacity,
                                         )
-                                            .id(row_id)
-                                            .cursor_pointer()
-                                            .on_mouse_move(cx.listener(move |this, _, _, cx| {
-                                                let mut did_change = false;
-                                                if this.task_filters_input_source
-                                                    != TaskFiltersInputSource::Mouse
-                                                {
-                                                    this.task_filters_input_source =
-                                                        TaskFiltersInputSource::Mouse;
-                                                    did_change = true;
-                                                }
-                                                if this.task_filters_active_value_index
-                                                    != display_index
-                                                {
-                                                    this.task_filters_active_value_index =
-                                                        display_index;
-                                                    did_change = true;
-                                                }
-                                                if this.task_filters_focus
-                                                    != TaskFiltersFocus::Values
-                                                {
+                                        .id(row_id)
+                                        .cursor_pointer()
+                                        .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                                            let mut did_change = false;
+                                            if this.task_filters_input_source
+                                                != TaskFiltersInputSource::Mouse
+                                            {
+                                                this.task_filters_input_source =
+                                                    TaskFiltersInputSource::Mouse;
+                                                did_change = true;
+                                            }
+                                            if this.task_filters_active_value_index != display_index
+                                            {
+                                                this.task_filters_active_value_index =
+                                                    display_index;
+                                                did_change = true;
+                                            }
+                                            if this.task_filters_focus != TaskFiltersFocus::Values {
+                                                this.task_filters_focus = TaskFiltersFocus::Values;
+                                                did_change = true;
+                                            }
+                                            if did_change {
+                                                cx.notify();
+                                            }
+                                        }))
+                                        .on_mouse_down(gpui::MouseButton::Left, {
+                                            let workspace = workspace.clone();
+                                            move |_, _, cx| {
+                                                workspace.update(cx, |this, cx| {
                                                     this.task_filters_focus =
                                                         TaskFiltersFocus::Values;
-                                                    did_change = true;
-                                                }
-                                                if did_change {
-                                                    cx.notify();
-                                                }
-                                            }))
-                                            .on_mouse_down(gpui::MouseButton::Left, {
-                                                let workspace = workspace.clone();
-                                                move |_, _, cx| {
-                                                    workspace.update(cx, |this, cx| {
-                                                        this.task_filters_focus =
-                                                            TaskFiltersFocus::Values;
-                                                        this.task_filters_active_value_index =
-                                                            display_index;
-                                                        this.toggle_agent_status_filter(value, cx);
-                                                    });
-                                                }
-                                            })
-                                            .child(cascading_menu_checkbox_indicator(
-                                                &theme,
-                                                selected,
-                                                highlighted,
-                                            ))
-                                            .child(
-                                                div()
-                                                    .flex_1()
-                                                    .min_w_0()
-                                                    .text_color(theme.colors.foreground)
-                                                    .truncate()
-                                                    .child(label),
-                                            );
+                                                    this.task_filters_active_value_index =
+                                                        display_index;
+                                                    this.toggle_agent_status_filter(value, cx);
+                                                });
+                                            }
+                                        })
+                                        .child(cascading_menu_checkbox_indicator(
+                                            &theme,
+                                            selected,
+                                            highlighted,
+                                        ))
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .text_color(theme.colors.foreground)
+                                                .truncate()
+                                                .child(label),
+                                        );
 
                                         value_list = value_list.child(row);
                                     }

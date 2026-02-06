@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use redesmyn_logging::tracing;
 use redesmyn_protocol::DaemonHello;
-use redesmyn_protocol::daemon::{CommandDispatch, ControlPlaneHelloAck, DaemonFrame, DaemonMessage};
+use redesmyn_protocol::daemon::{
+    CommandDispatch, ControlPlaneHelloAck, DaemonFrame, DaemonMessage,
+};
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, ProtocolEnvelope, ProtocolVersion};
 use redesmyn_transport::{DaemonConnection, TransportError};
 use tokio::sync::{mpsc, watch};

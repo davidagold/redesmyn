@@ -229,10 +229,9 @@ struct SqliteIndexInfoRow {
 }
 
 async fn legacy_id_map_schema_matches(pool: &SqlitePool) -> Result<bool, StorageError> {
-    let columns: Vec<SqliteTableInfoRow> =
-        sqlx::query_as("PRAGMA table_info(legacy_id_map);")
-            .fetch_all(pool)
-            .await?;
+    let columns: Vec<SqliteTableInfoRow> = sqlx::query_as("PRAGMA table_info(legacy_id_map);")
+        .fetch_all(pool)
+        .await?;
     if columns.is_empty() {
         return Ok(false);
     }

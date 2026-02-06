@@ -275,10 +275,7 @@ fn parse_blocks<'a>(
                     if let Some(BlockContext::Paragraph { mut inlines }) = stack.pop() {
                         inlines.observe_offset_range(&event_range);
                         let (content, range) = inlines.finish_with_range();
-                        push_block(
-                            &mut stack,
-                            MarkdownBlock::Paragraph { range, content },
-                        );
+                        push_block(&mut stack, MarkdownBlock::Paragraph { range, content });
                     }
                 }
                 TagEnd::Heading(_) => {
@@ -754,7 +751,9 @@ impl BlockContext {
 
     fn ensure_inline_builder_mut(&mut self) -> Option<&mut InlineBuilder> {
         match self {
-            BlockContext::Paragraph { .. } | BlockContext::Heading { .. } => self.inline_builder_mut(),
+            BlockContext::Paragraph { .. } | BlockContext::Heading { .. } => {
+                self.inline_builder_mut()
+            }
             BlockContext::Root { tight_inlines, .. }
             | BlockContext::BlockQuote { tight_inlines, .. }
             | BlockContext::ListItem { tight_inlines, .. } => {
@@ -778,8 +777,7 @@ impl BlockContext {
             BlockContext::Root {
                 blocks,
                 tight_inlines,
-            }
-            => {
+            } => {
                 flush_tight_inlines(blocks, tight_inlines);
             }
             BlockContext::BlockQuote {
@@ -835,7 +833,10 @@ impl InlineBuilder {
     }
 
     fn end_emphasis(&mut self, range: &Range<usize>) {
-        self.end_frame(range, |range, content| MarkdownInline::Emphasis { range, content });
+        self.end_frame(range, |range, content| MarkdownInline::Emphasis {
+            range,
+            content,
+        });
     }
 
     fn start_strong(&mut self, range: &Range<usize>) {
@@ -845,7 +846,10 @@ impl InlineBuilder {
     }
 
     fn end_strong(&mut self, range: &Range<usize>) {
-        self.end_frame(range, |range, content| MarkdownInline::Strong { range, content });
+        self.end_frame(range, |range, content| MarkdownInline::Strong {
+            range,
+            content,
+        });
     }
 
     fn start_link(&mut self, destination: String, range: &Range<usize>) {
@@ -984,10 +988,7 @@ mod tests {
             MarkdownParseOptions::default(),
         );
 
-        let MarkdownBlock::Heading {
-            level, content, ..
-        } = &doc.blocks[0]
-        else {
+        let MarkdownBlock::Heading { level, content, .. } = &doc.blocks[0] else {
             panic!("expected heading");
         };
         assert_eq!(*level, 1);
@@ -996,16 +997,28 @@ mod tests {
             [MarkdownInline::Text { text, .. }] if text == "Title"
         ));
 
-        let MarkdownBlock::Paragraph { content: inlines, .. } = &doc.blocks[1] else {
+        let MarkdownBlock::Paragraph {
+            content: inlines, ..
+        } = &doc.blocks[1]
+        else {
             panic!("expected paragraph");
         };
 
-        assert!(inlines.iter().any(|inline| matches!(
-            inline,
-            MarkdownInline::Emphasis { .. }
-        )));
-        assert!(inlines.iter().any(|inline| matches!(inline, MarkdownInline::Strong { .. })));
-        assert!(inlines.iter().any(|inline| matches!(inline, MarkdownInline::Code { .. })));
+        assert!(
+            inlines
+                .iter()
+                .any(|inline| matches!(inline, MarkdownInline::Emphasis { .. }))
+        );
+        assert!(
+            inlines
+                .iter()
+                .any(|inline| matches!(inline, MarkdownInline::Strong { .. }))
+        );
+        assert!(
+            inlines
+                .iter()
+                .any(|inline| matches!(inline, MarkdownInline::Code { .. }))
+        );
     }
 
     #[test]
@@ -1015,12 +1028,14 @@ mod tests {
             MarkdownParseOptions::default(),
         );
 
-        let [MarkdownBlock::CodeBlock {
-            language,
-            info_raw,
-            code,
-            ..
-        }] = doc.blocks.as_slice()
+        let [
+            MarkdownBlock::CodeBlock {
+                language,
+                info_raw,
+                code,
+                ..
+            },
+        ] = doc.blocks.as_slice()
         else {
             panic!("expected single code block");
         };
@@ -1036,12 +1051,14 @@ mod tests {
             MarkdownParseOptions::default(),
         );
 
-        let [MarkdownBlock::CodeBlock {
-            language,
-            info_raw,
-            code,
-            ..
-        }] = doc.blocks.as_slice()
+        let [
+            MarkdownBlock::CodeBlock {
+                language,
+                info_raw,
+                code,
+                ..
+            },
+        ] = doc.blocks.as_slice()
         else {
             panic!("expected single code block");
         };
@@ -1058,9 +1075,11 @@ mod tests {
             MarkdownParseOptions::default(),
         );
 
-        let [MarkdownBlock::CodeBlock {
-            language, info_raw, ..
-        }] = doc.blocks.as_slice()
+        let [
+            MarkdownBlock::CodeBlock {
+                language, info_raw, ..
+            },
+        ] = doc.blocks.as_slice()
         else {
             panic!("expected single code block");
         };
@@ -1076,23 +1095,31 @@ mod tests {
             MarkdownParseOptions::default(),
         );
 
-        let [MarkdownBlock::BlockQuote { content: blocks, .. }] = doc.blocks.as_slice() else {
+        let [
+            MarkdownBlock::BlockQuote {
+                content: blocks, ..
+            },
+        ] = doc.blocks.as_slice()
+        else {
             panic!("expected single block quote");
         };
 
-        assert!(blocks.iter().any(|block| matches!(block, MarkdownBlock::Paragraph { .. })));
-        assert!(blocks.iter().any(|block| matches!(block, MarkdownBlock::List { .. })));
+        assert!(
+            blocks
+                .iter()
+                .any(|block| matches!(block, MarkdownBlock::Paragraph { .. }))
+        );
+        assert!(
+            blocks
+                .iter()
+                .any(|block| matches!(block, MarkdownBlock::List { .. }))
+        );
     }
 
     #[test]
     fn truncates_large_inputs() {
         let input = "a".repeat(50);
-        let doc = parse_markdown(
-            &input,
-            MarkdownParseOptions {
-                max_input_len: 10,
-            },
-        );
+        let doc = parse_markdown(&input, MarkdownParseOptions { max_input_len: 10 });
 
         assert_eq!(
             doc.truncation,
@@ -1107,20 +1134,24 @@ mod tests {
     fn records_source_ranges_for_simple_text() {
         let doc = parse_markdown("Hello", MarkdownParseOptions::default());
 
-        let [MarkdownBlock::Paragraph {
-            range: Some(range),
-            content,
-        }] = doc.blocks.as_slice()
+        let [
+            MarkdownBlock::Paragraph {
+                range: Some(range),
+                content,
+            },
+        ] = doc.blocks.as_slice()
         else {
             panic!("expected a ranged paragraph");
         };
 
         assert!(range.end > range.start);
 
-        let [MarkdownInline::Text {
-            range: Some(text_range),
-            text,
-        }] = content.as_slice()
+        let [
+            MarkdownInline::Text {
+                range: Some(text_range),
+                text,
+            },
+        ] = content.as_slice()
         else {
             panic!("expected a ranged text inline");
         };

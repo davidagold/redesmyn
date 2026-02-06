@@ -404,9 +404,11 @@ async fn send_message_emits_live_assistant_deltas() {
     assert_eq!(response, AppServerResponse::MessageAccepted);
 
     let live_events = collect_live_events(&mut frames_rx, session_id, Duration::from_secs(2)).await;
-    assert!(live_events
-        .iter()
-        .all(|event| event.item_id.as_deref() == Some("test_item")));
+    assert!(
+        live_events
+            .iter()
+            .all(|event| event.item_id.as_deref() == Some("test_item"))
+    );
     assert_eq!(
         live_events
             .into_iter()

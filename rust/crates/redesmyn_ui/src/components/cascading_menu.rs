@@ -1,7 +1,7 @@
 use gpui::{AnyElement, Div, Global, Pixels, RenderOnce, Window, div, prelude::*, px};
 
-use crate::styles::UiTheme;
 use super::overlay_surface::{OverlaySurfaceKind, overlay_surface};
+use crate::styles::UiTheme;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CascadingMenuId {
@@ -101,21 +101,25 @@ pub fn cascading_menu_row(
         // When highlighted, bump the row color for contrast against the hover background.
         .text_color(theme.colors.foreground_muted)
         .when(keyboard_selected, move |this| this.bg(selected_bg))
-        .when(keyboard_selected, move |this| this.text_color(theme.colors.foreground))
+        .when(keyboard_selected, move |this| {
+            this.text_color(theme.colors.foreground)
+        })
         .when(hover_opacity > 1e-3, move |this| {
-            this.bg(
-                theme
-                    .colors
-                    .foreground
-                    .opacity(style.hover_bg_alpha * hover_opacity),
-            )
-            .text_color(theme.colors.foreground)
+            this.bg(theme
+                .colors
+                .foreground
+                .opacity(style.hover_bg_alpha * hover_opacity))
+                .text_color(theme.colors.foreground)
         })
 }
 
 /// Standard checkbox indicator used for multi-select menu options.
 #[must_use]
-pub fn cascading_menu_checkbox_indicator(theme: &UiTheme, selected: bool, highlighted: bool) -> Div {
+pub fn cascading_menu_checkbox_indicator(
+    theme: &UiTheme,
+    selected: bool,
+    highlighted: bool,
+) -> Div {
     let border = if highlighted && !selected {
         theme.colors.foreground_muted.opacity(0.65)
     } else {
@@ -154,7 +158,9 @@ pub fn cascading_menu_radio_indicator(theme: &UiTheme, selected: bool, highlight
         .rounded_full()
         .border_1()
         .border_color(border)
-        .when(selected, |this| this.bg(theme.colors.ring).border_color(theme.colors.ring))
+        .when(selected, |this| {
+            this.bg(theme.colors.ring).border_color(theme.colors.ring)
+        })
 }
 
 /// Standardized truncating value label for primary menu rows.

@@ -212,7 +212,9 @@ pub struct CodexApprovalPolicyChanged {
     pub approval_policy: Option<CodexApprovalPolicy>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "camelCase")]
 pub enum CodexNetworkAccess {
     #[default]

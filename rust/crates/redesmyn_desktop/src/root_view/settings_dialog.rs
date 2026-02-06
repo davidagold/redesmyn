@@ -18,8 +18,8 @@ use redesmyn_ui::utils::{
 
 use crate::orchestration_config::{
     AgentKindSelection, CodexApprovalPolicyDefault, CodexModelName, CodexReasoningEffortDefault,
-    CodexSandboxPolicyDefault, OrchestrationConfigError, OrchestrationDefaults,
-    SandboxNetworkMode, SandboxType, load_effective_defaults, repo_config_path, repo_root_from_cwd,
+    CodexSandboxPolicyDefault, OrchestrationConfigError, OrchestrationDefaults, SandboxNetworkMode,
+    SandboxType, load_effective_defaults, repo_config_path, repo_root_from_cwd,
     write_repo_defaults,
 };
 
@@ -430,10 +430,12 @@ impl SettingsDialog {
             }
         });
 
-        let close_button =
-            IconButton::new(("settings_close_default_prelude", cx.entity_id()), div().child("×"))
-                .tooltip("Close")
-                .on_click(close_on_click);
+        let close_button = IconButton::new(
+            ("settings_close_default_prelude", cx.entity_id()),
+            div().child("×"),
+        )
+        .tooltip("Close")
+        .on_click(close_on_click);
 
         let header = div()
             .px(theme.spacing.lg)
@@ -701,12 +703,12 @@ impl SettingsDialog {
                 .cursor_pointer()
                 .child(label);
 
-                cell = cell.on_click({
-                    let root = root.clone();
-                    move |_, _, cx| {
-                        root.update(cx, |this, cx| this.set_theme_preference(pref, cx));
-                    }
-                });
+            cell = cell.on_click({
+                let root = root.clone();
+                move |_, _, cx| {
+                    root.update(cx, |this, cx| this.set_theme_preference(pref, cx));
+                }
+            });
 
             if idx > 0 {
                 choices = choices.child(
@@ -928,8 +930,16 @@ impl SettingsDialog {
                         "Unless trusted",
                         CodexApprovalPolicyDefault::UnlessTrusted,
                     ),
-                    ("on_request", "On request", CodexApprovalPolicyDefault::OnRequest),
-                    ("on_failure", "On failure", CodexApprovalPolicyDefault::OnFailure),
+                    (
+                        "on_request",
+                        "On request",
+                        CodexApprovalPolicyDefault::OnRequest,
+                    ),
+                    (
+                        "on_failure",
+                        "On failure",
+                        CodexApprovalPolicyDefault::OnFailure,
+                    ),
                     ("never", "Never", CodexApprovalPolicyDefault::Never),
                 ],
                 self.draft.session_defaults.codex.approval_policy,
@@ -944,7 +954,11 @@ impl SettingsDialog {
                 "Sandbox",
                 &[
                     ("default", "Default", CodexSandboxPolicyDefault::Default),
-                    ("read_only", "Read-only", CodexSandboxPolicyDefault::ReadOnly),
+                    (
+                        "read_only",
+                        "Read-only",
+                        CodexSandboxPolicyDefault::ReadOnly,
+                    ),
                     (
                         "workspace_write",
                         "Workspace write",
@@ -1000,21 +1014,22 @@ impl SettingsDialog {
         } else {
             "Use repo default"
         };
-        let clear_button = TextButton::new(("codex_model_clear", cx.entity_id()), clear_button_label)
-            .kind(ButtonKind::Ghost)
-            .small()
-            .disabled(selected_model_id.is_empty())
-            .on_click({
-                let root = root.clone();
-                move |_, _, cx| {
-                    root.update(cx, |this, cx| {
-                        this.settings_dialog.draft.session_defaults.codex.model = None;
-                        this.settings_dialog.notice = None;
-                        this.settings_dialog.save.clear_error();
-                        cx.notify();
-                    });
-                }
-            });
+        let clear_button =
+            TextButton::new(("codex_model_clear", cx.entity_id()), clear_button_label)
+                .kind(ButtonKind::Ghost)
+                .small()
+                .disabled(selected_model_id.is_empty())
+                .on_click({
+                    let root = root.clone();
+                    move |_, _, cx| {
+                        root.update(cx, |this, cx| {
+                            this.settings_dialog.draft.session_defaults.codex.model = None;
+                            this.settings_dialog.notice = None;
+                            this.settings_dialog.save.clear_error();
+                            cx.notify();
+                        });
+                    }
+                });
 
         let mut model_choices = div().flex().flex_col().gap(px(2.0));
         for option in &self.codex_model_options {
@@ -1030,8 +1045,16 @@ impl SettingsDialog {
                 .py(px(6.0))
                 .rounded(theme.radius.sm)
                 .border_1()
-                .border_color(theme.colors.border.opacity(if selected { 0.55 } else { 0.22 }))
-                .bg(theme.colors.surface.opacity(if selected { 0.22 } else { 0.06 }))
+                .border_color(
+                    theme
+                        .colors
+                        .border
+                        .opacity(if selected { 0.55 } else { 0.22 }),
+                )
+                .bg(theme
+                    .colors
+                    .surface
+                    .opacity(if selected { 0.22 } else { 0.06 }))
                 .when(selected, |this| this.bg(theme.colors.accent.opacity(0.24)))
                 .when(!selected, |this| {
                     this.hover(|this| this.bg(theme.colors.surface_elevated.opacity(0.28)))
@@ -1400,11 +1423,7 @@ impl SettingsDialog {
             .child(placeholders)
             .into_any_element();
 
-        div()
-            .flex()
-            .flex_row()
-            .child(card)
-            .into_any_element()
+        div().flex().flex_row().child(card).into_any_element()
     }
 
     fn segmented_choice_setting<T: Copy + PartialEq + 'static>(

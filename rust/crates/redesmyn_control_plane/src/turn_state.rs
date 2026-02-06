@@ -58,4 +58,3 @@ pub(crate) async fn structured_turn_in_progress(
         || (last_started.created_at_ms == last_completed.created_at_ms
             && last_started.id > last_completed.id))
 }
-

@@ -188,7 +188,8 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Select<T> {
             });
 
         if let Some(tooltip) = tooltip_text(self.disabled, &self.disabled_reason, &self.tooltip) {
-            trigger = trigger.tooltip(move |_, cx| cx.new(|_| Tooltip::new(tooltip.clone())).into());
+            trigger =
+                trigger.tooltip(move |_, cx| cx.new(|_| Tooltip::new(tooltip.clone())).into());
         }
 
         if self.disabled {
@@ -229,9 +230,7 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Select<T> {
                     .flex_col()
                     .gap(theme.spacing.xs)
                     .children(self.options.into_iter().map(|option| {
-                        let selected = value
-                            .as_ref()
-                            .is_some_and(|value| option.value == *value);
+                        let selected = value.as_ref().is_some_and(|value| option.value == *value);
                         let kind = if selected {
                             ButtonKind::Secondary
                         } else {
@@ -280,7 +279,10 @@ impl<T: Clone + PartialEq + 'static> RenderOnce for Select<T> {
             }
         }
 
-        let mut container = div().relative().child(trigger).when(open, |this| this.child(menu));
+        let mut container = div()
+            .relative()
+            .child(trigger)
+            .when(open, |this| this.child(menu));
 
         if open {
             if let Some(on_open_change) = self.on_open_change {

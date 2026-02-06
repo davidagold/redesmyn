@@ -1,8 +1,4 @@
-use std::{
-    cell::RefCell,
-    rc::Rc,
-    sync::Arc,
-};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use gpui::{
     App, AvailableSpace, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, LayoutId,
@@ -128,12 +124,8 @@ impl Element for RoundedStyledText {
         window: &mut Window,
         cx: &mut App,
     ) {
-        self.layout.paint(
-            self.text.as_ref(),
-            self.background_style,
-            window,
-            cx,
-        );
+        self.layout
+            .paint(self.text.as_ref(), self.background_style, window, cx);
     }
 }
 
@@ -210,14 +202,17 @@ impl RoundedTextLayout {
                     size.width = size.width.max(line_size.width).ceil();
                 }
 
-                element_state.0.borrow_mut().replace(RoundedTextLayoutInner {
-                    lines,
-                    background_spans: Arc::clone(&background_spans),
-                    line_height,
-                    wrap_width,
-                    size: Some(size),
-                    bounds: None,
-                });
+                element_state
+                    .0
+                    .borrow_mut()
+                    .replace(RoundedTextLayoutInner {
+                        lines,
+                        background_spans: Arc::clone(&background_spans),
+                        line_height,
+                        wrap_width,
+                        size: Some(size),
+                        bounds: None,
+                    });
 
                 size
             }
@@ -363,9 +358,7 @@ fn paint_rounded_background_span(
     let wrap_end_indices = line
         .wrap_boundaries
         .iter()
-        .map(|boundary| {
-            line.unwrapped_layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index
-        })
+        .map(|boundary| line.unwrapped_layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index)
         .filter(|&ix| ix > 0 && ix < line_len)
         .chain(std::iter::once(line_len));
 
@@ -462,10 +455,7 @@ fn trim_span_horizontal(
 
     let mut chars = span_text.char_indices();
     let (_, first_char) = chars.next()?;
-    let (last_offset, last_char) = span_text
-        .char_indices()
-        .last()
-        .unwrap_or((0, first_char));
+    let (last_offset, last_char) = span_text.char_indices().last().unwrap_or((0, first_char));
     let last_index = start + last_offset;
 
     let font_id_start = line.unwrapped_layout.font_id_for_index(start)?;

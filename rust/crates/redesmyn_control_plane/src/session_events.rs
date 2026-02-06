@@ -946,9 +946,7 @@ fn message_preview_from_kind(kind: &SessionEventKind) -> Option<String> {
             let model = ev.model_id.as_deref().unwrap_or("default");
             let effort = match ev.reasoning_effort {
                 None => "default",
-                Some(redesmyn_protocol::session::SessionModelReasoningEffort::Minimal) => {
-                    "minimal"
-                }
+                Some(redesmyn_protocol::session::SessionModelReasoningEffort::Minimal) => "minimal",
                 Some(redesmyn_protocol::session::SessionModelReasoningEffort::Low) => "low",
                 Some(redesmyn_protocol::session::SessionModelReasoningEffort::Medium) => "medium",
                 Some(redesmyn_protocol::session::SessionModelReasoningEffort::High) => "high",

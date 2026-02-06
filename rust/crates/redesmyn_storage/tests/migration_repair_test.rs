@@ -53,4 +53,3 @@ async fn refuses_to_repair_legacy_id_map_when_schema_mismatch() {
         other => panic!("unexpected error: {other:?}"),
     }
 }
-

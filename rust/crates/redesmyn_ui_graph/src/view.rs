@@ -70,9 +70,7 @@ pub enum GraphViewEvent {
     /// This intentionally fires on selection interactions even when the resulting selection
     /// happens to be unchanged (e.g. clicking the already-selected card), because downstream UI
     /// may still want to react (close transient overlays, etc.).
-    SelectionChanged {
-        selected_node: Option<GraphNodeId>,
-    },
+    SelectionChanged { selected_node: Option<GraphNodeId> },
 }
 
 #[derive(Debug, Clone)]

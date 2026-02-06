@@ -744,7 +744,9 @@ fn session_event_kind_label(kind: &redesmyn_protocol::session::SessionEventKind)
         redesmyn_protocol::session::SessionEventKind::TurnCompleted(_) => "turn_completed",
         redesmyn_protocol::session::SessionEventKind::UserMessage(_) => "user_message",
         redesmyn_protocol::session::SessionEventKind::AssistantMessage(_) => "assistant_message",
-        redesmyn_protocol::session::SessionEventKind::AssistantReasoning(_) => "assistant_reasoning",
+        redesmyn_protocol::session::SessionEventKind::AssistantReasoning(_) => {
+            "assistant_reasoning"
+        }
         redesmyn_protocol::session::SessionEventKind::ToolInvocation(_) => "tool_invocation",
         redesmyn_protocol::session::SessionEventKind::ToolResult(_) => "tool_result",
         redesmyn_protocol::session::SessionEventKind::StatusUpdate(_) => "status_update",
@@ -757,7 +759,9 @@ fn session_event_kind_label(kind: &redesmyn_protocol::session::SessionEventKind)
         redesmyn_protocol::session::SessionEventKind::CodexSandboxPolicyChanged(_) => {
             "codex_sandbox_policy_changed"
         }
-        redesmyn_protocol::session::SessionEventKind::PermissionRequested(_) => "permission_requested",
+        redesmyn_protocol::session::SessionEventKind::PermissionRequested(_) => {
+            "permission_requested"
+        }
         redesmyn_protocol::session::SessionEventKind::PermissionDecided(_) => "permission_decided",
         redesmyn_protocol::session::SessionEventKind::ArtifactEmitted(_) => "artifact_emitted",
         redesmyn_protocol::session::SessionEventKind::SessionModelChanged(_) => {

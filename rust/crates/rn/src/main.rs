@@ -578,7 +578,9 @@ fn storage_error_to_envelope(err: redesmyn_storage::StorageError) -> ErrorEnvelo
             ErrorCategory::Internal,
             format!("failed to apply migrations: {source}"),
         ),
-        E::Sqlx(source) => ErrorEnvelope::new(ErrorCategory::Internal, format!("db error: {source}")),
+        E::Sqlx(source) => {
+            ErrorEnvelope::new(ErrorCategory::Internal, format!("db error: {source}"))
+        }
     }
 }
 

@@ -2,11 +2,7 @@ use std::path::Path;
 
 use redesmyn_ids::TaskId;
 use redesmyn_storage::legacy_import::{ImportLegacyOptions, import_legacy};
-use sqlx::{
-    Connection as _,
-    SqliteConnection,
-    sqlite::SqliteConnectOptions,
-};
+use sqlx::{Connection as _, SqliteConnection, sqlite::SqliteConnectOptions};
 
 async fn create_legacy_db(legacy_db_path: &Path, repo_root: &Path) {
     let connect_options = SqliteConnectOptions::new()
@@ -233,7 +229,9 @@ async fn imports_legacy_db_idempotently_and_does_not_mutate_legacy_db_file() {
 
     // Verify imported counts and key invariants.
     {
-        let pool = redesmyn_storage::open_sqlite_pool(&rust_db_path).await.unwrap();
+        let pool = redesmyn_storage::open_sqlite_pool(&rust_db_path)
+            .await
+            .unwrap();
 
         let workspaces: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workspaces")
             .fetch_one(&pool)
@@ -336,7 +334,9 @@ async fn imports_legacy_db_idempotently_and_does_not_mutate_legacy_db_file() {
     // Re-running is idempotent (no duplicates).
     let _second = import_legacy(options).await.unwrap();
 
-    let pool = redesmyn_storage::open_sqlite_pool(&rust_db_path).await.unwrap();
+    let pool = redesmyn_storage::open_sqlite_pool(&rust_db_path)
+        .await
+        .unwrap();
     let workspaces: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workspaces")
         .fetch_one(&pool)
         .await

@@ -495,11 +495,11 @@ fn parse_partial_from_doc(doc: &DocumentMut) -> PartialOrchestrationDefaults {
             .and_then(|value| value.parse::<SandboxNetworkMode>().ok());
     }
 
-    if let Some(session_defaults) = doc
-        .get("session_defaults")
-        .and_then(|item| item.as_table())
-    {
-        if let Some(codex) = session_defaults.get("codex").and_then(|item| item.as_table()) {
+    if let Some(session_defaults) = doc.get("session_defaults").and_then(|item| item.as_table()) {
+        if let Some(codex) = session_defaults
+            .get("codex")
+            .and_then(|item| item.as_table())
+        {
             partial.session_defaults.codex.approval_policy = codex
                 .get("approval_policy")
                 .and_then(|item| item.as_str())

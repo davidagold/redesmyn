@@ -260,7 +260,9 @@ fn set_raw_offset_from_scrollbar(
 ) {
     let offset = target.offset();
     match axis {
-        ScrollbarAxis::Vertical => target.set_offset_from_scrollbar(gpui::point(offset.x, raw_offset)),
+        ScrollbarAxis::Vertical => {
+            target.set_offset_from_scrollbar(gpui::point(offset.x, raw_offset))
+        }
         ScrollbarAxis::Horizontal => {
             target.set_offset_from_scrollbar(gpui::point(raw_offset, offset.y))
         }
@@ -384,8 +386,9 @@ impl Element for StyledScrollbar {
     ) -> Self::PrepaintState {
         self.child.prepaint(window, cx);
 
-        compute_geometry(&self.target, self.style)
-            .map(|geometry| window.insert_hitbox(geometry.gutter_hitbox_bounds, HitboxBehavior::Normal))
+        compute_geometry(&self.target, self.style).map(|geometry| {
+            window.insert_hitbox(geometry.gutter_hitbox_bounds, HitboxBehavior::Normal)
+        })
     }
 
     fn paint(
@@ -445,9 +448,10 @@ impl Element for StyledScrollbar {
                     window.request_animation_frame();
                 }
 
-                let opacity = state
-                    .opacity
-                    .opacity_for_render((), visible, style.fade_duration, window);
+                let opacity =
+                    state
+                        .opacity
+                        .opacity_for_render((), visible, style.fade_duration, window);
 
                 if opacity > 1e-3 {
                     let theme = theme_for_window(window, cx);
@@ -546,7 +550,8 @@ impl Element for StyledScrollbar {
                 return;
             }
 
-            let Some(geometry) = compute_geometry(&target_for_mouse_down, style_for_mouse_down) else {
+            let Some(geometry) = compute_geometry(&target_for_mouse_down, style_for_mouse_down)
+            else {
                 return;
             };
 
@@ -655,10 +660,7 @@ mod tests {
 
     #[test]
     fn compute_thumb_is_none_when_not_scrollable() {
-        assert_eq!(
-            compute_thumb(px(100.0), px(0.0), px(0.0), px(24.0)),
-            None
-        );
+        assert_eq!(compute_thumb(px(100.0), px(0.0), px(0.0), px(24.0)), None);
     }
 
     #[test]

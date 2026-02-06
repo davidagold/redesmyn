@@ -3,11 +3,10 @@ use redesmyn_ids::{EpicId, SessionId};
 use redesmyn_protocol::client::{
     AgentKind, CloseChatSessionRequest, CommandState, CommandSummary, CreateChatSessionRequest,
     CreateChatSessionResponse, GetEpicGraphRequest, GetEpicPinnedChatSessionRequest,
-    ListAgentModelsRequest, ListChatSessionsRequest, ListEpicsRequest,
-    PinChatSessionToEpicRequest, RequestPayload, ResponseResult, SessionModelOption,
-    SessionModelSelection, SetSessionModelRequest, SetSessionModelResponse, StatusRequest,
-    StatusResponse, WaitForCommandRequest,
-    UnpinChatSessionFromEpicRequest,
+    ListAgentModelsRequest, ListChatSessionsRequest, ListEpicsRequest, PinChatSessionToEpicRequest,
+    RequestPayload, ResponseResult, SessionModelOption, SessionModelSelection,
+    SetSessionModelRequest, SetSessionModelResponse, StatusRequest, StatusResponse,
+    UnpinChatSessionFromEpicRequest, WaitForCommandRequest,
 };
 use redesmyn_protocol::{ProtocolEnvelope, RepoScope};
 use redesmyn_transport::client::in_proc::InProcEndpoint;

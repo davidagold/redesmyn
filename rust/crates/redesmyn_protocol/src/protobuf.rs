@@ -1619,7 +1619,10 @@ impl CodexSandboxPolicyChanged {
     #[must_use]
     pub fn to_protobuf(&self) -> pbv1::CodexSandboxPolicyChanged {
         pbv1::CodexSandboxPolicyChanged {
-            sandbox_policy: self.sandbox_policy.as_ref().map(CodexSandboxPolicy::to_protobuf),
+            sandbox_policy: self
+                .sandbox_policy
+                .as_ref()
+                .map(CodexSandboxPolicy::to_protobuf),
         }
     }
 
@@ -1724,7 +1727,9 @@ impl PermissionRequest {
     pub fn try_from_protobuf(proto: pbv1::PermissionRequest) -> Result<Self, ErrorEnvelope> {
         Ok(match proto.kind {
             Some(pbv1::permission_request::Kind::CommandExecution(ev)) => {
-                PermissionRequest::CommandExecution(CommandExecutionPermissionRequest::try_from_protobuf(ev)?)
+                PermissionRequest::CommandExecution(
+                    CommandExecutionPermissionRequest::try_from_protobuf(ev)?,
+                )
             }
             Some(pbv1::permission_request::Kind::FileChange(ev)) => {
                 PermissionRequest::FileChange(FileChangePermissionRequest::try_from_protobuf(ev)?)
@@ -2209,15 +2214,11 @@ fn encode_client_method(value: crate::client::ClientMethod) -> i32 {
         crate::client::ClientMethod::SetSessionCodexSandboxPolicy => {
             pbv1::ClientMethod::SetSessionCodexSandboxPolicy as i32
         }
-        crate::client::ClientMethod::ListAgentModels => {
-            pbv1::ClientMethod::ListAgentModels as i32
-        }
+        crate::client::ClientMethod::ListAgentModels => pbv1::ClientMethod::ListAgentModels as i32,
         crate::client::ClientMethod::ListSessionModels => {
             pbv1::ClientMethod::ListSessionModels as i32
         }
-        crate::client::ClientMethod::SetSessionModel => {
-            pbv1::ClientMethod::SetSessionModel as i32
-        }
+        crate::client::ClientMethod::SetSessionModel => pbv1::ClientMethod::SetSessionModel as i32,
         crate::client::ClientMethod::RespondPermissionRequest => {
             pbv1::ClientMethod::RespondPermissionRequest as i32
         }
@@ -2283,9 +2284,7 @@ fn decode_client_method(value: i32) -> Result<crate::client::ClientMethod, Error
         Ok(pbv1::ClientMethod::SetSessionCodexSandboxPolicy) => {
             Ok(crate::client::ClientMethod::SetSessionCodexSandboxPolicy)
         }
-        Ok(pbv1::ClientMethod::ListAgentModels) => {
-            Ok(crate::client::ClientMethod::ListAgentModels)
-        }
+        Ok(pbv1::ClientMethod::ListAgentModels) => Ok(crate::client::ClientMethod::ListAgentModels),
         Ok(pbv1::ClientMethod::ListSessionModels) => {
             Ok(crate::client::ClientMethod::ListSessionModels)
         }
@@ -3374,7 +3373,10 @@ impl crate::client::SetSessionCodexSandboxPolicyRequest {
     pub fn to_protobuf(&self) -> pbv1::SetSessionCodexSandboxPolicyRequest {
         pbv1::SetSessionCodexSandboxPolicyRequest {
             session_id: self.session_id.to_bytes().to_vec(),
-            sandbox_policy: self.sandbox_policy.as_ref().map(CodexSandboxPolicy::to_protobuf),
+            sandbox_policy: self
+                .sandbox_policy
+                .as_ref()
+                .map(CodexSandboxPolicy::to_protobuf),
         }
     }
 
@@ -3462,9 +3464,7 @@ impl crate::client::ListSessionModelsRequest {
         }
     }
 
-    pub fn try_from_protobuf(
-        proto: pbv1::ListSessionModelsRequest,
-    ) -> Result<Self, ErrorEnvelope> {
+    pub fn try_from_protobuf(proto: pbv1::ListSessionModelsRequest) -> Result<Self, ErrorEnvelope> {
         Ok(Self {
             session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
         })
@@ -3479,9 +3479,7 @@ impl crate::client::ListAgentModelsRequest {
         }
     }
 
-    pub fn try_from_protobuf(
-        proto: pbv1::ListAgentModelsRequest,
-    ) -> Result<Self, ErrorEnvelope> {
+    pub fn try_from_protobuf(proto: pbv1::ListAgentModelsRequest) -> Result<Self, ErrorEnvelope> {
         Ok(Self {
             agent_kind: decode_agent_kind(proto.agent_kind)?,
         })
@@ -3500,9 +3498,7 @@ impl crate::client::ListAgentModelsResponse {
         }
     }
 
-    pub fn try_from_protobuf(
-        proto: pbv1::ListAgentModelsResponse,
-    ) -> Result<Self, ErrorEnvelope> {
+    pub fn try_from_protobuf(proto: pbv1::ListAgentModelsResponse) -> Result<Self, ErrorEnvelope> {
         Ok(Self {
             options: proto
                 .options
@@ -4631,9 +4627,7 @@ impl crate::client::SetSessionModelResponse {
         }
     }
 
-    pub fn try_from_protobuf(
-        proto: pbv1::SetSessionModelResponse,
-    ) -> Result<Self, ErrorEnvelope> {
+    pub fn try_from_protobuf(proto: pbv1::SetSessionModelResponse) -> Result<Self, ErrorEnvelope> {
         Ok(Self {
             command: proto
                 .command
@@ -5369,9 +5363,9 @@ fn decode_ui_driver_method(value: i32) -> Result<crate::ui_driver::UiDriverMetho
         Ok(pbv1::UiDriverMethod::GraphMultiSelectRemoveNode) => {
             Ok(crate::ui_driver::UiDriverMethod::GraphMultiSelectRemoveNode)
         }
-        Ok(pbv1::UiDriverMethod::SessionSettingsMenuSetOpen) => Ok(
-            crate::ui_driver::UiDriverMethod::SessionSettingsMenuSetOpen,
-        ),
+        Ok(pbv1::UiDriverMethod::SessionSettingsMenuSetOpen) => {
+            Ok(crate::ui_driver::UiDriverMethod::SessionSettingsMenuSetOpen)
+        }
         Ok(pbv1::UiDriverMethod::SessionSettingsMenuSendKey) => {
             Ok(crate::ui_driver::UiDriverMethod::SessionSettingsMenuSendKey)
         }
@@ -5390,7 +5384,9 @@ fn encode_settings_dialog_section(value: crate::ui_driver::SettingsDialogSection
         crate::ui_driver::SettingsDialogSection::Appearance => {
             pbv1::SettingsDialogSection::Appearance as i32
         }
-        crate::ui_driver::SettingsDialogSection::Agents => pbv1::SettingsDialogSection::Agents as i32,
+        crate::ui_driver::SettingsDialogSection::Agents => {
+            pbv1::SettingsDialogSection::Agents as i32
+        }
     }
 }
 
@@ -5401,7 +5397,9 @@ fn decode_settings_dialog_section(
         Ok(pbv1::SettingsDialogSection::Appearance) => {
             Ok(crate::ui_driver::SettingsDialogSection::Appearance)
         }
-        Ok(pbv1::SettingsDialogSection::Agents) => Ok(crate::ui_driver::SettingsDialogSection::Agents),
+        Ok(pbv1::SettingsDialogSection::Agents) => {
+            Ok(crate::ui_driver::SettingsDialogSection::Agents)
+        }
         Ok(pbv1::SettingsDialogSection::Unspecified) | Err(_) => Err(invalid_field(
             "section",
             format!("unknown enum value for SettingsDialogSection: {value}"),

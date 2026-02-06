@@ -27,4 +27,3 @@ fn starts_with_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
         .get(0..needle.len())
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case(needle))
 }
-

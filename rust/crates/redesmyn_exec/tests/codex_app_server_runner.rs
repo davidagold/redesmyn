@@ -136,8 +136,7 @@ async fn fake_v2_app_server(stream: tokio::io::DuplexStream, state: Arc<FakeV2St
             continue;
         }
 
-        let msg: serde_json::Value =
-            serde_json::from_str(frame).unwrap_or(serde_json::Value::Null);
+        let msg: serde_json::Value = serde_json::from_str(frame).unwrap_or(serde_json::Value::Null);
 
         let Some(method) = msg.get("method").and_then(|m| m.as_str()) else {
             continue;
@@ -222,7 +221,12 @@ async fn fake_v2_app_server(stream: tokio::io::DuplexStream, state: Arc<FakeV2St
                     .unwrap_or_default();
 
                 let turn_id = state.alloc_turn_id();
-                send_response(&writer, id, serde_json::json!({ "turn": { "id": turn_id } })).await;
+                send_response(
+                    &writer,
+                    id,
+                    serde_json::json!({ "turn": { "id": turn_id } }),
+                )
+                .await;
 
                 let cancel = Arc::new(tokio::sync::Notify::new());
 
@@ -468,9 +472,10 @@ fn find_latest_codex_session(events: &[SessionEvent]) -> Option<(String, Option<
             ExternalSessionRef::CodexThread { thread_id, turn_id } => {
                 Some((thread_id.clone(), turn_id.clone()))
             }
-            ExternalSessionRef::CodexSession { session_id, turn_id } => {
-                Some((session_id.clone(), turn_id.clone()))
-            }
+            ExternalSessionRef::CodexSession {
+                session_id,
+                turn_id,
+            } => Some((session_id.clone(), turn_id.clone())),
             _ => None,
         },
         _ => None,
@@ -595,8 +600,7 @@ async fn resume_reuses_conversation_and_skips_reinitialize() {
     let first_events =
         collect_until_turn_completed(&mut frames_rx, daemon_session_id, Duration::from_secs(5))
             .await;
-    let (codex_session_id, turn_id) =
-        find_latest_codex_session(&first_events).expect("session id");
+    let (codex_session_id, turn_id) = find_latest_codex_session(&first_events).expect("session id");
 
     let _ = supervisor
         .send_message(

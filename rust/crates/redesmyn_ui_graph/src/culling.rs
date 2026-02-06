@@ -18,4 +18,3 @@ pub fn viewport_bounds_with_overscan(
         },
     }
 }
-

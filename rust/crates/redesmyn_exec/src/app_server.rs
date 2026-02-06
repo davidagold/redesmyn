@@ -7,19 +7,19 @@ use redesmyn_domain::agent::AppServerTurnIntent;
 use redesmyn_ids::{SessionEventId, SessionId, TaskId};
 use redesmyn_logging::tracing;
 use redesmyn_protocol::agent_commands::SessionPolicySnapshot;
-use redesmyn_protocol::client::{ModelReasoningEffort, SessionModelOption, SessionModelSelection};
 use redesmyn_protocol::artifacts::{ArtifactKind, ArtifactRef};
+use redesmyn_protocol::client::{ModelReasoningEffort, SessionModelOption, SessionModelSelection};
 use redesmyn_protocol::daemon::{
     DaemonFrame, DaemonMessage, SessionEventBatch, SessionLiveEventBatch,
 };
 use redesmyn_protocol::session::{
     ArtifactEmitted, AssistantMessage, AssistantReasoning, AssistantReasoningText,
-    CodexApprovalPolicy, CodexApprovalPolicyChanged, CodexSandboxPolicy,
-    CodexSandboxPolicyChanged, ExternalSessionRef, InterfaceMode, SessionEnded, SessionEvent,
-    SessionEventKind, SessionModelChanged, SessionModelReasoningEffort, SessionScope,
+    CodexApprovalPolicy, CodexApprovalPolicyChanged, CodexSandboxPolicy, CodexSandboxPolicyChanged,
+    ExternalSessionRef, InterfaceMode, PermissionDecided, PermissionDecision, PermissionDecisionBy,
+    PermissionRequest, PermissionRequested, PermissionsMode, PermissionsModeChanged, SessionEnded,
+    SessionEvent, SessionEventKind, SessionModelChanged, SessionModelReasoningEffort, SessionScope,
     SessionStarted, StatusUpdate, ToolInvocation, ToolResult, TurnCompleted, TurnStarted,
-    TurnState, PermissionDecided, PermissionDecision, PermissionDecisionBy, PermissionRequest,
-    PermissionRequested, PermissionsMode, PermissionsModeChanged,
+    TurnState,
 };
 use redesmyn_protocol::session_live::{
     AssistantMessageDelta, AssistantReasoningRawDelta, AssistantReasoningSummaryDelta,
@@ -72,13 +72,17 @@ impl std::fmt::Debug for AppServerSessionSpec {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppServerRequest {
-    SendMessage { intent: AppServerTurnIntent },
+    SendMessage {
+        intent: AppServerTurnIntent,
+    },
     Interrupt,
     ListModels,
     SetModel {
         selection: SessionModelSelection,
     },
-    SetPermissionsMode { mode: PermissionsMode },
+    SetPermissionsMode {
+        mode: PermissionsMode,
+    },
     SetCodexApprovalPolicy {
         approval_policy: Option<CodexApprovalPolicy>,
     },
@@ -510,11 +514,8 @@ impl AppServerSupervisor {
         selection: SessionModelSelection,
     ) -> Result<(), AppServerCallError> {
         let (reply, rx) = oneshot::channel::<Result<AppServerResponse, AppServerRequestError>>();
-        self.send_command(
-            session_id,
-            SessionCommand::SetModel { selection, reply },
-        )
-        .await?;
+        self.send_command(session_id, SessionCommand::SetModel { selection, reply })
+            .await?;
         rx.await
             .map_err(|_| SessionControlError::SessionClosed { session_id })?
             .map_err(AppServerCallError::Request)?;
@@ -527,8 +528,11 @@ impl AppServerSupervisor {
         mode: PermissionsMode,
     ) -> Result<(), AppServerCallError> {
         let (reply, rx) = oneshot::channel::<Result<AppServerResponse, AppServerRequestError>>();
-        self.send_command(session_id, SessionCommand::SetPermissionsMode { mode, reply })
-            .await?;
+        self.send_command(
+            session_id,
+            SessionCommand::SetPermissionsMode { mode, reply },
+        )
+        .await?;
         rx.await
             .map_err(|_| SessionControlError::SessionClosed { session_id })?
             .map_err(AppServerCallError::Request)?;
@@ -603,8 +607,11 @@ impl AppServerSupervisor {
         snapshot: SessionPolicySnapshot,
     ) -> Result<(), AppServerCallError> {
         let (reply, rx) = oneshot::channel::<Result<(), AppServerRequestError>>();
-        self.send_command(session_id, SessionCommand::HydratePolicies { snapshot, reply })
-            .await?;
+        self.send_command(
+            session_id,
+            SessionCommand::HydratePolicies { snapshot, reply },
+        )
+        .await?;
         rx.await
             .map_err(|_| SessionControlError::SessionClosed { session_id })?
             .map_err(AppServerCallError::Request)?;
@@ -810,7 +817,9 @@ async fn run_session(
             }
             SessionCommand::SetModel { selection, reply } => {
                 let response = client
-                    .request(AppServerRequest::SetModel { selection: selection.clone() })
+                    .request(AppServerRequest::SetModel {
+                        selection: selection.clone(),
+                    })
                     .await;
                 if let Err(err) = &response {
                     try_emit_status_update(
@@ -907,9 +916,14 @@ async fn run_session(
 
                 let _ = reply.send(response);
             }
-            SessionCommand::SetCodexSandboxPolicy { sandbox_policy, reply } => {
+            SessionCommand::SetCodexSandboxPolicy {
+                sandbox_policy,
+                reply,
+            } => {
                 let response = client
-                    .request(AppServerRequest::SetCodexSandboxPolicy { sandbox_policy: sandbox_policy.clone() })
+                    .request(AppServerRequest::SetCodexSandboxPolicy {
+                        sandbox_policy: sandbox_policy.clone(),
+                    })
                     .await;
 
                 if response.is_ok() {
@@ -940,7 +954,10 @@ async fn run_session(
                 reply,
             } => {
                 let response = client
-                    .request(AppServerRequest::RespondPermissionRequest { request_id, decision })
+                    .request(AppServerRequest::RespondPermissionRequest {
+                        request_id,
+                        decision,
+                    })
                     .await;
                 if let Err(err) = &response {
                     try_emit_status_update(
