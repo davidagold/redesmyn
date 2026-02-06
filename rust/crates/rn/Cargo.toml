@@ -21,6 +21,7 @@ serde_json.workspace = true
 tokio = { workspace = true, features = ["rt", "time"] }
 
 redesmyn_config.workspace = true
+redesmyn_client_api = { workspace = true, features = ["uds"] }
 redesmyn_logging.workspace = true
 redesmyn_protocol.workspace = true
 redesmyn_ids.workspace = true

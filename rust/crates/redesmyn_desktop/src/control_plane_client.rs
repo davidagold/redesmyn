@@ -1,16 +1,18 @@
 use redesmyn_client_api::Client;
-use redesmyn_ids::{EpicId, SessionId};
+use redesmyn_ids::{EpicId, EventId, SessionId, SubscriptionId};
 use redesmyn_protocol::client::{
     AgentKind, CloseChatSessionRequest, CommandState, CommandSummary, CreateChatSessionRequest,
-    CreateChatSessionResponse, GetEpicGraphRequest, GetEpicPinnedChatSessionRequest,
-    ListAgentModelsRequest, ListChatSessionsRequest, ListEpicsRequest, PinChatSessionToEpicRequest,
-    RequestPayload, ResponseResult, SessionModelOption, SessionModelSelection,
-    SetSessionModelRequest, SetSessionModelResponse, StatusRequest, StatusResponse,
+    CreateChatSessionResponse, EventLogFilter, GetEpicGraphRequest,
+    GetEpicPinnedChatSessionRequest, ListAgentModelsRequest, ListChatSessionsRequest,
+    ListEpicsRequest, PinChatSessionToEpicRequest, RequestPayload, ResponseResult,
+    SessionModelOption, SessionModelSelection, SetSessionModelRequest, SetSessionModelResponse,
+    StatusRequest, StatusResponse, SubscriptionEvent, SubscriptionFilter,
     UnpinChatSessionFromEpicRequest, WaitForCommandRequest,
 };
 use redesmyn_protocol::{ProtocolEnvelope, RepoScope};
 use redesmyn_transport::client::in_proc::InProcEndpoint;
 use tokio::runtime::Handle;
+use tokio::sync::mpsc;
 
 #[derive(Clone, Debug)]
 pub struct ControlPlaneClient {
@@ -285,6 +287,35 @@ impl ControlPlaneClient {
             }),
             _ => Err(ControlPlaneClientError::UnexpectedMessage),
         }
+    }
+
+    pub async fn subscribe_repo_event_log(
+        &self,
+        scope: RepoScope,
+        after_event_id: Option<EventId>,
+    ) -> Result<(SubscriptionId, mpsc::Receiver<SubscriptionEvent>), ControlPlaneClientError> {
+        let envelope = ProtocolEnvelope::new().with_scope(scope.into());
+        self.client
+            .subscribe(
+                envelope,
+                SubscriptionFilter::EventLog(EventLogFilter { after_event_id }),
+            )
+            .await
+            .map_err(|err| ControlPlaneClientError::Client {
+                message: err.message,
+            })
+    }
+
+    pub async fn unsubscribe(
+        &self,
+        subscription_id: SubscriptionId,
+    ) -> Result<(), ControlPlaneClientError> {
+        self.client
+            .unsubscribe(subscription_id)
+            .await
+            .map_err(|err| ControlPlaneClientError::Client {
+                message: err.message,
+            })
     }
 
     async fn request_scoped(

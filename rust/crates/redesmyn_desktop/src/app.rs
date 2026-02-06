@@ -193,10 +193,9 @@ impl DesktopApp {
             .map_err(DesktopStartError::TokioRuntime)?;
 
         let mut control_plane = if config.desktop.embed_control_plane {
-            let mut options = redesmyn_control_plane::ControlPlaneStartOptions::from_config(
+            let options = redesmyn_control_plane::ControlPlaneStartOptions::from_config(
                 &config.control_plane,
             );
-            options.client_api_socket_path = None;
             Some(runtime.block_on(redesmyn_control_plane::ControlPlane::start(options))?)
         } else {
             None

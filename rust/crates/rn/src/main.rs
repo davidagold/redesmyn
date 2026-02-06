@@ -8,8 +8,15 @@ use std::{
 };
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+#[cfg(unix)]
+use redesmyn_client_api::uds::{UdsConnectOptions, connect_uds};
 use redesmyn_config::{discover_repo_root_from, legacy_db_path, rust_db_path};
-use redesmyn_protocol::{ErrorCategory, ErrorEnvelope};
+use redesmyn_protocol::client::{
+    CommandState, CreateCommandRequest, GetEpicGraphRequest, RequestPayload, ResponseResult,
+    WaitForCommandRequest,
+};
+use redesmyn_protocol::sync_commands::{LOCAL_SYNC_FROM_DOCS_KIND, LocalSyncFromDocsCommand};
+use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, ProtocolEnvelope, Scope};
 use serde::Serialize;
 
 mod protocol;
@@ -79,6 +86,7 @@ fn exit_from_clap_error(err: clap::Error, output_format: OutputFormat) -> ExitCo
 fn run(cli: Cli, output: &Output) -> CommandOutcome {
     match cli.command {
         Commands::Doctor(args) => doctor(args, output),
+        Commands::Sync(args) => sync(args, output),
         Commands::Protocol(cmd) => protocol::protocol(cmd, output),
         Commands::UiDriver(cmd) => ui_driver::ui_driver(cmd, output),
         Commands::Db(cmd) => db(cmd, output),
@@ -146,6 +154,9 @@ enum Commands {
     /// Checks environment and configuration basics.
     Doctor(DoctorArgs),
 
+    /// Synchronize local task docs into the running control plane.
+    Sync(SyncArgs),
+
     /// Protocol tooling.
     #[command(subcommand)]
     Protocol(protocol::ProtocolCommands),
@@ -168,6 +179,35 @@ enum Commands {
 
 #[derive(Debug, Args)]
 struct DoctorArgs {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "lower")]
+enum SyncFrom {
+    Local,
+}
+
+#[derive(Debug, Args)]
+struct SyncArgs {
+    /// Sync source (currently only `local` is supported in Rust CLI).
+    #[arg(long, value_enum, default_value_t = SyncFrom::Local)]
+    from: SyncFrom,
+
+    /// Epic slug (defaults only if exactly one local epic exists).
+    #[arg(long)]
+    epic: Option<String>,
+
+    /// Path within the repo to sync from (defaults to current directory).
+    #[arg(long)]
+    repo: Option<PathBuf>,
+
+    /// Keep parity with legacy CLI surface; branch materialization is delegated to control-plane sync.
+    #[arg(long, default_value_t = true)]
+    create_branches: bool,
+
+    /// Timeout waiting for sync command completion.
+    #[arg(long, default_value_t = 30_000)]
+    timeout_ms: u64,
+}
 
 #[derive(Debug, Subcommand)]
 enum DbCommands {
@@ -363,6 +403,293 @@ fn doctor(_args: DoctorArgs, output: &Output) -> CommandOutcome {
     } else {
         CommandOutcome::ExitCode(ErrorCategory::InvalidRequest.exit_code())
     }
+}
+
+fn sync(args: SyncArgs, output: &Output) -> CommandOutcome {
+    let SyncFrom::Local = args.from;
+
+    let start = match args.repo {
+        Some(path) => path,
+        None => match env::current_dir() {
+            Ok(cwd) => cwd,
+            Err(err) => {
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    format!("failed to read cwd: {err}"),
+                ));
+            }
+        },
+    };
+
+    let repo_root = match discover_repo_root_from(&start) {
+        Some(repo_root) => repo_root,
+        None => {
+            return CommandOutcome::Failure(ErrorEnvelope::new(
+                ErrorCategory::InvalidRequest,
+                format!(
+                    "no .git directory found from {} (pass --repo to specify a repo)",
+                    start.display()
+                ),
+            ));
+        }
+    };
+
+    let epic_slug = if let Some(epic) = args.epic {
+        epic
+    } else if let Some(inferred) = infer_single_epic_slug_from_fs(&repo_root) {
+        inferred
+    } else {
+        return CommandOutcome::Failure(ErrorEnvelope::new(
+            ErrorCategory::InvalidRequest,
+            "multiple epics found; pass --epic <slug>",
+        ));
+    };
+
+    #[derive(Debug, Serialize)]
+    struct SyncReport {
+        repo_root: String,
+        epic_slug: String,
+        command_id: String,
+        state: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    }
+
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .enable_io()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            return CommandOutcome::Failure(ErrorEnvelope::new(
+                ErrorCategory::Internal,
+                format!("failed to initialize async runtime: {err}"),
+            ));
+        }
+    };
+
+    let result = match runtime.block_on(sync_from_local_via_control_plane(
+        &repo_root,
+        &epic_slug,
+        args.create_branches,
+        args.timeout_ms,
+    )) {
+        Ok(result) => result,
+        Err(err) => return CommandOutcome::Failure(err),
+    };
+
+    let report = SyncReport {
+        repo_root: repo_root.display().to_string(),
+        epic_slug,
+        command_id: result.command_id,
+        state: result.state,
+        message: result.message.clone(),
+    };
+
+    match output.format {
+        OutputFormat::Human => {
+            if let Some(message) = &report.message {
+                println!("{message}");
+            } else {
+                println!("sync completed: state={}", report.state);
+            }
+        }
+        OutputFormat::Json => {
+            if let Err(err) = output.print_json_stdout(&report) {
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    format!("failed to write output: {err}"),
+                ));
+            }
+        }
+    }
+
+    if report.state == "succeeded" {
+        CommandOutcome::Success
+    } else {
+        CommandOutcome::Failure(ErrorEnvelope::new(
+            ErrorCategory::Conflict,
+            report
+                .message
+                .unwrap_or_else(|| format!("sync failed (state={})", report.state)),
+        ))
+    }
+}
+
+#[derive(Debug)]
+struct SyncCommandResult {
+    command_id: String,
+    state: String,
+    message: Option<String>,
+}
+
+async fn sync_from_local_via_control_plane(
+    repo_root: &Path,
+    epic_slug: &str,
+    create_branches: bool,
+    timeout_ms: u64,
+) -> Result<SyncCommandResult, ErrorEnvelope> {
+    #[cfg(not(unix))]
+    {
+        let _ = (repo_root, epic_slug, create_branches, timeout_ms);
+        return Err(ErrorEnvelope::new(
+            ErrorCategory::Unavailable,
+            "client API socket is only supported on unix platforms",
+        ));
+    }
+
+    #[cfg(unix)]
+    {
+        let socket_path = load_default_client_socket_path()?;
+        let options = UdsConnectOptions::new(socket_path);
+        let (client, task) = connect_uds(options, 64).await?;
+        tokio::spawn(task.run());
+
+        let graph = match client
+            .request(RequestPayload::GetEpicGraph(GetEpicGraphRequest {
+                epic_slug: epic_slug.to_string(),
+            }))
+            .await?
+        {
+            ResponseResult::GetEpicGraph(resp) => resp.graph,
+            ResponseResult::Error(err) => return Err(err),
+            _ => {
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    "unexpected response for GetEpicGraph",
+                ));
+            }
+        };
+
+        let workspace_id = graph.workspace_id.ok_or_else(|| {
+            ErrorEnvelope::new(
+                ErrorCategory::Internal,
+                "GetEpicGraph response missing workspace_id",
+            )
+        })?;
+        let repo_id = graph.repo_id.ok_or_else(|| {
+            ErrorEnvelope::new(
+                ErrorCategory::Internal,
+                "GetEpicGraph response missing repo_id",
+            )
+        })?;
+
+        let envelope = ProtocolEnvelope::new().with_scope(Scope::from(
+            redesmyn_protocol::RepoScope::new(workspace_id, repo_id),
+        ));
+
+        let payload = serde_json::to_vec(&LocalSyncFromDocsCommand {
+            repo_root: repo_root.display().to_string(),
+            epic_slug: epic_slug.to_string(),
+            create_branches,
+        })
+        .map_err(|err| {
+            ErrorEnvelope::new(
+                ErrorCategory::Internal,
+                format!("failed to encode sync payload: {err}"),
+            )
+        })?;
+
+        let command = match client
+            .request_with_envelope(
+                envelope.clone(),
+                RequestPayload::CreateCommand(CreateCommandRequest {
+                    kind: LOCAL_SYNC_FROM_DOCS_KIND.to_string(),
+                    target_task_id: None,
+                    idempotency_key: None,
+                    created_by: Some("rn-rs sync".to_string()),
+                    json_payload: payload,
+                }),
+            )
+            .await?
+        {
+            ResponseResult::CreateCommand(resp) => resp.command,
+            ResponseResult::Error(err) => return Err(err),
+            _ => {
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    "unexpected response for CreateCommand",
+                ));
+            }
+        };
+
+        let waited = match client
+            .request_with_envelope(
+                envelope,
+                RequestPayload::WaitForCommand(WaitForCommandRequest {
+                    command_id: command.command_id,
+                    terminal_states: vec![
+                        CommandState::Succeeded,
+                        CommandState::Failed,
+                        CommandState::Canceled,
+                    ],
+                    timeout_ms,
+                }),
+            )
+            .await?
+        {
+            ResponseResult::WaitForCommand(resp) => resp.command,
+            ResponseResult::Error(err) => return Err(err),
+            _ => {
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    "unexpected response for WaitForCommand",
+                ));
+            }
+        };
+
+        let state = match waited.state {
+            CommandState::Queued => "queued",
+            CommandState::Accepted => "accepted",
+            CommandState::Running => "running",
+            CommandState::Blocked => "blocked",
+            CommandState::Resumable => "resumable",
+            CommandState::Succeeded => "succeeded",
+            CommandState::Failed => "failed",
+            CommandState::Canceled => "canceled",
+            CommandState::Unknown => "unknown",
+        }
+        .to_string();
+
+        Ok(SyncCommandResult {
+            command_id: waited.command_id.to_string(),
+            state,
+            message: waited.last_update.and_then(|update| update.message),
+        })
+    }
+}
+
+fn infer_single_epic_slug_from_fs(repo_root: &Path) -> Option<String> {
+    let epics_dir = repo_root.join("epics");
+    let mut slugs: Vec<String> = std::fs::read_dir(epics_dir)
+        .ok()?
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            let path = entry.path();
+            if !path.is_dir() {
+                return None;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                return None;
+            }
+            Some(name)
+        })
+        .collect();
+    slugs.sort();
+    if slugs.len() == 1 { slugs.pop() } else { None }
+}
+
+#[cfg(unix)]
+fn load_default_client_socket_path() -> Result<PathBuf, ErrorEnvelope> {
+    let config = redesmyn_config::load_rust_config(Default::default()).map_err(|err| {
+        ErrorEnvelope::new(
+            ErrorCategory::Unavailable,
+            format!("failed to load config: {err}"),
+        )
+    })?;
+    Ok(config.control_plane.api.client_socket_path)
 }
 
 fn find_git_root(start: &Path) -> Option<PathBuf> {

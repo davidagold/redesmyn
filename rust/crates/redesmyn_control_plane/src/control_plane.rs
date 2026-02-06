@@ -15,8 +15,12 @@ use redesmyn_ids::{CommandId, HostInstanceId, TaskId};
 use redesmyn_protocol::daemon::{
     CommandUpdate as DaemonCommandUpdate, SessionEventBatch, SessionLiveEventBatch,
 };
+use redesmyn_protocol::sync_commands::{
+    LOCAL_SYNC_EVENT_FAILED, LOCAL_SYNC_FROM_DOCS_KIND, LocalSyncFromDocsCommand,
+};
 use redesmyn_protocol::{ErrorEnvelope, RepoScope};
 use redesmyn_storage::commands::CommandScope;
+use redesmyn_storage::events::EventScope;
 use redesmyn_storage::schema::CommandState as StorageCommandState;
 
 #[derive(Debug, thiserror::Error)]
@@ -199,6 +203,103 @@ impl ControlPlane {
             workspace_id,
             repo_id,
         };
+
+        if kind == LOCAL_SYNC_FROM_DOCS_KIND {
+            self.commands()
+                .append_update(
+                    command_id,
+                    StorageCommandState::Running,
+                    Some("Syncing local docs…".to_string()),
+                    None,
+                    None,
+                    None,
+                )
+                .await?;
+
+            let sync_command =
+                match serde_json::from_slice::<LocalSyncFromDocsCommand>(&json_payload) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        let message = format!("Sync failed: invalid payload ({err})");
+                        self.commands()
+                            .append_update(
+                                command_id,
+                                StorageCommandState::Failed,
+                                Some(message),
+                                None,
+                                None,
+                                None,
+                            )
+                            .await?;
+                        return Ok(());
+                    }
+                };
+
+            match crate::local_sync::run_local_sync_from_docs(
+                &self.pool,
+                self.event_log(),
+                repo_scope,
+                &sync_command,
+            )
+            .await
+            {
+                Ok(stats) => {
+                    let summary = format!(
+                        "Synced from local: epics +{}/~{}, tasks +{}/~{} (parent links ~{})",
+                        stats.epics_created,
+                        stats.epics_updated,
+                        stats.tasks_created,
+                        stats.tasks_updated,
+                        stats.parent_links_updated
+                    );
+                    let detail = serde_json::to_vec(&stats).ok();
+                    self.commands()
+                        .append_update(
+                            command_id,
+                            StorageCommandState::Succeeded,
+                            Some(summary),
+                            None,
+                            None,
+                            detail,
+                        )
+                        .await?;
+                }
+                Err(err) => {
+                    let message = format!("Sync failed: {err}");
+                    let failed_payload = serde_json::json!({
+                        "epic_slug": sync_command.epic_slug,
+                        "message": message,
+                    });
+                    if let Err(event_err) = self
+                        .event_log()
+                        .append_event(
+                            EventScope::Repo {
+                                workspace_id,
+                                repo_id,
+                            },
+                            LOCAL_SYNC_EVENT_FAILED,
+                            serde_json::to_vec(&failed_payload).unwrap_or_default(),
+                        )
+                        .await
+                    {
+                        tracing::warn!(error = %event_err, "failed to append local sync failed event");
+                    }
+
+                    self.commands()
+                        .append_update(
+                            command_id,
+                            StorageCommandState::Failed,
+                            Some(message),
+                            None,
+                            None,
+                            None,
+                        )
+                        .await?;
+                }
+            }
+
+            return Ok(());
+        }
 
         let dispatch_result = self
             .daemons()

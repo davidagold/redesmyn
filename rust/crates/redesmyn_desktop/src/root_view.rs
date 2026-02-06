@@ -8,9 +8,11 @@ use gpui::{
     App, AsyncApp, ClickEvent, Context, Entity, FocusHandle, Focusable, Render, ScrollHandle,
     SharedString, Subscription, Task, WeakEntity, Window, div, prelude::*, px,
 };
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 
-use redesmyn_protocol::client::{ModelReasoningEffort, SessionModelSelection};
+use redesmyn_ids::EventId;
+use redesmyn_protocol::client::{ModelReasoningEffort, SessionModelSelection, SubscriptionEvent};
+use redesmyn_protocol::sync_commands::{LOCAL_SYNC_EVENT_APPLIED, LOCAL_SYNC_EVENT_FAILED};
 use redesmyn_protocol::ui_driver::{
     CaptureScreenshotResponse, ClearGraphSelectionResponse, CreateChatSessionResponse,
     MultiSelectAddNodeResponse, MultiSelectRemoveNodeResponse, SelectGraphNodeResponse,
@@ -4193,8 +4195,16 @@ struct WorkspacePaneHost {
     graph_edge_count: u32,
     graph_error: Option<SharedString>,
     graph_task: Option<Task<()>>,
+    graph_refresh_pending: bool,
+    repo_event_subscription: Option<RepoEventLogSubscription>,
     selection_generation: u64,
     _subscriptions: Vec<Subscription>,
+}
+
+struct RepoEventLogSubscription {
+    scope: RepoScope,
+    cancel_tx: oneshot::Sender<()>,
+    _task: Task<()>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4377,6 +4387,8 @@ impl WorkspacePaneHost {
             graph_edge_count: 0,
             graph_error: None,
             graph_task: None,
+            graph_refresh_pending: false,
+            repo_event_subscription: None,
             selection_generation: 0,
             _subscriptions: subscriptions,
         }
@@ -4404,6 +4416,7 @@ impl WorkspacePaneHost {
             self.graph_error = None;
             let task_session_view = self.task_session_view.clone();
             self.graph_view = cx.new(|cx| GraphView::new_empty(task_session_view, cx));
+            self.graph_refresh_pending = false;
             if self.task_filters.is_active() {
                 let filters = self.task_filters.clone();
                 self.graph_view
@@ -4413,6 +4426,7 @@ impl WorkspacePaneHost {
             if self.selected_epic_slug.is_some() {
                 self.refresh_graph(cx);
             } else {
+                self.stop_repo_event_subscription(cx);
                 self.ui_updates.bump();
                 cx.notify();
             }
@@ -4969,10 +4983,116 @@ impl WorkspacePaneHost {
         cx.notify();
     }
 
-    fn refresh_graph(&mut self, cx: &mut Context<Self>) {
-        if self.graph_task.is_some() {
+    fn stop_repo_event_subscription(&mut self, cx: &mut Context<Self>) {
+        let Some(subscription) = self.repo_event_subscription.take() else {
+            return;
+        };
+        let _ = subscription.cancel_tx.send(());
+        self.ui_updates.bump();
+        cx.notify();
+    }
+
+    fn ensure_repo_event_subscription(
+        &mut self,
+        scope: RepoScope,
+        after_event_id: Option<EventId>,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .repo_event_subscription
+            .as_ref()
+            .is_some_and(|subscription| subscription.scope == scope)
+        {
             return;
         }
+
+        self.stop_repo_event_subscription(cx);
+
+        let Some(client) = self.model.read(cx).chrome_control_plane_client.clone() else {
+            return;
+        };
+        let (cancel_tx, mut cancel_rx) = oneshot::channel();
+        let tokio = client.tokio().clone();
+        let subscription_generation = self.selection_generation;
+        let weak = cx.entity().downgrade();
+
+        let task = cx.spawn(move |_weak_self: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let subscribe_client = client.clone();
+                let subscribe = tokio
+                    .spawn(async move {
+                        subscribe_client
+                            .subscribe_repo_event_log(scope, after_event_id)
+                            .await
+                    })
+                    .await;
+
+                let Ok(Ok((subscription_id, mut events_rx))) = subscribe else {
+                    return;
+                };
+
+                let subscription_client = client;
+                loop {
+                    tokio::select! {
+                        _ = &mut cancel_rx => {
+                            let _ = subscription_client.unsubscribe(subscription_id).await;
+                            break;
+                        }
+                        maybe_event = events_rx.recv() => {
+                            let Some(event) = maybe_event else {
+                                break;
+                            };
+                            match event {
+                                SubscriptionEvent::EventLog(event) => {
+                                    if event.event_type != LOCAL_SYNC_EVENT_APPLIED
+                                        && event.event_type != LOCAL_SYNC_EVENT_FAILED
+                                    {
+                                        continue;
+                                    }
+
+                                    let _ = cx.update(|cx| {
+                                        if let Some(entity) = weak.upgrade() {
+                                            entity.update(cx, |this, cx| {
+                                                if this.selection_generation == subscription_generation {
+                                                    this.refresh_graph(cx);
+                                                }
+                                            });
+                                        }
+                                    });
+                                }
+                                SubscriptionEvent::Error(_) => {
+                                    let _ = cx.update(|cx| {
+                                        if let Some(entity) = weak.upgrade() {
+                                            entity.update(cx, |this, cx| {
+                                                if this.selection_generation == subscription_generation {
+                                                    this.refresh_graph(cx);
+                                                }
+                                            });
+                                        }
+                                    });
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        self.repo_event_subscription = Some(RepoEventLogSubscription {
+            scope,
+            cancel_tx,
+            _task: task,
+        });
+    }
+
+    fn refresh_graph(&mut self, cx: &mut Context<Self>) {
+        if self.graph_task.is_some() {
+            self.graph_refresh_pending = true;
+            return;
+        }
+        self.graph_refresh_pending = false;
 
         let Some(client) = self.model.read(cx).chrome_control_plane_client.clone() else {
             self.graph_state = redesmyn_protocol::ui_driver::UiGraphLoadState::Error;
@@ -5024,6 +5144,15 @@ impl WorkspacePaneHost {
 
                         match result {
                             Ok(graph) => {
+                                if let (Some(workspace_id), Some(repo_id)) =
+                                    (graph.workspace_id, graph.repo_id)
+                                {
+                                    this.ensure_repo_event_subscription(
+                                        RepoScope::new(workspace_id, repo_id),
+                                        graph.as_of_event_id,
+                                        cx,
+                                    );
+                                }
                                 this.graph_node_count =
                                     graph.nodes.len().min(u32::MAX as usize) as u32;
                                 this.graph_edge_count =
@@ -5047,12 +5176,25 @@ impl WorkspacePaneHost {
 
                         this.ui_updates.bump();
                         cx.notify();
+
+                        if this.graph_refresh_pending {
+                            this.graph_refresh_pending = false;
+                            this.refresh_graph(cx);
+                        }
                     })
                 });
             }
         }));
         self.ui_updates.bump();
         cx.notify();
+    }
+}
+
+impl Drop for WorkspacePaneHost {
+    fn drop(&mut self) {
+        if let Some(subscription) = self.repo_event_subscription.take() {
+            let _ = subscription.cancel_tx.send(());
+        }
     }
 }
 
