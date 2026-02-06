@@ -50,6 +50,12 @@ use redesmyn_protocol::ui_driver::{
 use redesmyn_protocol::{ProtocolEnvelope, RepoScope};
 use redesmyn_ui_session::{SessionView, SessionViewEvent, TaskSessionOperation};
 
+/// Key context used for graph-only keyboard shortcuts (e.g., task filter toggle).
+///
+/// Keep this scoped to a dedicated focus target, not the full graph subtree, so nested text
+/// inputs (like the expanded task-card composer) don't inherit graph shortcuts.
+pub const GRAPH_SHORTCUTS_KEY_CONTEXT: &str = "GraphShortcuts";
+
 fn graph_node_id_to_ui(id: GraphNodeId) -> UiDriverGraphNodeId {
     match id {
         GraphNodeId::Task(task_id) => UiDriverGraphNodeId::Task(task_id),
@@ -3394,14 +3400,12 @@ impl Render for GraphView {
             None
         };
 
-        div()
-            .id(("graph_view", cx.entity_id()))
-            .flex()
-            .flex_col()
-            .size_full()
-            .bg(theme.colors.background)
+        let graph_shortcut_scope = div()
+            .id(("graph_shortcut_scope", cx.entity_id()))
+            .absolute()
+            .size(px(0.0))
             .focusable()
-            .key_context("Graph")
+            .key_context(GRAPH_SHORTCUTS_KEY_CONTEXT)
             .capture_key_down({
                 let graph = graph.clone();
                 move |event, _window, cx| {
@@ -3425,6 +3429,16 @@ impl Render for GraphView {
                     }
                 }
             })
+            .track_focus(&self.focus_handle(cx));
+
+        div()
+            .id(("graph_view", cx.entity_id()))
+            .flex()
+            .flex_col()
+            .size_full()
+            .bg(theme.colors.background)
+            .focusable()
+            .child(graph_shortcut_scope)
             .child(
                 div()
                     .id(("graph_canvas", cx.entity_id()))
@@ -3453,7 +3467,6 @@ impl Render for GraphView {
                     })
                     .when_some(fps_overlay, |this, overlay| this.child(overlay)),
             )
-            .track_focus(&self.focus_handle(cx))
     }
 }
 

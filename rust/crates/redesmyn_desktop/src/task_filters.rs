@@ -1,4 +1,5 @@
 use gpui::{App, KeyBinding, actions};
+use redesmyn_ui_graph::GRAPH_SHORTCUTS_KEY_CONTEXT;
 
 actions!(
     redesmyn_desktop_task_filters,
@@ -17,8 +18,7 @@ actions!(
 
 pub fn bind_task_filter_keys(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("f", OpenTaskFilters, Some("Workspace")),
-        KeyBinding::new("f", OpenTaskFilters, Some("Graph")),
+        KeyBinding::new("f", OpenTaskFilters, Some(GRAPH_SHORTCUTS_KEY_CONTEXT)),
         KeyBinding::new("escape", CloseTaskFilters, Some("TaskFilters")),
         KeyBinding::new("escape", CloseTaskFilters, Some("TaskFilters > TextInput")),
         KeyBinding::new("tab", TaskFiltersToggleChipFocus, Some("TaskFilters")),
