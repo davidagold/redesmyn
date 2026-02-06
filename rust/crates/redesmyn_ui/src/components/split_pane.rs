@@ -412,7 +412,7 @@ impl Render for SplitPane {
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .child(secondary)
             .when(!self.state.collapsed, |this| this.child(divider))
-            .child(primary);
+            .when(!self.state.collapsed, |this| this.child(primary));
 
         if let Some(ghost) = drag_ghost {
             root = root.child(ghost);
