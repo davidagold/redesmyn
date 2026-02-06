@@ -2905,7 +2905,6 @@ impl Render for GraphView {
                                                     .flex_1()
                                                     .min_h(px(0.0))
                                                     .px(theme.spacing.md)
-                                                    .pt(theme.spacing.md)
                                                     .pb(theme.spacing.md)
                                                     .flex()
                                                     .flex_col()
