@@ -1,12 +1,13 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, AsyncApp, ClickEvent, Context, CursorStyle, Entity, FocusHandle, Focusable, FontWeight,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Render, ScrollHandle,
-    ScrollWheelEvent, Subscription, Task, TextRun, Window, canvas, div, fill, prelude::*, px, quad,
-    rems,
+    App, AsyncApp, ClickEvent, Context, CursorStyle, Entity, FocusHandle, Focusable, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Render, ScrollHandle, ScrollWheelEvent,
+    Subscription, Task, TextRun, Window, canvas, div, fill, prelude::*, px, quad, rems,
 };
 
 use redesmyn_ids::CommandId;
@@ -16,8 +17,8 @@ use redesmyn_client_api::Client;
 
 use redesmyn_ui::components::{
     Badge, BadgeKind, ButtonKind, Callout, CalloutKind, IconButton,
-    MarkdownInlineSingleLineContent, ProgressPill, ProgressPillKind, ScrollArea, TextButton,
-    Tooltip,
+    MarkdownInlineSingleLineContent, MarkdownView, ProgressPill, ProgressPillKind, ScrollArea,
+    TextButton, Tooltip,
 };
 use redesmyn_ui::task_filters::TaskFilters;
 use redesmyn_ui::utils::{
@@ -39,8 +40,8 @@ use crate::scene::{AgentStatus, GraphEdgeId, GraphNodeId, GraphScene, TrunkMarkK
 
 use redesmyn_markdown::{MarkdownParseOptions, parse_markdown};
 use redesmyn_protocol::client::{
-    AgentKind, AgentMessageConflictAction, MergeReadiness, RequestPayload, ResponseResult,
-    RestartAgentRequest, StartAgentRequest, StopAgentRequest, TaskState,
+    AgentKind, AgentMessageConflictAction, CommandState, MergeReadiness, RequestPayload,
+    ResponseResult, RestartAgentRequest, StartAgentRequest, StopAgentRequest, TaskState,
 };
 use redesmyn_protocol::ui_driver::{
     UiGraphCameraState, UiGraphEdgeId as UiDriverGraphEdgeId, UiGraphLoadState,
@@ -248,6 +249,24 @@ struct CollapsedTitleCacheEntry {
     line2: Option<gpui::SharedString>,
 }
 
+#[derive(Debug, Clone)]
+enum TaskDescriptionState {
+    Idle,
+    Loading {
+        path: gpui::SharedString,
+    },
+    Loaded {
+        doc: Arc<redesmyn_markdown::MarkdownDoc>,
+    },
+    Missing {
+        path: gpui::SharedString,
+    },
+    Error {
+        path: gpui::SharedString,
+        message: gpui::SharedString,
+    },
+}
+
 pub struct GraphView {
     focus_handle: FocusHandle,
     scroll_focus_enabled: bool,
@@ -262,8 +281,12 @@ pub struct GraphView {
     last_canvas_bounds: Option<gpui::Bounds<gpui::Pixels>>,
     task_session_view: Entity<SessionView>,
     expanded_details_scroll: ScrollHandle,
-    demo_action: UserActionState,
-    demo_action_task: Option<Task<()>>,
+    current_epic_slug: Option<gpui::SharedString>,
+    selected_task_description_key: Option<(gpui::SharedString, gpui::SharedString)>,
+    selected_task_description: TaskDescriptionState,
+    selected_task_description_task: Option<Task<()>>,
+    task_description_cache:
+        HashMap<(gpui::SharedString, gpui::SharedString), Arc<redesmyn_markdown::MarkdownDoc>>,
     layout_animation: Option<LayoutAnimation>,
     layout_animation_guard: Option<UiActivityGuard>,
     pending_pan_to_selection: Option<GraphNodeId>,
@@ -332,8 +355,11 @@ impl GraphView {
             last_canvas_bounds: None,
             task_session_view,
             expanded_details_scroll: ScrollHandle::new(),
-            demo_action: UserActionState::default(),
-            demo_action_task: None,
+            current_epic_slug: None,
+            selected_task_description_key: None,
+            selected_task_description: TaskDescriptionState::Idle,
+            selected_task_description_task: None,
+            task_description_cache: HashMap::new(),
             layout_animation: None,
             layout_animation_guard: None,
             pending_pan_to_selection: None,
@@ -356,6 +382,7 @@ impl GraphView {
 
         let selected = this.scene.selection().selected_node;
         this.sync_task_session_view(selected, cx);
+        this.sync_task_description(selected, cx);
         this
     }
 
@@ -407,6 +434,7 @@ impl GraphView {
         if previous_selection.selected_node != next_selected {
             self.reset_expanded_card_state();
             self.sync_task_session_view(next_selected, cx);
+            self.sync_task_description(next_selected, cx);
         }
 
         let did_start_layout_animation = self.start_layout_animation(
@@ -436,6 +464,7 @@ impl GraphView {
         cx: &mut Context<Self>,
     ) {
         let previous_selection = self.scene.selection().clone();
+        let previous_epic_slug = self.current_epic_slug.clone();
         let from_layout = self.snapshot_displayed_layout();
 
         if let Some(full) = self.full_scene.as_mut() {
@@ -444,6 +473,8 @@ impl GraphView {
         } else {
             self.scene.replace_from_epic_graph(graph);
         }
+        self.current_epic_slug = Some(graph.epic_slug.clone().into());
+        let epic_changed = self.current_epic_slug != previous_epic_slug;
 
         self.pan_drag = None;
         self.edge_label_cache.borrow_mut().clear();
@@ -470,6 +501,10 @@ impl GraphView {
         if previous_selection.selected_node != next_selection.selected_node {
             self.reset_expanded_card_state();
             self.sync_task_session_view(next_selection.selected_node, cx);
+            self.sync_task_description(next_selection.selected_node, cx);
+        }
+        if epic_changed && previous_selection.selected_node == next_selection.selected_node {
+            self.sync_task_description(next_selection.selected_node, cx);
         }
 
         let did_start_layout_animation = self.start_layout_animation(
@@ -524,6 +559,7 @@ impl GraphView {
         if previous_selection.selected_node != next_selection.selected_node {
             self.reset_expanded_card_state();
             self.sync_task_session_view(next_selection.selected_node, cx);
+            self.sync_task_description(next_selection.selected_node, cx);
             let did_start_layout_animation = self.start_layout_animation(
                 from_layout,
                 self.snapshot_scene_layout(),
@@ -594,6 +630,35 @@ impl GraphView {
         self.scene
             .node(GraphNodeId::Task(task_id))
             .map(|node| node.task_slug.to_string())
+    }
+
+    #[must_use]
+    pub fn task_id_for_task_slug(&self, task_slug: &str) -> Option<TaskId> {
+        self.scene.nodes().find_map(|node| {
+            if node.task_slug.as_ref() != task_slug {
+                return None;
+            }
+
+            match node.id {
+                GraphNodeId::Task(task_id) => Some(task_id),
+                GraphNodeId::Trunk => None,
+            }
+        })
+    }
+
+    #[must_use]
+    pub fn task_slugs(&self) -> Vec<String> {
+        let mut out: Vec<String> = self
+            .scene
+            .nodes()
+            .filter_map(|node| match node.id {
+                GraphNodeId::Task(_) => Some(node.task_slug.to_string()),
+                GraphNodeId::Trunk => None,
+            })
+            .collect();
+        out.sort();
+        out.dedup();
+        out
     }
 
     pub fn driver_select_node_by_task_id(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
@@ -708,10 +773,122 @@ impl GraphView {
         });
     }
 
+    fn task_readme_path_for(&self, epic_slug: &str, task_slug: &str) -> PathBuf {
+        let mut path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        path.push("epics");
+        path.push(epic_slug);
+        path.push("tasks");
+        path.push(task_slug);
+        path.push("README.md");
+        path
+    }
+
+    fn sync_task_description(
+        &mut self,
+        selected_node: Option<GraphNodeId>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(GraphNodeId::Task(task_id)) = selected_node else {
+            self.selected_task_description_key = None;
+            self.selected_task_description = TaskDescriptionState::Idle;
+            self.selected_task_description_task = None;
+            return;
+        };
+
+        let Some(epic_slug) = self.current_epic_slug.clone() else {
+            self.selected_task_description_key = None;
+            self.selected_task_description = TaskDescriptionState::Idle;
+            self.selected_task_description_task = None;
+            return;
+        };
+
+        let Some(node) = self.scene.node(GraphNodeId::Task(task_id)) else {
+            self.selected_task_description_key = None;
+            self.selected_task_description = TaskDescriptionState::Idle;
+            self.selected_task_description_task = None;
+            return;
+        };
+
+        let task_slug = node.task_slug.clone();
+        let key = (epic_slug.clone(), task_slug.clone());
+        if self.selected_task_description_key.as_ref() == Some(&key) {
+            return;
+        }
+        self.selected_task_description_key = Some(key.clone());
+        self.selected_task_description_task = None;
+
+        let path = self.task_readme_path_for(epic_slug.as_ref(), task_slug.as_ref());
+        let path_label = gpui::SharedString::new(path.to_string_lossy().to_string());
+
+        if let Some(doc) = self.task_description_cache.get(&key).cloned() {
+            self.selected_task_description = TaskDescriptionState::Loaded { doc };
+            return;
+        }
+
+        self.selected_task_description = TaskDescriptionState::Loading {
+            path: path_label.clone(),
+        };
+
+        let view = cx.entity();
+        self.selected_task_description_task = Some(cx.spawn(
+            move |_: gpui::WeakEntity<Self>, cx: &mut AsyncApp| {
+                let cx = cx.clone();
+                async move {
+                    let result = match std::fs::read_to_string(&path) {
+                        Ok(content) => Ok(Some(content)),
+                        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                        Err(err) => Err(err.to_string()),
+                    };
+
+                    let _ = cx.update(|cx| {
+                        view.update(cx, |this, cx| {
+                            this.on_task_description_loaded(key, path_label, result, cx);
+                        })
+                    });
+                }
+            },
+        ));
+
+        cx.notify();
+    }
+
+    fn on_task_description_loaded(
+        &mut self,
+        key: (gpui::SharedString, gpui::SharedString),
+        path: gpui::SharedString,
+        result: Result<Option<String>, String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.selected_task_description_task = None;
+        if self.selected_task_description_key.as_ref() != Some(&key) {
+            return;
+        }
+
+        match result {
+            Ok(Some(markdown)) if !markdown.trim().is_empty() => {
+                let doc = Arc::new(parse_markdown(&markdown, MarkdownParseOptions::default()));
+                self.task_description_cache.insert(key, doc.clone());
+                self.selected_task_description = TaskDescriptionState::Loaded { doc };
+            }
+            Ok(_) => {
+                self.selected_task_description = TaskDescriptionState::Missing { path };
+            }
+            Err(message) => {
+                self.selected_task_description = TaskDescriptionState::Error {
+                    path,
+                    message: gpui::SharedString::new(message),
+                };
+            }
+        }
+
+        cx.notify();
+    }
+
     fn reset_expanded_card_state(&mut self) {
         self.expanded_details_scroll = ScrollHandle::new();
-        self.demo_action = UserActionState::default();
-        self.demo_action_task = None;
+        self.selected_task_description_key = None;
+        self.selected_task_description = TaskDescriptionState::Idle;
+        self.selected_task_description_task = None;
     }
 
     fn snapshot_scene_layout(&self) -> BTreeMap<GraphNodeId, NodeWorldRect> {
@@ -1210,43 +1387,6 @@ impl GraphView {
             );
         }
         did_start
-    }
-
-    fn start_demo_action(&mut self, node_id: GraphNodeId, cx: &mut Context<Self>) {
-        if self.demo_action.in_flight {
-            return;
-        }
-
-        let span = redesmyn_logging::redesmyn_info_span!(
-            "ui.task_card.demo_action.start",
-            node_id = %node_id
-        );
-        let _guard = span.enter();
-
-        self.demo_action.start();
-        cx.notify();
-
-        let view = cx.entity();
-        self.demo_action_task = Some(cx.spawn(
-            move |_: gpui::WeakEntity<Self>, cx: &mut AsyncApp| {
-                let cx = cx.clone();
-                async move {
-                    gpui::Timer::after(Duration::from_millis(900)).await;
-                    let _ = cx.update(|cx| {
-                        view.update(cx, |this, cx| {
-                            this.demo_action.succeed();
-                            this.demo_action_task = None;
-                            cx.notify();
-
-                            redesmyn_logging::tracing::info!(
-                                node_id = %node_id,
-                                "demo task card action finished"
-                            );
-                        })
-                    });
-                }
-            },
-        ));
     }
 
     fn task_quick_actions_row(
@@ -2655,16 +2795,6 @@ impl Render for GraphView {
                         }
                     };
 
-                    let action_button_id = (
-                        gpui::ElementId::from(("task_card_demo_action", entity_id)),
-                        node_key.clone(),
-                    );
-                    let start_action = {
-                        let graph = graph.clone();
-                        move |_: &ClickEvent, _window: &mut Window, cx: &mut App| {
-                            graph.update(cx, |this, cx| this.start_demo_action(node_id, cx));
-                        }
-                    };
                     let start_agent_action = {
                         let task_session_view = self.task_session_view.clone();
                         move |_: &ClickEvent, _window: &mut Window, cx: &mut App| {
@@ -2677,7 +2807,32 @@ impl Render for GraphView {
                     };
 
                     let right_scroll = self.expanded_details_scroll.clone();
-                    let demo_action = self.demo_action.clone();
+                    let latest_session = node.latest_session.clone();
+                    let latest_command = node.latest_command.clone();
+                    let description_state = self.selected_task_description.clone();
+                    let task_id = match node_id {
+                        GraphNodeId::Task(task_id) => task_id,
+                        GraphNodeId::Trunk => unreachable!("trunk nodes are skipped above"),
+                    };
+                    let quick_action_error = self.quick_actions.get(&task_id).and_then(|state| {
+                        state
+                            .start
+                            .error
+                            .clone()
+                            .or_else(|| state.restart.error.clone())
+                            .or_else(|| state.stop.error.clone())
+                    });
+                    let refresh_session_button_id = (
+                        gpui::ElementId::from(("task_card_refresh_session", entity_id)),
+                        node_key.clone(),
+                    );
+                    let refresh_task_session = {
+                        let task_session_view = self.task_session_view.clone();
+                        move |_: &ClickEvent, _window: &mut Window, cx: &mut App| {
+                            task_session_view
+                                .update(cx, |view, cx| view.refresh_latest_task_session(cx));
+                        }
+                    };
 
                     card = card.child(
                         div()
@@ -2709,7 +2864,7 @@ impl Render for GraphView {
                                                     .text_sm()
                                                     .text_color(theme.colors.foreground)
                                                     .truncate()
-                                                    .child(title),
+                                                    .child(title.clone()),
                                             )
                                             .when(show_task_slug, |this| {
                                                 this.child(
@@ -2939,146 +3094,103 @@ impl Render for GraphView {
 	                                        div()
 	                                            .flex()
 	                                            .flex_col()
-	                                            .w(px(360.0))
+	                                            .w(px(380.0))
 	                                            .min_w_0()
-	                                            .child(
-														div()
-															.h(px(34.0))
-															.px(theme.spacing.md)
-															.flex()
-															.flex_row()
-															.items_center()
-															.gap(theme.spacing.sm)
-															.text_sm()
-															.text_color(theme.colors.foreground)
-															.child("Details")
-															.child({
-																let active_section =
-																	right_scroll.top_item().min(4);
-																div()
-																	.flex_1()
-																	.min_w_0()
-																	.flex()
-																	.flex_row()
-																	.items_center()
-																	.justify_end()
-																	.gap(theme.spacing.xs)
-																	.child(details_nav_link(
-																		(
-																			gpui::ElementId::from((
-																				"task_details_nav_overview",
-																				entity_id,
-																			)),
-																			node_key.clone(),
-																		),
-																		"Overview",
-																		0,
-																		active_section == 0,
-																		right_scroll.clone(),
-																		&theme,
-																	))
-																	.child(details_nav_separator(&theme))
-																	.child(details_nav_link(
-																		(
-																			gpui::ElementId::from((
-																				"task_details_nav_agent",
-																				entity_id,
-																			)),
-																			node_key.clone(),
-																		),
-																		"Agent",
-																		1,
-																		active_section == 1,
-																		right_scroll.clone(),
-																		&theme,
-																	))
-																	.child(details_nav_separator(&theme))
-																	.child(details_nav_link(
-																		(
-																			gpui::ElementId::from((
-																				"task_details_nav_merge",
-																				entity_id,
-																			)),
-																			node_key.clone(),
-																		),
-																		"Merge",
-																		2,
-																		active_section == 2,
-																		right_scroll.clone(),
-																		&theme,
-																	))
-																	.child(details_nav_separator(&theme))
-																	.child(details_nav_link(
-																		(
-																			gpui::ElementId::from((
-																				"task_details_nav_ids",
-																				entity_id,
-																			)),
-																			node_key.clone(),
-																		),
-																		"IDs",
-																		3,
-																		active_section == 3,
-																		right_scroll.clone(),
-																		&theme,
-																	))
-																	.child(details_nav_separator(&theme))
-																	.child(details_nav_link(
-																		(
-																			gpui::ElementId::from((
-																				"task_details_nav_artifacts",
-																				entity_id,
-																			)),
-																			node_key.clone(),
-																		),
-																		"Artifacts",
-																		4,
-																		active_section == 4,
-																		right_scroll.clone(),
-																		&theme,
-																	))
-															}),
-													)
 	                                            .child(
 	                                                div()
 	                                                    .flex_1()
 	                                                    .min_h(px(0.0))
-                                                    .px(theme.spacing.md)
-                                                    .pb(theme.spacing.md)
-													.child(
-														ScrollArea::new(
-															(
-																gpui::ElementId::from((
-																	"task_card_details_scroll",
-																	entity_id,
-																)),
-																node_key.clone(),
-															),
-															right_scroll,
-														)
-															.child(task_details_overview_section(
-																branch_name.clone(),
-																&theme,
-															))
-														.child(task_details_agent_section(
-															action_button_id,
-															demo_action,
-															start_action,
-															&theme,
-														))
-														.child(task_details_merge_section(&theme))
-														.child(task_details_identifiers_section(
-															node_id, &theme,
-														))
-														.child(task_details_artifacts_section(
-															entity_id,
-															node_key.clone(),
-															&theme,
-														))
-															.child(div().h(theme.spacing.md)),
-													),
-											),
-									),
+	                                                    .px(theme.spacing.md)
+	                                                    .pb(theme.spacing.md)
+	                                                    .pt(theme.spacing.sm)
+	                                                    .child(
+	                                                        ScrollArea::new(
+	                                                            (
+	                                                                gpui::ElementId::from((
+	                                                                    "task_card_details_scroll",
+	                                                                    entity_id,
+	                                                                )),
+	                                                                node_key.clone(),
+	                                                            ),
+	                                                            right_scroll,
+	                                                        )
+	                                                        .child(task_details_description_section(
+	                                                            (
+	                                                                gpui::ElementId::from((
+	                                                                    "task_details_description",
+	                                                                    entity_id,
+	                                                                )),
+	                                                                node_key.clone(),
+	                                                            ),
+	                                                            title.clone(),
+	                                                            description_state,
+	                                                            &theme,
+	                                                        ))
+	                                                        .child(task_details_overview_section(
+	                                                            state,
+	                                                            merge_readiness,
+	                                                            agent_status,
+	                                                            branch_name.clone(),
+	                                                            latest_session.clone(),
+	                                                            latest_command.clone(),
+	                                                            &theme,
+	                                                        ))
+	                                                        .child(details_section(
+	                                                            "Actions",
+	                                                            div()
+	                                                                .flex()
+	                                                                .flex_col()
+	                                                                .gap(theme.spacing.sm)
+	                                                                .when_some(
+	                                                                    quick_action_error,
+	                                                                    |this, error| {
+	                                                                        this.child(
+	                                                                            Callout::new(error)
+	                                                                                .kind(
+	                                                                                    CalloutKind::Danger,
+	                                                                                )
+	                                                                                .title(
+	                                                                                    "Task action failed",
+	                                                                                ),
+	                                                                        )
+	                                                                    },
+	                                                                )
+	                                                                .child(
+	                                                                    self.task_quick_actions_row(
+	                                                                        node_key.clone(),
+	                                                                        task_id,
+	                                                                        agent_status,
+	                                                                        task_session_state
+	                                                                            .session_id
+	                                                                            .is_some()
+	                                                                            || latest_session
+	                                                                                .as_ref()
+	                                                                                .is_some(),
+	                                                                        1.0,
+	                                                                        is_primary_selected,
+	                                                                        &theme,
+	                                                                        1.0,
+	                                                                        rem_size,
+	                                                                        cx,
+	                                                                    ),
+	                                                                )
+	                                                                .child(
+	                                                                    TextButton::new(
+	                                                                        refresh_session_button_id,
+	                                                                        "Refresh session",
+	                                                                    )
+	                                                                    .kind(ButtonKind::Ghost)
+	                                                                    .small()
+	                                                                    .on_click(
+	                                                                        refresh_task_session,
+	                                                                    ),
+	                                                                ),
+	                                                            &theme,
+	                                                        ))
+	                                                        .child(div().h(theme.spacing.md)),
+	                                                    ),
+	                                            ),
+	                                    ),
 							),
                     );
                 }
@@ -3778,54 +3890,123 @@ fn details_section(
         )
 }
 
-fn details_nav_separator(theme: &redesmyn_ui::styles::UiTheme) -> impl IntoElement {
-    div()
-        .text_xs()
-        .text_color(theme.colors.foreground_muted.opacity(0.6))
-        .child("·")
+fn command_state_label(state: CommandState) -> &'static str {
+    match state {
+        CommandState::Unknown => "Unknown",
+        CommandState::Queued => "Queued",
+        CommandState::Accepted => "Accepted",
+        CommandState::Running => "Running",
+        CommandState::Blocked => "Blocked",
+        CommandState::Resumable => "Resumable",
+        CommandState::Succeeded => "Succeeded",
+        CommandState::Failed => "Failed",
+        CommandState::Canceled => "Canceled",
+    }
 }
 
-fn details_nav_link(
+fn task_details_description_section(
     id: impl Into<gpui::ElementId>,
-    label: &'static str,
-    target_item_ix: usize,
-    active: bool,
-    scroll: ScrollHandle,
+    title: gpui::SharedString,
+    description_state: TaskDescriptionState,
     theme: &redesmyn_ui::styles::UiTheme,
 ) -> impl IntoElement {
-    let hover_bg = theme.colors.accent.opacity(0.6);
-    let active_bg = theme.colors.accent.opacity(0.75);
-    let fg = if active {
-        theme.colors.foreground
-    } else {
-        theme.colors.foreground_muted
+    let id = id.into();
+
+    let body = match description_state {
+        TaskDescriptionState::Loaded { doc, .. } => div()
+            .rounded(theme.radius.md)
+            .bg(theme.colors.surface_elevated.opacity(0.22))
+            .px(theme.spacing.sm)
+            .py(theme.spacing.sm)
+            .child(
+                MarkdownView::new((id.clone(), "markdown"), doc)
+                    .show_truncation_notice(false)
+                    .text_size(theme.typography.body.size)
+                    .text_color(theme.colors.foreground),
+            )
+            .into_any_element(),
+        TaskDescriptionState::Loading { path } => div()
+            .flex()
+            .flex_col()
+            .gap(theme.spacing.xs)
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.colors.foreground_muted)
+                    .child("Loading task description…"),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.colors.foreground_muted)
+                    .truncate()
+                    .child(path),
+            )
+            .into_any_element(),
+        TaskDescriptionState::Missing { path } => div()
+            .flex()
+            .flex_col()
+            .gap(theme.spacing.sm)
+            .child(
+                Callout::new("Task README is not available for this task.")
+                    .kind(CalloutKind::Info)
+                    .title("Description unavailable"),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.colors.foreground_muted)
+                    .truncate()
+                    .child(path),
+            )
+            .into_any_element(),
+        TaskDescriptionState::Error { path, message } => div()
+            .flex()
+            .flex_col()
+            .gap(theme.spacing.sm)
+            .child(
+                Callout::new(message)
+                    .kind(CalloutKind::Danger)
+                    .title("Failed to load task description"),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.colors.foreground_muted)
+                    .truncate()
+                    .child(path),
+            )
+            .into_any_element(),
+        TaskDescriptionState::Idle => {
+            let doc = Arc::new(parse_markdown(
+                title.as_ref(),
+                MarkdownParseOptions::default(),
+            ));
+            div()
+                .rounded(theme.radius.md)
+                .bg(theme.colors.surface_elevated.opacity(0.22))
+                .px(theme.spacing.sm)
+                .py(theme.spacing.sm)
+                .child(
+                    MarkdownView::new((id, "markdown"), doc)
+                        .show_truncation_notice(false)
+                        .text_size(theme.typography.body.size)
+                        .text_color(theme.colors.foreground),
+                )
+                .into_any_element()
+        }
     };
 
-    div()
-        .id(id)
-        .flex()
-        .items_center()
-        .px(theme.spacing.xs)
-        .py(px(2.0))
-        .rounded(px(999.0))
-        .text_xs()
-        .text_color(fg)
-        .when(active, |this| {
-            this.bg(active_bg).font_weight(FontWeight::SEMIBOLD)
-        })
-        .cursor_pointer()
-        .hover(move |this| this.bg(hover_bg))
-        .on_click(move |event, _window, cx| {
-            if event.standard_click() {
-                scroll.scroll_to_top_of_item(target_item_ix);
-            }
-            cx.stop_propagation();
-        })
-        .child(label)
+    details_section("Description", body, theme)
 }
 
 fn task_details_overview_section(
+    state: TaskState,
+    merge_readiness: MergeReadiness,
+    agent_status: AgentStatus,
     branch_name: Option<gpui::SharedString>,
+    latest_session: Option<crate::scene::TaskSessionSummary>,
+    latest_command: Option<crate::scene::TaskCommandSummary>,
     theme: &redesmyn_ui::styles::UiTheme,
 ) -> impl IntoElement {
     details_section(
@@ -3834,141 +4015,53 @@ fn task_details_overview_section(
             .flex()
             .flex_col()
             .gap(theme.spacing.xs)
+            .child(details_kv_row(
+                "State",
+                div().child(task_state_label(state)),
+                theme,
+            ))
+            .child(details_kv_row(
+                "Merge",
+                div().child(merge_readiness_label(merge_readiness)),
+                theme,
+            ))
+            .child(details_kv_row(
+                "Agent",
+                div().child(agent_status_value_label(agent_status)),
+                theme,
+            ))
             .when_some(branch_name, |this, name| {
                 this.child(details_kv_row("Branch", div().child(name), theme))
             })
-            .child(details_kv_row("Updated", div().child("—"), theme)),
-        theme,
-    )
-}
-
-fn task_details_agent_section(
-    action_button_id: impl Into<gpui::ElementId>,
-    demo_action: UserActionState,
-    start_demo_action: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    theme: &redesmyn_ui::styles::UiTheme,
-) -> impl IntoElement {
-    let mut body = div().flex().flex_col().gap(theme.spacing.sm);
-    if let Some(error) = demo_action.error.clone() {
-        body = body.child(
-            Callout::new(error)
-                .kind(CalloutKind::Danger)
-                .title("Action failed"),
-        );
-    }
-
-    body = body
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(theme.spacing.xs)
-                .child(details_kv_row("Session", div().child("unbound"), theme)),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(theme.spacing.sm)
-                .child(
-                    TextButton::new(action_button_id, "Run demo")
-                        .kind(ButtonKind::Secondary)
-                        .small()
-                        .disabled(demo_action.in_flight)
-                        .disabled_reason("Running…")
-                        .on_click(start_demo_action),
-                )
-                .when(demo_action.in_flight, |this| {
-                    this.child(ProgressPill::new("Running"))
-                }),
-        );
-
-    details_section("Agent", body, theme)
-}
-
-fn task_details_merge_section(theme: &redesmyn_ui::styles::UiTheme) -> impl IntoElement {
-    details_section(
-        "Merge / restack",
-        div()
-            .flex()
-            .flex_col()
-            .gap(theme.spacing.xs)
-            .child(details_kv_row("Next", div().child("—"), theme)),
-        theme,
-    )
-}
-
-fn task_details_identifiers_section(
-    node_id: GraphNodeId,
-    theme: &redesmyn_ui::styles::UiTheme,
-) -> impl IntoElement {
-    details_section(
-        "Identifiers",
-        div()
-            .flex()
-            .flex_col()
-            .gap(theme.spacing.xs)
             .child(details_kv_row(
-                "Task id",
-                div().child(format!("{node_id}")),
+                "Session",
+                div().child(
+                    latest_session
+                        .as_ref()
+                        .map(|session| session.session_id.to_string())
+                        .unwrap_or_else(|| "No session yet".to_string()),
+                ),
                 theme,
             ))
-            .child(details_kv_row("Run id", div().child("—"), theme))
-            .child(details_kv_row("Session id", div().child("—"), theme)),
-        theme,
-    )
-}
-
-fn task_details_artifacts_section(
-    entity_id: gpui::EntityId,
-    node_key: gpui::SharedString,
-    theme: &redesmyn_ui::styles::UiTheme,
-) -> impl IntoElement {
-    details_section(
-        "Artifacts / logs",
-        div()
-            .flex()
-            .flex_col()
-            .gap(theme.spacing.sm)
-            .child(
-                TextButton::new(
-                    (
-                        gpui::ElementId::from(("task_card_logs", entity_id)),
-                        node_key.clone(),
-                    ),
-                    "Open logs",
-                )
-                .kind(ButtonKind::Ghost)
-                .small()
-                .disabled(true)
-                .disabled_reason("Coming soon"),
+            .when_some(
+                latest_session.and_then(|session| session.message_preview),
+                |this, preview| this.child(details_kv_row("Preview", div().child(preview), theme)),
             )
-            .child(
-                TextButton::new(
-                    (
-                        gpui::ElementId::from(("task_card_diffs", entity_id)),
-                        node_key.clone(),
-                    ),
-                    "View diffs",
-                )
-                .kind(ButtonKind::Ghost)
-                .small()
-                .disabled(true)
-                .disabled_reason("Coming soon"),
-            )
-            .child(
-                TextButton::new(
-                    (
-                        gpui::ElementId::from(("task_card_merge", entity_id)),
-                        node_key,
-                    ),
-                    "Merge / restack",
-                )
-                .kind(ButtonKind::Ghost)
-                .small()
-                .disabled(true)
-                .disabled_reason("Coming soon"),
+            .child(details_kv_row(
+                "Command",
+                div().child(
+                    latest_command
+                        .as_ref()
+                        .map(|command| {
+                            format!("{} · {}", command_state_label(command.state), command.kind)
+                        })
+                        .unwrap_or_else(|| "No command yet".to_string()),
+                ),
+                theme,
+            ))
+            .when_some(
+                latest_command.and_then(|command| command.last_message),
+                |this, message| this.child(details_kv_row("Update", div().child(message), theme)),
             ),
         theme,
     )

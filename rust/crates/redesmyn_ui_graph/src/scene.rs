@@ -3,7 +3,8 @@ use std::fmt;
 
 use gpui::SharedString;
 use redesmyn_graph_layout::{ForestLayoutEngine, LayoutConfig, LayoutNode, LayoutOptions};
-use redesmyn_ids::{SessionEventId, SessionId, TaskId};
+use redesmyn_ids::{CommandId, SessionEventId, SessionId, TaskId};
+use redesmyn_protocol::Timestamp;
 use redesmyn_protocol::client::{CommandState, MergeReadiness, TaskState};
 use redesmyn_ui::task_filters::{TaskAgentStatus, TaskFilterTarget, TaskFilters};
 
@@ -63,6 +64,7 @@ pub struct GraphSceneNode {
     pub agent_status: AgentStatus,
     pub branch_name: Option<SharedString>,
     pub latest_session: Option<TaskSessionSummary>,
+    pub latest_command: Option<TaskCommandSummary>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +72,15 @@ pub struct TaskSessionSummary {
     pub session_id: SessionId,
     pub session_event_id: SessionEventId,
     pub message_preview: Option<SharedString>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskCommandSummary {
+    pub command_id: CommandId,
+    pub kind: SharedString,
+    pub state: CommandState,
+    pub updated_at: Timestamp,
+    pub last_message: Option<SharedString>,
 }
 
 #[derive(Debug, Clone)]
@@ -204,6 +215,7 @@ impl GraphScene {
             agent_status: AgentStatus::Running,
             branch_name: Some("feat/root".into()),
             latest_session: None,
+            latest_command: None,
         });
         scene.insert_node(GraphSceneNode {
             id: b,
@@ -216,6 +228,7 @@ impl GraphScene {
             agent_status: AgentStatus::Blocked,
             branch_name: Some("feat/child-a".into()),
             latest_session: None,
+            latest_command: None,
         });
         scene.insert_node(GraphSceneNode {
             id: c,
@@ -228,6 +241,7 @@ impl GraphScene {
             agent_status: AgentStatus::Stopped,
             branch_name: Some("feat/child-b".into()),
             latest_session: None,
+            latest_command: None,
         });
         scene.insert_node(GraphSceneNode {
             id: d,
@@ -240,6 +254,7 @@ impl GraphScene {
             agent_status: AgentStatus::Stopped,
             branch_name: Some("feat/grandchild".into()),
             latest_session: None,
+            latest_command: None,
         });
 
         scene.insert_edge(GraphEdgeId { from: a, to: b }, Some(12));
@@ -307,6 +322,7 @@ impl GraphScene {
             agent_status: AgentStatus::Unknown,
             branch_name: None,
             latest_session: None,
+            latest_command: None,
         });
         self.relayout();
     }
@@ -623,6 +639,7 @@ impl GraphScene {
 
         let agent_status_by_task_id = agent_status_by_task_id(graph);
         let latest_session_by_task_id = latest_session_by_task_id(graph);
+        let latest_command_by_task_id = latest_command_by_task_id(graph);
 
         let mut edges = BTreeMap::new();
         for edge in &graph.edges {
@@ -703,6 +720,9 @@ impl GraphScene {
                     latest_session: node
                         .task_id
                         .and_then(|id| latest_session_by_task_id.get(&id).cloned()),
+                    latest_command: node
+                        .task_id
+                        .and_then(|id| latest_command_by_task_id.get(&id).cloned()),
                 },
             );
         }
@@ -818,6 +838,7 @@ impl GraphScene {
                 agent_status: AgentStatus::Unknown,
                 branch_name: None,
                 latest_session: None,
+                latest_command: None,
             },
         );
         self.node_sizes.insert(trunk_id, trunk_default_size());
@@ -1200,6 +1221,43 @@ fn latest_session_by_task_id(
                 }
             })
             .or_insert((session.last_event_at, summary));
+    }
+
+    out.into_iter()
+        .map(|(task_id, (_, summary))| (task_id, summary))
+        .collect()
+}
+
+fn latest_command_by_task_id(
+    graph: &redesmyn_protocol::client::EpicGraph,
+) -> BTreeMap<TaskId, TaskCommandSummary> {
+    let mut out: BTreeMap<TaskId, (Timestamp, TaskCommandSummary)> = BTreeMap::new();
+
+    for command in &graph.command_summaries {
+        let Some(task_id) = command.target_task_id else {
+            continue;
+        };
+
+        let summary = TaskCommandSummary {
+            command_id: command.command_id,
+            kind: SharedString::new(command.kind.clone()),
+            state: command.state,
+            updated_at: command.updated_at,
+            last_message: command
+                .last_update
+                .as_ref()
+                .and_then(|update| update.message.as_ref())
+                .map(|message| SharedString::new(message.clone())),
+        };
+
+        out.entry(task_id)
+            .and_modify(|(existing_at, existing)| {
+                if command.updated_at > *existing_at {
+                    *existing_at = command.updated_at;
+                    *existing = summary.clone();
+                }
+            })
+            .or_insert((command.updated_at, summary));
     }
 
     out.into_iter()

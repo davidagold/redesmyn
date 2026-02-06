@@ -13,12 +13,13 @@ use redesmyn_ids::{RequestId, TaskId};
 use redesmyn_protocol::pb::redesmyn::protocol::v1 as pbv1;
 use redesmyn_protocol::ui_driver::{
     CaptureScreenshotRequest, CaptureScreenshotResponse, CreateChatSessionRequest,
-    CreateChatSessionResponse, OpenEpicRequest, SelectGraphNodeRequest,
+    CreateChatSessionResponse, OpenEpicRequest, SelectGraphNodeRequest, SelectTaskRequest,
     SessionSettingsMenuSendKeyRequest, SessionSettingsMenuSetOpenRequest,
     SetSettingsDialogOpenRequest, SetSettingsDialogSectionRequest, SettingsDialogSection,
-    TaskFiltersMenuSetOpenRequest, UiDriverFrame, UiDriverMessage, UiDriverRequest,
-    UiDriverRequestPayload, UiDriverResponseResult, UiPrimaryView, UiScreenshotWindow,
-    UiSnapshotPredicate, WaitForUiIdleRequest, WaitForUiSnapshotRequest, WaitForUiSnapshotResponse,
+    TaskFiltersMenuSetOpenRequest, TriggerRefreshRequest, UiDriverFrame, UiDriverMessage,
+    UiDriverRequest, UiDriverRequestPayload, UiDriverResponseResult, UiPrimaryView,
+    UiScreenshotWindow, UiSnapshotPredicate, WaitForUiIdleRequest, WaitForUiSnapshotRequest,
+    WaitForUiSnapshotResponse,
 };
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, ProtocolEnvelope};
 use serde::Serialize;
@@ -121,6 +122,12 @@ pub(crate) struct UiDriverGraphSmokeArgs {
     /// Prefer `--launch`; otherwise pass `--task-id`.
     #[arg(long)]
     task_id: Option<TaskId>,
+
+    /// Task slug to select in the graph (e.g. `T-58`).
+    ///
+    /// Mutually exclusive with `--task-id`. Useful when graph node ids are protocol-abstracted.
+    #[arg(long)]
+    task_slug: Option<String>,
 
     /// Artifact label for `CaptureScreenshot`.
     #[arg(long, default_value = "graph_smoke")]
@@ -481,6 +488,18 @@ impl UiDriverSmokeHarness {
         self.require_ok(
             UiDriverRequestPayload::OpenEpic(OpenEpicRequest { epic_slug }),
             "open_epic",
+            read_timeout,
+        )
+    }
+
+    fn select_task(
+        &mut self,
+        task_slug: String,
+        read_timeout: Duration,
+    ) -> Result<(), ErrorEnvelope> {
+        self.require_ok(
+            UiDriverRequestPayload::SelectTask(SelectTaskRequest { task_slug }),
+            "select_task",
             read_timeout,
         )
     }
@@ -1160,10 +1179,17 @@ fn ui_driver_graph_smoke(args: UiDriverGraphSmokeArgs, output: &Output) -> Comma
 
     #[cfg(unix)]
     {
-        if args.task_id.is_none() && !args.launch {
+        if args.task_id.is_some() && args.task_slug.is_some() {
             return CommandOutcome::Failure(ErrorEnvelope::new(
                 ErrorCategory::InvalidRequest,
-                "Missing --task-id. The default demo TaskId ([1; 16]) requires `--launch` (sets REDESMYN_UI_TEST_MODE=1).",
+                "Pass either --task-id or --task-slug, not both.",
+            ));
+        }
+
+        if args.task_id.is_none() && args.task_slug.is_none() && !args.launch {
+            return CommandOutcome::Failure(ErrorEnvelope::new(
+                ErrorCategory::InvalidRequest,
+                "Missing --task-id/--task-slug. The default demo TaskId ([1; 16]) requires `--launch` (sets REDESMYN_UI_TEST_MODE=1).",
             ));
         }
 
@@ -1182,6 +1208,7 @@ fn ui_driver_graph_smoke(args: UiDriverGraphSmokeArgs, output: &Output) -> Comma
         let task_id = args
             .task_id
             .unwrap_or_else(|| TaskId::from_bytes([1_u8; 16]));
+        let task_slug = args.task_slug;
 
         let timeout = Duration::from_millis(args.timeout_ms);
         let wait_timeout = timeout + Duration::from_secs(2);
@@ -1205,6 +1232,25 @@ fn ui_driver_graph_smoke(args: UiDriverGraphSmokeArgs, output: &Output) -> Comma
         }
 
         if let Err(err) = harness.require_ok(
+            UiDriverRequestPayload::TriggerRefresh(TriggerRefreshRequest {
+                epic_slug: args.epic.clone(),
+                name_hint: "graph_smoke".to_string(),
+            }),
+            "trigger_refresh",
+            wait_timeout,
+        ) {
+            return CommandOutcome::Failure(err);
+        }
+
+        if let Err(err) = harness.wait_for_idle(args.timeout_ms, args.quiescence_ms, wait_timeout) {
+            return CommandOutcome::Failure(err);
+        }
+
+        if let Some(slug) = task_slug.clone() {
+            if let Err(err) = harness.select_task(slug, wait_timeout) {
+                return CommandOutcome::Failure(err);
+            }
+        } else if let Err(err) = harness.require_ok(
             UiDriverRequestPayload::GraphSelectNode(SelectGraphNodeRequest { task_id }),
             "graph_select_node",
             wait_timeout,
@@ -1216,7 +1262,7 @@ fn ui_driver_graph_smoke(args: UiDriverGraphSmokeArgs, output: &Output) -> Comma
             primary_view: None,
             epic_slug: String::new(),
             in_flight_empty: None,
-            selected_task_id: Some(task_id),
+            selected_task_id: task_slug.as_ref().map(|_| None).unwrap_or(Some(task_id)),
             graph_layout_settled: None,
             graph_selection_settled: Some(true),
         };
@@ -1229,14 +1275,29 @@ fn ui_driver_graph_smoke(args: UiDriverGraphSmokeArgs, output: &Output) -> Comma
             Err(err) => return CommandOutcome::Failure(err),
         };
 
-        if !snapshot.graph.expanded_task_card_open
-            || snapshot.graph.expanded_task_id != Some(task_id)
-        {
+        if !snapshot.graph.expanded_task_card_open {
+            return CommandOutcome::Failure(ErrorEnvelope::new(
+                ErrorCategory::Unavailable,
+                "Expected expanded task card to be open after selecting node.",
+            ));
+        }
+
+        if let Some(expected_slug) = task_slug {
+            if snapshot.selection.task_slug != expected_slug {
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    format!(
+                        "Expected selected task slug {expected_slug:?}; got {:?}",
+                        snapshot.selection.task_slug
+                    ),
+                ));
+            }
+        } else if snapshot.graph.expanded_task_id != Some(task_id) {
             return CommandOutcome::Failure(ErrorEnvelope::new(
                 ErrorCategory::Unavailable,
                 format!(
-                    "Expected expanded task card to be open for {task_id}; got open={} task_id={:?}",
-                    snapshot.graph.expanded_task_card_open, snapshot.graph.expanded_task_id
+                    "Expected expanded task card to be open for {task_id}; got task_id={:?}",
+                    snapshot.graph.expanded_task_id
                 ),
             ));
         }
@@ -1447,6 +1508,8 @@ fn require_ok_response(
     match result? {
         UiDriverResponseResult::Error(err) => Err(err),
         UiDriverResponseResult::OpenEpic(_)
+        | UiDriverResponseResult::SelectTask(_)
+        | UiDriverResponseResult::TriggerRefresh(_)
         | UiDriverResponseResult::SetSettingsDialogOpen(_)
         | UiDriverResponseResult::SetSettingsDialogSection(_)
         | UiDriverResponseResult::WaitForSnapshot(_)

@@ -16,7 +16,7 @@ use redesmyn_protocol::sync_commands::{LOCAL_SYNC_EVENT_APPLIED, LOCAL_SYNC_EVEN
 use redesmyn_protocol::ui_driver::{
     CaptureScreenshotResponse, ClearGraphSelectionResponse, CreateChatSessionResponse,
     MultiSelectAddNodeResponse, MultiSelectRemoveNodeResponse, SelectGraphNodeResponse,
-    ToggleExpandedTaskCardResponse, TriggerRefreshResponse, UiComposerState,
+    SelectTaskResponse, ToggleExpandedTaskCardResponse, TriggerRefreshResponse, UiComposerState,
     UiDriverRequestPayload, UiDriverResponse, UiDriverResponseResult, UiErrorCallout,
     UiInFlightAction, UiLeftPaneState, UiPrimaryView, UiSelectionState, UiSnapshot,
     UiSnapshotPredicate, WaitForUiIdleRequest, WaitForUiIdleResponse, WaitForUiSnapshotRequest,
@@ -1188,6 +1188,66 @@ async fn handle_ui_driver_request(
                     ErrorCategory::Unavailable,
                     "UI is unavailable.",
                 ))
+            }
+        }
+        UiDriverRequestPayload::SelectTask(req) => {
+            let task_slug = req.task_slug;
+            let span = redesmyn_logging::redesmyn_info_span!(
+                "ui_driver.select_task",
+                task_slug = %task_slug
+            );
+            let _guard = span.enter();
+
+            let result: Result<(), ErrorEnvelope> = match cx.update(|cx| {
+                let Some(root) = root.upgrade() else {
+                    return Err(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "UI is unavailable.",
+                    ));
+                };
+
+                let graph_view = {
+                    let root_ref = root.read(cx);
+                    root_ref.workspace_pane.read(cx).graph_view.clone()
+                };
+
+                let task_id = {
+                    let graph = graph_view.read(cx);
+                    if let Some(task_id) = graph.task_id_for_task_slug(task_slug.as_str()) {
+                        task_id
+                    } else {
+                        let sample: Vec<String> = graph.task_slugs().into_iter().take(8).collect();
+                        let suffix = if sample.is_empty() {
+                            "no task slugs are currently loaded".to_string()
+                        } else {
+                            format!("sample loaded task slugs: {}", sample.join(", "))
+                        };
+                        return Err(ErrorEnvelope::new(
+                            ErrorCategory::InvalidRequest,
+                            format!("Graph does not contain task slug {task_slug:?}; {suffix}."),
+                        ));
+                    }
+                };
+
+                graph_view.update(cx, |this, cx| {
+                    this.driver_select_node_by_task_id(task_id, cx);
+                });
+                root.update(cx, |this, cx| this.notify_ui_updated(cx));
+
+                Ok(())
+            }) {
+                Ok(result) => result,
+                Err(_) => {
+                    return UiDriverResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "UI is unavailable.",
+                    ));
+                }
+            };
+
+            match result {
+                Ok(()) => UiDriverResponseResult::SelectTask(SelectTaskResponse {}),
+                Err(err) => UiDriverResponseResult::Error(err),
             }
         }
         UiDriverRequestPayload::SetLeftPaneCollapsed(req) => {
