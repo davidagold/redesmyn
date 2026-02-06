@@ -47,6 +47,7 @@ use redesmyn_protocol::ui_driver::{
     UiGraphCameraState, UiGraphEdgeId as UiDriverGraphEdgeId, UiGraphLoadState,
     UiGraphNodeId as UiDriverGraphNodeId, UiGraphState,
 };
+use redesmyn_protocol::{ProtocolEnvelope, RepoScope};
 use redesmyn_ui_session::{SessionView, SessionViewEvent, TaskSessionOperation};
 
 fn graph_node_id_to_ui(id: GraphNodeId) -> UiDriverGraphNodeId {
@@ -1512,6 +1513,7 @@ impl GraphView {
     ) {
         let session_view = self.task_session_view.read(cx);
         let client = session_view.client();
+        let repo_scope = session_view.repo_scope_snapshot();
         let start_model_selection = session_view.task_start_model_selection_snapshot();
 
         let state = self.quick_action_state_mut(task_id);
@@ -1530,6 +1532,11 @@ impl GraphView {
             cx.notify();
             return;
         };
+        let Some(repo_scope) = repo_scope else {
+            action.fail("Repo scope is required.");
+            cx.notify();
+            return;
+        };
 
         action.start();
         cx.notify();
@@ -1543,6 +1550,7 @@ impl GraphView {
                 async move {
                     let result = task_quick_action_request(
                         &client,
+                        repo_scope,
                         task_id,
                         kind,
                         start_model_selection.clone(),
@@ -2820,18 +2828,6 @@ impl Render for GraphView {
                             .or_else(|| state.restart.error.clone())
                             .or_else(|| state.stop.error.clone())
                     });
-                    let refresh_session_button_id = (
-                        gpui::ElementId::from(("task_card_refresh_session", entity_id)),
-                        node_key.clone(),
-                    );
-                    let refresh_task_session = {
-                        let task_session_view = self.task_session_view.clone();
-                        move |_: &ClickEvent, _window: &mut Window, cx: &mut App| {
-                            task_session_view
-                                .update(cx, |view, cx| view.refresh_latest_task_session(cx));
-                        }
-                    };
-
                     card = card.child(
                         div()
                             .flex()
@@ -2953,45 +2949,42 @@ impl Render for GraphView {
                                                                 if is_start_agent_error { "Start agent" } else { "Retry" };
 
                                                             this = this.child(
-                                                                Callout::new(err)
-                                                                    .kind(CalloutKind::Danger)
-                                                                    .title("Session")
-                                                                    .action(
-                                                                        TextButton::new(
-                                                                            refresh_button_id,
-                                                                            action_label,
-                                                                        )
-                                                                        .kind(ButtonKind::Secondary)
-                                                                        .on_click(move |_, _, cx| {
-                                                                            if is_start_agent_error {
-                                                                                let GraphNodeId::Task(task_id) = node_id else {
-                                                                                    return;
-                                                                                };
-                                                                                task_session_view.update(
-                                                                                    cx,
-                                                                                    |view, cx| {
-                                                                                        view.start_agent_for_task(task_id, cx)
-                                                                                    },
-                                                                                );
-                                                                            } else {
-                                                                                task_session_view.update(
-                                                                                    cx,
-                                                                                    |view, cx| {
-                                                                                        view.refresh_latest_task_session(cx)
-                                                                                    },
-                                                                                );
-                                                                            }
-                                                                        }),
+                                                                div()
+                                                                    .mt(theme.spacing.sm)
+                                                                    .child(
+                                                                        Callout::new(err)
+                                                                            .kind(CalloutKind::Danger)
+                                                                            .title("Session")
+                                                                            .action(
+                                                                                TextButton::new(
+                                                                                    refresh_button_id,
+                                                                                    action_label,
+                                                                                )
+                                                                                .kind(ButtonKind::Secondary)
+                                                                                .on_click(move |_, _, cx| {
+                                                                                    if is_start_agent_error {
+                                                                                        let GraphNodeId::Task(task_id) = node_id else {
+                                                                                            return;
+                                                                                        };
+                                                                                        task_session_view.update(
+                                                                                            cx,
+                                                                                            |view, cx| {
+                                                                                                view.start_agent_for_task(task_id, cx)
+                                                                                            },
+                                                                                        );
+                                                                                    } else {
+                                                                                        task_session_view.update(
+                                                                                            cx,
+                                                                                            |view, cx| {
+                                                                                                view.refresh_latest_task_session(cx)
+                                                                                            },
+                                                                                        );
+                                                                                    }
+                                                                                }),
+                                                                            ),
                                                                     ),
                                                             );
                                                         } else if task_session_state.session_id.is_none() {
-                                                            let refresh_button_id = (
-                                                                gpui::ElementId::from((
-                                                                    "task_card_session_refresh",
-                                                                    entity_id,
-                                                                )),
-                                                                node_key.clone(),
-                                                            );
                                                             let start_button_id = (
                                                                 gpui::ElementId::from((
                                                                     "task_card_session_start_agent",
@@ -3000,44 +2993,30 @@ impl Render for GraphView {
                                                                 node_key.clone(),
                                                             );
 
-                                                            let task_session_view =
-                                                                self.task_session_view.clone();
-
                                                             this = this.child(
-                                                                Callout::new("No session yet.")
-                                                                    .kind(CalloutKind::Info)
-                                                                    .title("Session")
-                                                                    .action(
-                                                                        div()
-                                                                            .flex()
-                                                                            .flex_row()
-                                                                            .gap(theme.spacing.sm)
-                                                                            .child(
-                                                                                TextButton::new(
-                                                                                    start_button_id,
-                                                                                    "Start agent",
-                                                                                )
-                                                                                .kind(
-                                                                                    ButtonKind::Secondary,
-                                                                                )
-                                                                                .on_click(
-                                                                                    start_agent_action,
-                                                                                ),
-                                                                            )
-                                                                            .child(
-                                                                                TextButton::new(
-                                                                                    refresh_button_id,
-                                                                                    "Refresh",
-                                                                                )
-                                                                                .kind(ButtonKind::Ghost)
-                                                                                .on_click(move |_, _, cx| {
-                                                                                    task_session_view.update(
-                                                                                        cx,
-                                                                                        |view, cx| {
-                                                                                            view.refresh_latest_task_session(cx)
-                                                                                        },
-                                                                                    );
-                                                                                }),
+                                                                div()
+                                                                    .mt(theme.spacing.sm)
+                                                                    .child(
+                                                                        Callout::new("No session yet.")
+                                                                            .kind(CalloutKind::Info)
+                                                                            .title("Session")
+                                                                            .action(
+                                                                                div()
+                                                                                    .flex()
+                                                                                    .flex_row()
+                                                                                    .gap(theme.spacing.sm)
+                                                                                    .child(
+                                                                                        TextButton::new(
+                                                                                            start_button_id,
+                                                                                            "Start agent",
+                                                                                        )
+                                                                                        .kind(
+                                                                                            ButtonKind::Secondary,
+                                                                                        )
+                                                                                        .on_click(
+                                                                                            start_agent_action,
+                                                                                        ),
+                                                                                    ),
                                                                             ),
                                                                     ),
                                                             );
@@ -3259,16 +3238,6 @@ impl Render for GraphView {
 	                                                                            }),
 	                                                                        );
 	                                                                    }
-
-	                                                                    row = row.child(
-	                                                                        TextButton::new(
-	                                                                            refresh_session_button_id,
-	                                                                            "Refresh session",
-	                                                                        )
-	                                                                        .kind(ButtonKind::Ghost)
-	                                                                        .small()
-	                                                                        .on_click(refresh_task_session),
-	                                                                    );
 
 	                                                                    row
 	                                                                }),
@@ -3575,6 +3544,7 @@ fn should_defer_pan_to_scroll_view(
 
 async fn task_quick_action_request(
     client: &Client,
+    repo_scope: RepoScope,
     task_id: TaskId,
     kind: TaskQuickActionKind,
     start_model_selection: Option<SessionModelSelection>,
@@ -3595,7 +3565,12 @@ async fn task_quick_action_request(
         TaskQuickActionKind::Stop => RequestPayload::StopAgent(StopAgentRequest { task_id }),
     };
 
-    client.request(payload).await
+    client
+        .request_with_envelope(
+            ProtocolEnvelope::new().with_scope(repo_scope.into()),
+            payload,
+        )
+        .await
 }
 
 fn collapsed_task_border_color(

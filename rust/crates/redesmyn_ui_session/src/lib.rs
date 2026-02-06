@@ -41,7 +41,8 @@ use redesmyn_protocol::session::{
 };
 use redesmyn_protocol::ui_driver::UiComposerState;
 use redesmyn_protocol::{
-    ArtifactKind, ArtifactRef, ErrorCategory, ErrorEnvelope, SessionEvent, StorageHint,
+    ArtifactKind, ArtifactRef, ErrorCategory, ErrorEnvelope, ProtocolEnvelope, RepoScope,
+    SessionEvent, StorageHint,
 };
 use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 
@@ -930,18 +931,23 @@ async fn respond_permission_request(
 
 async fn start_task_agent(
     client: &Client,
+    repo_scope: RepoScope,
     task_id: TaskId,
     session_model_selection: Option<SessionModelSelection>,
     on_conflict: AgentMessageConflictAction,
 ) -> Result<StartAgentResponse, ErrorEnvelope> {
+    let payload = RequestPayload::StartAgent(StartAgentRequest {
+        task_id,
+        agent_kind: AgentKind::Codex,
+        initial_prompt: None,
+        on_conflict,
+        session_model_selection,
+    });
     let response = client
-        .request(RequestPayload::StartAgent(StartAgentRequest {
-            task_id,
-            agent_kind: AgentKind::Codex,
-            initial_prompt: None,
-            on_conflict,
-            session_model_selection,
-        }))
+        .request_with_envelope(
+            ProtocolEnvelope::new().with_scope(repo_scope.into()),
+            payload,
+        )
         .await?;
 
     match response {
@@ -1220,6 +1226,7 @@ pub struct SessionView {
     session_model_controls_unavailable_reason: Option<SharedString>,
     model_fetch_error: Option<SharedString>,
     model_fetch_task: Option<Task<()>>,
+    repo_scope: Option<RepoScope>,
     session_settings_open: bool,
     session_settings_hovered: Option<SessionSettingsCategory>,
     session_settings_focus: SessionSettingsMenuFocus,
@@ -1392,6 +1399,7 @@ impl SessionView {
             session_model_controls_unavailable_reason: None,
             model_fetch_error: None,
             model_fetch_task: None,
+            repo_scope: None,
             session_settings_open: false,
             session_settings_hovered: None,
             session_settings_focus: SessionSettingsMenuFocus::default(),
@@ -1498,6 +1506,15 @@ impl SessionView {
             self.set_session_reasoning_menu_index_from_selection();
             cx.notify();
         }
+    }
+
+    #[must_use]
+    pub fn repo_scope_snapshot(&self) -> Option<RepoScope> {
+        self.repo_scope
+    }
+
+    pub fn set_repo_scope(&mut self, repo_scope: Option<RepoScope>) {
+        self.repo_scope = repo_scope;
     }
 
     pub fn bind_latest_task_session(&mut self, task_id: Option<TaskId>, cx: &mut Context<Self>) {
@@ -1669,6 +1686,14 @@ impl SessionView {
             cx.notify();
             return;
         };
+        let Some(repo_scope) = self.repo_scope else {
+            self.start_agent_action.fail("Repo scope is required.");
+            cx.emit(SessionViewEvent::TaskBindingStateChanged(
+                self.task_binding_state(),
+            ));
+            cx.notify();
+            return;
+        };
 
         let session_model_selection = self.task_start_model_selection.clone();
         self.start_agent_generation = self.start_agent_generation.wrapping_add(1);
@@ -1683,11 +1708,13 @@ impl SessionView {
         let view = cx.entity();
         self.start_agent_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
             let client = client.clone();
+            let repo_scope = repo_scope;
             let session_model_selection = session_model_selection.clone();
             let cx = cx.clone();
             async move {
                 let result = start_task_agent(
                     &client,
+                    repo_scope,
                     task_id,
                     session_model_selection.clone(),
                     AgentMessageConflictAction::Fail,
@@ -7024,6 +7051,45 @@ impl Render for SessionView {
             .try_global::<CascadingMenuState>()
             .map(|state| state.open_menu())
             .unwrap_or(None);
+        let composer_viewport_width =
+            f32::from(self.timeline_list_state.viewport_bounds().size.width);
+        let action_density = if composer_viewport_width < 620.0 {
+            2
+        } else if composer_viewport_width < 840.0 {
+            1
+        } else {
+            0
+        };
+        let show_selector_keycaps = action_density == 0;
+        let show_policies_status = action_density == 0;
+        let show_settings_label = action_density <= 1;
+        let selector_button_gap = if action_density == 2 {
+            px(4.0)
+        } else {
+            px(6.0)
+        };
+        let selector_button_px = if action_density == 2 {
+            px(6.0)
+        } else {
+            px(8.0)
+        };
+        let model_value_max_width = if action_density == 2 {
+            px(86.0)
+        } else if action_density == 1 {
+            px(104.0)
+        } else {
+            px(120.0)
+        };
+        let reasoning_value_max_width = if action_density == 2 {
+            px(56.0)
+        } else {
+            px(84.0)
+        };
+        let action_bar_gap = if action_density == 2 {
+            theme.spacing.xs
+        } else {
+            theme.spacing.sm
+        };
         let settings_open =
             self.session_settings_open && open_menu == Some(CascadingMenuId::SessionSettings);
         let settings_hover_bg = theme.colors.accent;
@@ -7037,8 +7103,8 @@ impl Render for SessionView {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(6.0))
-            .px(px(8.0))
+            .gap(selector_button_gap)
+            .px(selector_button_px)
             .py(px(3.0))
             .rounded(theme.radius.sm)
             .border_1()
@@ -7071,7 +7137,8 @@ impl Render for SessionView {
             .when(settings_disabled, |this| {
                 this.opacity(0.55).cursor_not_allowed()
             })
-            .child("Settings");
+            .when(show_settings_label, |this| this.child("Settings"))
+            .when(!show_settings_label, |this| this.child("⚙"));
 
         if !settings_disabled {
             settings_button = settings_button.on_mouse_down(gpui::MouseButton::Left, {
@@ -7421,8 +7488,8 @@ impl Render for SessionView {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(6.0))
-            .px(px(8.0))
+            .gap(selector_button_gap)
+            .px(selector_button_px)
             .py(px(3.0))
             .rounded(theme.radius.sm)
             .border_1()
@@ -7459,15 +7526,22 @@ impl Render for SessionView {
                 this.tooltip(move |_, cx| cx.new(|_| Tooltip::new(tooltip.clone())).into())
             })
             .child("◈")
-            .child(div().max_w(px(120.0)).truncate().child(model_value.clone()))
             .child(
                 div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(theme.spacing.xs)
-                    .child(selector_keycap("⌥M", model_shortcut_enabled)),
-            );
+                    .max_w(model_value_max_width)
+                    .truncate()
+                    .child(model_value.clone()),
+            )
+            .when(show_selector_keycaps, |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(theme.spacing.xs)
+                        .child(selector_keycap("⌥M", model_shortcut_enabled)),
+                )
+            });
         if !model_selector_disabled {
             model_selector_button = model_selector_button.on_mouse_down(gpui::MouseButton::Left, {
                 let view = view.clone();
@@ -7614,8 +7688,8 @@ impl Render for SessionView {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(6.0))
-            .px(px(8.0))
+            .gap(selector_button_gap)
+            .px(selector_button_px)
             .py(px(3.0))
             .rounded(theme.radius.sm)
             .border_1()
@@ -7652,15 +7726,22 @@ impl Render for SessionView {
                 this.tooltip(move |_, cx| cx.new(|_| Tooltip::new(tooltip.clone())).into())
             })
             .child("◎")
-            .child(reasoning_value.clone())
             .child(
                 div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(theme.spacing.xs)
-                    .child(selector_keycap("⌥R", reasoning_shortcut_enabled)),
-            );
+                    .max_w(reasoning_value_max_width)
+                    .truncate()
+                    .child(reasoning_value.clone()),
+            )
+            .when(show_selector_keycaps, |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(theme.spacing.xs)
+                        .child(selector_keycap("⌥R", reasoning_shortcut_enabled)),
+                )
+            });
         if !reasoning_selector_disabled {
             reasoning_selector_button =
                 reasoning_selector_button.on_mouse_down(gpui::MouseButton::Left, {
@@ -7759,18 +7840,20 @@ impl Render for SessionView {
             .flex_row()
             .items_center()
             .justify_between()
-            .gap(theme.spacing.sm)
+            .gap(action_bar_gap)
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap(theme.spacing.sm)
+                    .gap(action_bar_gap)
                     .min_w_0()
                     .child(model_selector_anchor)
                     .child(reasoning_selector_anchor)
                     .child(settings_anchor)
-                    .when_some(policies_status, |this, status| this.child(status)),
+                    .when(show_policies_status, |this| {
+                        this.when_some(policies_status, |this, status| this.child(status))
+                    }),
             )
             .child(send_button);
 

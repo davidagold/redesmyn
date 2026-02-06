@@ -4480,6 +4480,8 @@ impl WorkspacePaneHost {
             self.graph_node_count = 0;
             self.graph_edge_count = 0;
             self.graph_error = None;
+            self.task_session_view
+                .update(cx, |view, _cx| view.set_repo_scope(None));
             let task_session_view = self.task_session_view.clone();
             self.graph_view = cx.new(|cx| GraphView::new_empty(task_session_view, cx));
             self.graph_refresh_pending = false;
@@ -5163,6 +5165,9 @@ impl WorkspacePaneHost {
         let Some(client) = self.model.read(cx).chrome_control_plane_client.clone() else {
             self.graph_state = redesmyn_protocol::ui_driver::UiGraphLoadState::Error;
             self.graph_error = Some("Control plane client unavailable.".into());
+            self.stop_repo_event_subscription(cx);
+            self.task_session_view
+                .update(cx, |view, _cx| view.set_repo_scope(None));
             self.ui_updates.bump();
             cx.notify();
             return;
@@ -5210,15 +5215,21 @@ impl WorkspacePaneHost {
 
                         match result {
                             Ok(graph) => {
-                                if let (Some(workspace_id), Some(repo_id)) =
-                                    (graph.workspace_id, graph.repo_id)
-                                {
+                                let repo_scope = graph.workspace_id.zip(graph.repo_id).map(
+                                    |(workspace_id, repo_id)| RepoScope::new(workspace_id, repo_id),
+                                );
+
+                                if let Some(scope) = repo_scope {
                                     this.ensure_repo_event_subscription(
-                                        RepoScope::new(workspace_id, repo_id),
+                                        scope,
                                         graph.as_of_event_id,
                                         cx,
                                     );
+                                } else {
+                                    this.stop_repo_event_subscription(cx);
                                 }
+                                this.task_session_view
+                                    .update(cx, |view, _cx| view.set_repo_scope(repo_scope));
                                 this.graph_node_count =
                                     graph.nodes.len().min(u32::MAX as usize) as u32;
                                 this.graph_edge_count =
@@ -5237,6 +5248,9 @@ impl WorkspacePaneHost {
                                 this.graph_state =
                                     redesmyn_protocol::ui_driver::UiGraphLoadState::Error;
                                 this.graph_error = Some(err.to_string().into());
+                                this.stop_repo_event_subscription(cx);
+                                this.task_session_view
+                                    .update(cx, |view, _cx| view.set_repo_scope(None));
                             }
                         }
 
