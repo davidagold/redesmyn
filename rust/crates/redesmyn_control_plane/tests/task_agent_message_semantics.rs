@@ -455,6 +455,7 @@ async fn run_mock_daemon(
                             text: payload.prompt.clone(),
                             preview: payload.prompt.clone(),
                             full_text_artifact: None,
+                            image_attachments: Vec::new(),
                         }),
                     },
                 )

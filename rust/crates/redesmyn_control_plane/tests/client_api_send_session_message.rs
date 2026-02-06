@@ -11,11 +11,15 @@ use redesmyn_protocol::agent_commands::{
 };
 use redesmyn_protocol::client::{
     AgentMessageConflictAction, ClientFrame, ClientMessage, Request, RequestPayload,
-    ResponseResult, SendSessionMessageRequest,
+    ResponseResult, SEND_SESSION_MESSAGE_MAX_IMAGE_ATTACHMENTS, SendSessionMessageRequest,
 };
 use redesmyn_protocol::daemon::{DaemonFrame, DaemonMessage};
-use redesmyn_protocol::session::{InterfaceMode, SessionEventKind, SessionScope, TurnStarted};
-use redesmyn_protocol::{ExternalSessionRef, SessionEvent, Timestamp};
+use redesmyn_protocol::session::{
+    ImageAttachment, InterfaceMode, SessionEventKind, SessionScope, TurnStarted,
+};
+use redesmyn_protocol::{
+    ArtifactKind, ArtifactRef, ExternalSessionRef, SessionEvent, StorageHint, Timestamp,
+};
 use redesmyn_storage::schema::{
     AgentKind as StorageAgentKind, AgentSessionScopeKind as StorageAgentSessionScopeKind,
     AgentSessionStatus as StorageAgentSessionStatus,
@@ -138,6 +142,23 @@ async fn insert_task(pool: &redesmyn_storage::SqlitePool, epic_id: redesmyn_ids:
     task_id
 }
 
+fn sample_image_attachment() -> ImageAttachment {
+    let artifact_id = redesmyn_ids::ArtifactId::new();
+    ImageAttachment {
+        artifact: ArtifactRef {
+            artifact_id,
+            kind: ArtifactKind::Image,
+            content_hash: None,
+            byte_len: Some(1024),
+            mime: Some("image/png".to_string()),
+            storage_hint: Some(StorageHint::BlobKey {
+                blob_key: format!("artifact/{artifact_id}"),
+            }),
+        },
+        label: Some("sample.png".to_string()),
+    }
+}
+
 #[tokio::test]
 async fn send_session_message_appends_user_message_for_chat_session() {
     redesmyn_logging::init();
@@ -192,6 +213,7 @@ async fn send_session_message_appends_user_message_for_chat_session() {
         RequestPayload::SendSessionMessage(SendSessionMessageRequest {
             session_id,
             message: "hello".to_string(),
+            image_attachments: Vec::new(),
             on_conflict: AgentMessageConflictAction::Fail,
         }),
     )
@@ -299,6 +321,7 @@ async fn send_session_message_conflicts_on_structured_turn_in_progress() {
         RequestPayload::SendSessionMessage(SendSessionMessageRequest {
             session_id,
             message: "hello".to_string(),
+            image_attachments: Vec::new(),
             on_conflict: AgentMessageConflictAction::Fail,
         }),
     )
@@ -321,6 +344,7 @@ async fn send_session_message_conflicts_on_structured_turn_in_progress() {
         RequestPayload::SendSessionMessage(SendSessionMessageRequest {
             session_id,
             message: "hello".to_string(),
+            image_attachments: Vec::new(),
             on_conflict: AgentMessageConflictAction::InterruptTurn,
         }),
     )
@@ -422,6 +446,7 @@ async fn send_session_message_stop_and_start_new_returns_new_session_id() {
         RequestPayload::SendSessionMessage(SendSessionMessageRequest {
             session_id: target_session_id,
             message: "hello".to_string(),
+            image_attachments: Vec::new(),
             on_conflict: AgentMessageConflictAction::Fail,
         }),
     )
@@ -442,6 +467,7 @@ async fn send_session_message_stop_and_start_new_returns_new_session_id() {
         RequestPayload::SendSessionMessage(SendSessionMessageRequest {
             session_id: target_session_id,
             message: "hello".to_string(),
+            image_attachments: Vec::new(),
             on_conflict: AgentMessageConflictAction::StopSessionAndStartNew,
         }),
     )
@@ -559,6 +585,7 @@ async fn send_session_message_dispatches_session_start_for_chat_session() {
         RequestPayload::SendSessionMessage(SendSessionMessageRequest {
             session_id,
             message: "hello".to_string(),
+            image_attachments: Vec::new(),
             on_conflict: AgentMessageConflictAction::Fail,
         }),
     )
@@ -591,6 +618,184 @@ async fn send_session_message_dispatches_session_start_for_chat_session() {
     assert_eq!(payload.task_id, None);
     assert_eq!(payload.initial_prompt.as_deref(), Some("hello"));
     assert!(payload.stop_session_ids.is_empty());
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn send_session_message_image_only_dispatches_session_start_with_attachment() {
+    redesmyn_logging::init();
+
+    let control_plane = ControlPlane::open_test().await.expect("control plane");
+    let pool = control_plane.pool().clone();
+
+    let workspace_id = WorkspaceId::new();
+    let repo_id = RepoId::new();
+    insert_workspace(&pool, workspace_id).await;
+    insert_repo(&pool, workspace_id, repo_id).await;
+
+    let session_id = SessionId::new();
+    insert_agent_session(
+        &pool,
+        &AgentSessionRecord {
+            session_id,
+            created_at_ms: 5,
+            updated_at_ms: 5,
+            scope_workspace_id: workspace_id,
+            scope_repo_id: repo_id,
+            scope_kind: StorageAgentSessionScopeKind::Chat,
+            task_id: None,
+            agent_kind: StorageAgentKind::Codex,
+            status: StorageAgentSessionStatus::Stopped,
+            external_session_ref: r#"{"type":"none"}"#.to_owned(),
+            title: None,
+            started_at_ms: None,
+            ended_at_ms: None,
+            closed_at_ms: None,
+        },
+    )
+    .await
+    .expect("insert session");
+
+    let (outbound_tx, mut outbound_rx) = mpsc::channel::<DaemonFrame>(8);
+    control_plane
+        .daemons()
+        .register_connection(
+            HostId::new(),
+            HostInstanceId::new(),
+            redesmyn_protocol::ProtocolVersion::CURRENT,
+            outbound_tx,
+        )
+        .await;
+
+    let (mut client, mut server) = InProcEndpoint::pair(8);
+    let (shutdown_tx, _shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let mut shutdown = shutdown_tx.subscribe();
+    let server_control_plane = control_plane.clone();
+    let server_task = tokio::spawn(async move {
+        redesmyn_control_plane::client_api::serve_connection(
+            &mut server,
+            server_control_plane,
+            &mut shutdown,
+        )
+        .await
+        .ok();
+    });
+
+    let image = sample_image_attachment();
+    let result = request(
+        &mut client,
+        RequestPayload::SendSessionMessage(SendSessionMessageRequest {
+            session_id,
+            message: String::new(),
+            image_attachments: vec![image.clone()],
+            on_conflict: AgentMessageConflictAction::Fail,
+        }),
+    )
+    .await;
+
+    let resp = match result {
+        ResponseResult::SendSessionMessage(resp) => resp,
+        other => panic!("unexpected response: {other:?}"),
+    };
+    assert_eq!(resp.session_id, session_id);
+    match &resp.event.kind {
+        SessionEventKind::UserMessage(message) => {
+            assert_eq!(message.text, "");
+            assert_eq!(message.image_attachments, vec![image.clone()]);
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
+
+    let frame = tokio::time::timeout(Duration::from_secs(2), outbound_rx.recv())
+        .await
+        .expect("dispatch timeout")
+        .expect("dispatch frame");
+    let DaemonMessage::CommandDispatch(dispatch) = frame.message else {
+        panic!("expected CommandDispatch, got {:?}", frame.message);
+    };
+    assert_eq!(dispatch.command_kind, SESSION_AGENT_START);
+    let payload: StartAgentSessionCommand =
+        serde_json::from_slice(&dispatch.json_payload).expect("decode start payload");
+    assert_eq!(payload.initial_prompt, None);
+    assert_eq!(payload.image_attachments, vec![image]);
+
+    let _ = shutdown_tx.send(());
+    let _ = server_task.await;
+}
+
+#[tokio::test]
+async fn send_session_message_rejects_too_many_image_attachments() {
+    redesmyn_logging::init();
+
+    let control_plane = ControlPlane::open_test().await.expect("control plane");
+    let pool = control_plane.pool().clone();
+
+    let workspace_id = WorkspaceId::new();
+    let repo_id = RepoId::new();
+    insert_workspace(&pool, workspace_id).await;
+    insert_repo(&pool, workspace_id, repo_id).await;
+
+    let session_id = SessionId::new();
+    insert_agent_session(
+        &pool,
+        &AgentSessionRecord {
+            session_id,
+            created_at_ms: 5,
+            updated_at_ms: 5,
+            scope_workspace_id: workspace_id,
+            scope_repo_id: repo_id,
+            scope_kind: StorageAgentSessionScopeKind::Chat,
+            task_id: None,
+            agent_kind: StorageAgentKind::Codex,
+            status: StorageAgentSessionStatus::Stopped,
+            external_session_ref: r#"{"type":"none"}"#.to_owned(),
+            title: None,
+            started_at_ms: None,
+            ended_at_ms: None,
+            closed_at_ms: None,
+        },
+    )
+    .await
+    .expect("insert session");
+
+    let (mut client, mut server) = InProcEndpoint::pair(8);
+    let (shutdown_tx, _shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let mut shutdown = shutdown_tx.subscribe();
+    let server_control_plane = control_plane.clone();
+    let server_task = tokio::spawn(async move {
+        redesmyn_control_plane::client_api::serve_connection(
+            &mut server,
+            server_control_plane,
+            &mut shutdown,
+        )
+        .await
+        .ok();
+    });
+
+    let images = (0..=SEND_SESSION_MESSAGE_MAX_IMAGE_ATTACHMENTS)
+        .map(|_| sample_image_attachment())
+        .collect::<Vec<_>>();
+    let result = request(
+        &mut client,
+        RequestPayload::SendSessionMessage(SendSessionMessageRequest {
+            session_id,
+            message: String::new(),
+            image_attachments: images,
+            on_conflict: AgentMessageConflictAction::Fail,
+        }),
+    )
+    .await;
+
+    let ResponseResult::Error(err) = result else {
+        panic!("expected invalid-request error");
+    };
+    assert_eq!(
+        err.category,
+        redesmyn_protocol::ErrorCategory::InvalidRequest
+    );
+    assert_eq!(err.message, "Too many image attachments.");
 
     let _ = shutdown_tx.send(());
     let _ = server_task.await;
@@ -682,6 +887,7 @@ async fn send_session_message_dispatches_resume_by_id_turn_for_chat_session_inte
         RequestPayload::SendSessionMessage(SendSessionMessageRequest {
             session_id,
             message: "hello".to_string(),
+            image_attachments: Vec::new(),
             on_conflict: AgentMessageConflictAction::InterruptTurn,
         }),
     )

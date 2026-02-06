@@ -14,6 +14,7 @@ pub enum ArtifactKind {
     Patch,
     FileSnapshot,
     Trace,
+    Image,
     /// A kind not understood by this binary (forward compatible).
     #[serde(other)]
     Unknown,

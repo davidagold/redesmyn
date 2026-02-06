@@ -74,6 +74,7 @@ impl SessionViewerFixtureEmitter {
                 text: format!("Demo user message #{ix}"),
                 preview: format!("Demo user message #{ix}"),
                 full_text_artifact: None,
+                image_attachments: Vec::new(),
             })
         };
 
@@ -425,6 +426,7 @@ async fn seed_session_viewer_fixture(
                 text: format!("{user_preview}\n\n- bullet one\n- bullet two\n\n`inline_code()`"),
                 preview: user_preview,
                 full_text_artifact: None,
+                image_attachments: Vec::new(),
             }),
         };
         session_events.append_session_event(&user).await?;

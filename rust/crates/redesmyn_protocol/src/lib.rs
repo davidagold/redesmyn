@@ -33,9 +33,9 @@ pub use session::{
     ArtifactEmitted, AssistantMessage, CodexApprovalPolicy, CodexApprovalPolicyChanged,
     CodexNetworkAccess, CodexSandboxPolicy, CodexSandboxPolicyChanged,
     CommandExecutionPermissionRequest, ExternalSessionRef, FileChangePermissionRequest,
-    InterfaceMode, PermissionDecided, PermissionDecision, PermissionDecisionBy, PermissionRequest,
-    PermissionRequested, PermissionsMode, PermissionsModeChanged, SessionEnded, SessionEvent,
-    SessionEventKind, SessionModelChanged, SessionModelReasoningEffort, SessionScope,
+    ImageAttachment, InterfaceMode, PermissionDecided, PermissionDecision, PermissionDecisionBy,
+    PermissionRequest, PermissionRequested, PermissionsMode, PermissionsModeChanged, SessionEnded,
+    SessionEvent, SessionEventKind, SessionModelChanged, SessionModelReasoningEffort, SessionScope,
     SessionStarted, StatusUpdate, ToolInvocation, ToolResult, TurnCompleted, TurnStarted,
     TurnState, UnknownSessionEvent, UserMessage,
 };
@@ -970,6 +970,7 @@ mod tests {
                     text: "hello".to_string(),
                     preview: "hello".to_string(),
                     full_text_artifact: Some(artifact_ref.clone()),
+                    image_attachments: Vec::new(),
                 }),
             },
             SessionEvent {

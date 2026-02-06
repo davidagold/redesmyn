@@ -15,11 +15,11 @@ use redesmyn_protocol::daemon::{
 use redesmyn_protocol::session::{
     ArtifactEmitted, AssistantMessage, AssistantReasoning, AssistantReasoningText,
     CodexApprovalPolicy, CodexApprovalPolicyChanged, CodexSandboxPolicy, CodexSandboxPolicyChanged,
-    ExternalSessionRef, InterfaceMode, PermissionDecided, PermissionDecision, PermissionDecisionBy,
-    PermissionRequest, PermissionRequested, PermissionsMode, PermissionsModeChanged, SessionEnded,
-    SessionEvent, SessionEventKind, SessionModelChanged, SessionModelReasoningEffort, SessionScope,
-    SessionStarted, StatusUpdate, ToolInvocation, ToolResult, TurnCompleted, TurnStarted,
-    TurnState,
+    ExternalSessionRef, ImageAttachment, InterfaceMode, PermissionDecided, PermissionDecision,
+    PermissionDecisionBy, PermissionRequest, PermissionRequested, PermissionsMode,
+    PermissionsModeChanged, SessionEnded, SessionEvent, SessionEventKind, SessionModelChanged,
+    SessionModelReasoningEffort, SessionScope, SessionStarted, StatusUpdate, ToolInvocation,
+    ToolResult, TurnCompleted, TurnStarted, TurnState,
 };
 use redesmyn_protocol::session_live::{
     AssistantMessageDelta, AssistantReasoningRawDelta, AssistantReasoningSummaryDelta,
@@ -74,6 +74,7 @@ impl std::fmt::Debug for AppServerSessionSpec {
 pub enum AppServerRequest {
     SendMessage {
         intent: AppServerTurnIntent,
+        image_paths: Vec<String>,
     },
     Interrupt,
     ListModels,
@@ -292,6 +293,7 @@ struct SessionEntry {
 enum SessionCommand {
     SendMessage {
         intent: AppServerTurnIntent,
+        image_attachments: Vec<ImageAttachment>,
         reply: oneshot::Sender<Result<AppServerResponse, AppServerRequestError>>,
     },
     Interrupt {
@@ -468,10 +470,18 @@ impl AppServerSupervisor {
         &self,
         session_id: SessionId,
         intent: AppServerTurnIntent,
+        image_attachments: Vec<ImageAttachment>,
     ) -> Result<AppServerResponse, AppServerCallError> {
         let (reply, rx) = oneshot::channel::<Result<AppServerResponse, AppServerRequestError>>();
-        self.send_command(session_id, SessionCommand::SendMessage { intent, reply })
-            .await?;
+        self.send_command(
+            session_id,
+            SessionCommand::SendMessage {
+                intent,
+                image_attachments,
+                reply,
+            },
+        )
+        .await?;
         rx.await
             .map_err(|_| SessionControlError::SessionClosed { session_id })?
             .map_err(AppServerCallError::Request)
@@ -779,9 +789,18 @@ async fn run_session(
 
     while let Some(cmd) = control_rx.recv().await {
         match cmd {
-            SessionCommand::SendMessage { intent, reply } => {
+            SessionCommand::SendMessage {
+                intent,
+                image_attachments,
+                reply,
+            } => {
+                let image_paths =
+                    resolve_image_attachment_paths(&artifact_store, &image_attachments)?;
                 let response = client
-                    .request(AppServerRequest::SendMessage { intent })
+                    .request(AppServerRequest::SendMessage {
+                        intent,
+                        image_paths,
+                    })
                     .await;
                 if let Err(err) = &response {
                     try_emit_status_update(
@@ -1065,6 +1084,27 @@ async fn run_session(
     .await?;
 
     Ok(())
+}
+
+fn resolve_image_attachment_paths(
+    artifact_store: &LocalArtifactStore,
+    image_attachments: &[ImageAttachment],
+) -> Result<Vec<String>, AppServerRequestError> {
+    image_attachments
+        .iter()
+        .map(|attachment| {
+            let path = artifact_store.artifact_path(attachment.artifact.artifact_id);
+            if !path.exists() {
+                return Err(AppServerRequestError::Failed {
+                    reason: format!(
+                        "image attachment artifact is missing: {}",
+                        attachment.artifact.artifact_id
+                    ),
+                });
+            }
+            Ok(path.to_string_lossy().to_string())
+        })
+        .collect()
 }
 
 async fn run_event_forwarder(

@@ -4279,6 +4279,7 @@ impl WorkspacePaneHost {
                         }
                     }
                 }
+                TextInputEvent::PastedImages(_) => {}
             },
         ));
         subscriptions.push(
@@ -4320,6 +4321,7 @@ impl WorkspacePaneHost {
                             }
                         }
                     }
+                    TextInputEvent::PastedImages(_) => {}
                 },
             ),
         );

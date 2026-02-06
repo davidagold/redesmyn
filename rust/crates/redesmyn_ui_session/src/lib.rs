@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use gpui::{
     AnyElement, App, AsyncApp, ClickEvent, Context, ElementId, Entity, FocusHandle, Focusable,
     KeyBinding, ListOffset, ListState, Render, ScrollHandle, SharedString, Subscription, Task,
-    WeakEntity, Window, div, list, px, relative,
+    WeakEntity, Window, div, img, list, px, relative,
 };
 
 use gpui::prelude::*;
@@ -26,7 +26,9 @@ use redesmyn_protocol::client::{
     AgentKind, AgentMessageConflictAction, GetLatestTaskSessionRequest, GetSessionEventsRequest,
     GetSessionEventsResponse, ListSessionModelsRequest, ListSessionModelsResponse,
     ModelReasoningEffort, RequestPayload, RespondPermissionRequestRequest,
-    RespondPermissionRequestResponse, ResponseResult, SendSessionMessageRequest,
+    RespondPermissionRequestResponse, ResponseResult,
+    SEND_SESSION_MESSAGE_MAX_IMAGE_ATTACHMENT_BYTES, SEND_SESSION_MESSAGE_MAX_IMAGE_ATTACHMENTS,
+    SEND_SESSION_MESSAGE_MAX_IMAGE_TOTAL_BYTES, SendSessionMessageRequest,
     SendSessionMessageResponse, SessionEventCursor, SessionEventKindFilter, SessionModelOption,
     SessionModelSelection, SetSessionCodexApprovalPolicyRequest,
     SetSessionCodexApprovalPolicyResponse, SetSessionCodexSandboxPolicyRequest,
@@ -34,21 +36,24 @@ use redesmyn_protocol::client::{
     StartAgentRequest, StartAgentResponse, SubscriptionEvent,
 };
 use redesmyn_protocol::session::{
-    CodexApprovalPolicy, CodexSandboxPolicy, PermissionDecision, PermissionDecisionBy,
-    PermissionRequest, SessionEventKind, ToolResult,
+    CodexApprovalPolicy, CodexSandboxPolicy, ImageAttachment, PermissionDecision,
+    PermissionDecisionBy, PermissionRequest, SessionEventKind, ToolResult,
 };
 use redesmyn_protocol::ui_driver::UiComposerState;
-use redesmyn_protocol::{ArtifactRef, ErrorCategory, ErrorEnvelope, SessionEvent, StorageHint};
+use redesmyn_protocol::{
+    ArtifactKind, ArtifactRef, ErrorCategory, ErrorEnvelope, SessionEvent, StorageHint,
+};
 use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 
 use redesmyn_session_view_model::{SessionEventItemContent, SessionFeedState, SessionTimelineItem};
 use redesmyn_ui::components::{
     ButtonKind, Callout, CalloutKind, CascadingMenu, CascadingMenuId, CascadingMenuMetrics,
     CascadingMenuRowStyle, CascadingMenuState, CascadingMenuSurfaceStyle, Expandable, IconButton,
-    MarkdownView, ScrollFade, ScrollbarStyle, StyledScrollbar, TextArea, TextButton, TextInput,
-    TextInputEvent, cascading_menu_row, cascading_menu_row_value, cascading_menu_surface,
-    cascading_menu_move_left_to_primary, cascading_menu_radio_indicator,
-    cascading_select_menu_item, set_open_cascading_menu,
+    MarkdownView, OverlaySurfaceKind, ScrollFade, ScrollbarStyle, StyledScrollbar, TextArea,
+    TextButton, TextInput, TextInputEvent, TextInputPastedImage,
+    cascading_menu_move_left_to_primary, cascading_menu_radio_indicator, cascading_menu_row,
+    cascading_menu_row_value, cascading_menu_surface, cascading_select_menu_item, overlay_surface,
+    set_open_cascading_menu,
 };
 use redesmyn_ui::styles::ThemeMode;
 use redesmyn_ui::utils::{
@@ -118,6 +123,48 @@ fn resolve_artifact_path_from_storage_hint(
         }
         _ => Err("unsupported artifact storage hint".to_string()),
     }
+}
+
+fn artifact_blob_key(artifact_id: ArtifactId) -> String {
+    format!("artifact/{artifact_id}")
+}
+
+fn format_byte_size(bytes: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = 1024 * 1024;
+    if bytes >= MIB {
+        let scaled = ((bytes as f64) / (MIB as f64) * 10.0).round() / 10.0;
+        return format!("{scaled:.1} MB");
+    }
+    if bytes >= KIB {
+        let scaled = ((bytes as f64) / (KIB as f64) * 10.0).round() / 10.0;
+        return format!("{scaled:.1} KB");
+    }
+    format!("{bytes} B")
+}
+
+fn image_chip_label(attachment: &ImageAttachment) -> String {
+    if let Some(label) = attachment.label.as_deref() {
+        let trimmed = label.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+
+    let mime = attachment
+        .artifact
+        .mime
+        .as_deref()
+        .and_then(|value| value.split('/').next_back())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("image")
+        .to_ascii_uppercase();
+    let size = attachment
+        .artifact
+        .byte_len
+        .map(format_byte_size)
+        .unwrap_or_else(|| "unknown size".to_string());
+    format!("{mime} ({size})")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -721,6 +768,7 @@ async fn send_session_message(
     client: &Client,
     session_id: SessionId,
     message: String,
+    image_attachments: Vec<ImageAttachment>,
     on_conflict: AgentMessageConflictAction,
 ) -> Result<SendSessionMessageResponse, ErrorEnvelope> {
     let response = client
@@ -729,6 +777,7 @@ async fn send_session_message(
                 session_id,
                 message,
                 on_conflict,
+                image_attachments,
             },
         ))
         .await?;
@@ -1103,6 +1152,7 @@ pub struct SessionView {
     show_debug_controls: bool,
     session_id_input: Entity<TextInput>,
     composer_input: Entity<TextArea>,
+    selected_image_preview: Option<ArtifactId>,
     pending_focus_composer: bool,
     feed: Option<SessionFeedState>,
     collapsed_reasoning: HashSet<String>,
@@ -1221,6 +1271,9 @@ impl SessionView {
                 TextInputEvent::Submitted(_text) => {
                     this.send_message(AgentMessageConflictAction::Fail, cx);
                 }
+                TextInputEvent::PastedImages(images) => {
+                    this.stage_composer_pasted_images(images, cx);
+                }
             }),
         );
 
@@ -1266,6 +1319,7 @@ impl SessionView {
             show_debug_controls,
             session_id_input,
             composer_input,
+            selected_image_preview: None,
             pending_focus_composer: false,
             feed: None,
             collapsed_reasoning: HashSet::new(),
@@ -1871,6 +1925,8 @@ impl SessionView {
         self.tool_event_group_membership = Rc::new(HashMap::new());
         self.markdown_cache.borrow_mut().clear();
         self.full_text_message_states.borrow_mut().clear();
+        self.discard_pending_composer_images();
+        self.selected_image_preview = None;
         self.feed = Some(SessionFeedState::new(session_id));
         self.composer_input
             .update(cx, |input, cx| input.set_text("", cx));
@@ -1919,6 +1975,200 @@ impl SessionView {
         }));
     }
 
+    fn stage_composer_pasted_images(
+        &mut self,
+        images: &[TextInputPastedImage],
+        cx: &mut Context<Self>,
+    ) {
+        if images.is_empty() {
+            return;
+        }
+
+        let Some(feed) = self.feed.as_ref() else {
+            return;
+        };
+
+        if feed.composer.sending {
+            return;
+        }
+
+        let existing_count = feed.composer.image_attachments.len();
+        let existing_total_bytes = feed
+            .composer
+            .image_attachments
+            .iter()
+            .filter_map(|attachment| attachment.artifact.byte_len)
+            .fold(0_u64, u64::saturating_add);
+
+        if existing_count.saturating_add(images.len()) > SEND_SESSION_MESSAGE_MAX_IMAGE_ATTACHMENTS
+        {
+            if let Some(feed) = self.feed.as_mut() {
+                feed.finish_sending_error(format!(
+                    "You can attach up to {} images per message.",
+                    SEND_SESSION_MESSAGE_MAX_IMAGE_ATTACHMENTS
+                ));
+            }
+            cx.notify();
+            return;
+        }
+
+        let mut batch_total_bytes = 0_u64;
+        for image in images {
+            let image_bytes = u64::try_from(image.bytes.len()).unwrap_or(u64::MAX);
+            if image_bytes > SEND_SESSION_MESSAGE_MAX_IMAGE_ATTACHMENT_BYTES {
+                if let Some(feed) = self.feed.as_mut() {
+                    feed.finish_sending_error(format!(
+                        "Each image must be {} or smaller.",
+                        format_byte_size(SEND_SESSION_MESSAGE_MAX_IMAGE_ATTACHMENT_BYTES)
+                    ));
+                }
+                cx.notify();
+                return;
+            }
+            batch_total_bytes = batch_total_bytes.saturating_add(image_bytes);
+        }
+
+        if existing_total_bytes.saturating_add(batch_total_bytes)
+            > SEND_SESSION_MESSAGE_MAX_IMAGE_TOTAL_BYTES
+        {
+            if let Some(feed) = self.feed.as_mut() {
+                feed.finish_sending_error(format!(
+                    "Total image payload must be {} or smaller.",
+                    format_byte_size(SEND_SESSION_MESSAGE_MAX_IMAGE_TOTAL_BYTES)
+                ));
+            }
+            cx.notify();
+            return;
+        }
+
+        let mut staged = Vec::with_capacity(images.len());
+        for image in images {
+            match self.stage_pasted_image_attachment(image) {
+                Ok(attachment) => staged.push(attachment),
+                Err(err) => {
+                    for staged_attachment in staged {
+                        self.remove_staged_artifact_file(staged_attachment.artifact.artifact_id);
+                    }
+                    if let Some(feed) = self.feed.as_mut() {
+                        feed.finish_sending_error(err);
+                    }
+                    cx.notify();
+                    return;
+                }
+            }
+        }
+
+        if let Some(feed) = self.feed.as_mut() {
+            for attachment in staged {
+                feed.add_composer_image_attachment(attachment);
+            }
+        }
+        self.refresh_timeline_items();
+        cx.notify();
+    }
+
+    fn stage_pasted_image_attachment(
+        &self,
+        image: &TextInputPastedImage,
+    ) -> Result<ImageAttachment, String> {
+        let Some(root) = self.artifact_store_root.as_ref() else {
+            return Err("Image attachments are unavailable in this view.".to_string());
+        };
+
+        let artifacts_dir = root.join("artifacts");
+        std::fs::create_dir_all(&artifacts_dir)
+            .map_err(|err| format!("Failed to prepare artifact storage: {err}"))?;
+
+        let artifact_id = ArtifactId::new();
+        let artifact_path = artifacts_dir.join(format!("{artifact_id}.bin"));
+        std::fs::write(&artifact_path, &image.bytes)
+            .map_err(|err| format!("Failed to store pasted image: {err}"))?;
+
+        Ok(ImageAttachment {
+            artifact: ArtifactRef {
+                artifact_id,
+                kind: ArtifactKind::Image,
+                content_hash: None,
+                byte_len: Some(u64::try_from(image.bytes.len()).unwrap_or(u64::MAX)),
+                mime: Some(image.format.mime_type().to_string()),
+                storage_hint: Some(StorageHint::BlobKey {
+                    blob_key: artifact_blob_key(artifact_id),
+                }),
+            },
+            label: None,
+        })
+    }
+
+    fn remove_staged_artifact_file(&self, artifact_id: ArtifactId) {
+        let Some(root) = self.artifact_store_root.as_ref() else {
+            return;
+        };
+        let path = root.join("artifacts").join(format!("{artifact_id}.bin"));
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                redesmyn_logging::tracing::warn!(
+                    artifact_id = %artifact_id,
+                    error = %err,
+                    "failed to remove staged image artifact"
+                );
+            }
+        }
+    }
+
+    fn discard_pending_composer_images(&mut self) {
+        let Some(feed) = self.feed.as_ref() else {
+            return;
+        };
+        for attachment in &feed.composer.image_attachments {
+            self.remove_staged_artifact_file(attachment.artifact.artifact_id);
+        }
+    }
+
+    fn remove_composer_image_attachment(
+        &mut self,
+        artifact_id: ArtifactId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(feed) = self.feed.as_ref() else {
+            return;
+        };
+        if feed.composer.sending {
+            return;
+        }
+        let removed = self
+            .feed
+            .as_mut()
+            .and_then(|feed| feed.remove_composer_image_attachment(artifact_id))
+            .is_some();
+        if removed {
+            self.remove_staged_artifact_file(artifact_id);
+            if self.selected_image_preview == Some(artifact_id) {
+                self.selected_image_preview = None;
+            }
+            cx.notify();
+        }
+    }
+
+    fn image_attachment_path(&self, attachment: &ImageAttachment) -> Result<PathBuf, String> {
+        let hint = attachment
+            .artifact
+            .storage_hint
+            .as_ref()
+            .ok_or_else(|| "artifact storage hint is missing".to_string())?;
+        resolve_artifact_path_from_storage_hint(hint, self.artifact_store_root.as_deref())
+    }
+
+    fn toggle_image_preview(&mut self, artifact_id: ArtifactId, cx: &mut Context<Self>) {
+        if self.selected_image_preview == Some(artifact_id) {
+            self.selected_image_preview = None;
+        } else {
+            self.selected_image_preview = Some(artifact_id);
+        }
+        cx.notify();
+    }
+
     fn send_message(&mut self, on_conflict: AgentMessageConflictAction, cx: &mut Context<Self>) {
         let Some(client) = self.client.clone() else {
             if let Some(feed) = self.feed.as_mut() {
@@ -1940,7 +2190,8 @@ impl SessionView {
 
         let draft = self.composer_input.read(cx).text().clone();
         let message = draft.as_ref().trim().to_string();
-        if message.is_empty() {
+        let image_attachments = feed.composer.image_attachments.clone();
+        if message.is_empty() && image_attachments.is_empty() {
             return;
         }
 
@@ -1956,7 +2207,14 @@ impl SessionView {
         self.send_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
             let cx = cx.clone();
             async move {
-                let result = send_session_message(&client, session_id, message, on_conflict).await;
+                let result = send_session_message(
+                    &client,
+                    session_id,
+                    message,
+                    image_attachments,
+                    on_conflict,
+                )
+                .await;
                 let _ =
                     cx.update(|cx| view.update(cx, |this, cx| this.on_send_completed(result, cx)));
             }
@@ -2925,6 +3183,7 @@ impl SessionView {
             Ok(resp) => {
                 let previous = feed.session_id;
                 feed.finish_sending_success();
+                self.selected_image_preview = None;
                 self.composer_input
                     .update(cx, |input, cx| input.set_text("", cx));
 
@@ -4967,6 +5226,7 @@ impl Render for SessionView {
                                 text,
                                 preview: _,
                                 full_text_artifact,
+                                image_attachments,
                             } = msg;
 
                             let (bg, text_color, align_right) = match role {
@@ -5098,7 +5358,9 @@ impl Render for SessionView {
                                 view.into_any_element()
                             };
 
-                            let bubble = div()
+                            let previewed_image = timeline_view.read(cx).selected_image_preview;
+
+                            let mut bubble = div()
                                 .id(bubble_id.clone())
                                 .flex()
                                 .flex_col()
@@ -5109,8 +5371,123 @@ impl Render for SessionView {
                                 .px(bubble_padding_x)
                                 .py(theme.spacing.sm)
                                 .rounded(theme.radius.xl)
-                                .when_some(bg, |this, bg| this.bg(bg))
-                                .child(bubble_body);
+                                .when_some(bg, |this, bg| this.bg(bg));
+
+                            let has_message_text = !text.trim().is_empty() || needs_full_text;
+                            if has_message_text {
+                                bubble = bubble.child(bubble_body);
+                            }
+
+                            if !image_attachments.is_empty() {
+                                let bubble_text_color =
+                                    text_color.unwrap_or(theme.colors.foreground);
+                                let mut chips = div()
+                                    .id((bubble_id.clone(), "image_chips"))
+                                    .flex()
+                                    .flex_row()
+                                    .flex_wrap()
+                                    .gap(theme.spacing.xs);
+
+                                for (image_ix, attachment) in image_attachments.iter().enumerate() {
+                                    let artifact_id = attachment.artifact.artifact_id;
+                                    let label = image_chip_label(attachment);
+                                    let selected = previewed_image == Some(artifact_id);
+                                    let thumb = match timeline_view.read(cx).image_attachment_path(attachment) {
+                                        Ok(path) if path.exists() => img(path)
+                                            .w(px(18.0))
+                                            .h(px(18.0))
+                                            .rounded_sm()
+                                            .into_any_element(),
+                                        _ => div()
+                                            .w(px(18.0))
+                                            .h(px(18.0))
+                                            .rounded_sm()
+                                            .bg(theme.colors.surface.opacity(0.35))
+                                            .text_size(theme.typography.caption.size)
+                                            .text_color(theme.colors.foreground_muted)
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .child("◻")
+                                            .into_any_element(),
+                                    };
+
+                                    let chip = div()
+                                        .id((bubble_id.clone(), format!("image_chip_{image_ix}")))
+                                        .flex()
+                                        .flex_row()
+                                        .items_center()
+                                        .gap(theme.spacing.xs)
+                                        .px(theme.spacing.xs)
+                                        .py(px(3.0))
+                                        .rounded_full()
+                                        .cursor_pointer()
+                                        .bg(if selected {
+                                            theme.colors.surface.opacity(0.42)
+                                        } else {
+                                            theme.colors.surface.opacity(0.25)
+                                        })
+                                        .on_mouse_down(gpui::MouseButton::Left, {
+                                            let timeline_view = timeline_view.clone();
+                                            move |_, _, cx| {
+                                                timeline_view.update(cx, |this, cx| {
+                                                    this.toggle_image_preview(artifact_id, cx);
+                                                });
+                                            }
+                                        })
+                                        .child(thumb)
+                                        .child(
+                                            div()
+                                                .text_size(theme.typography.caption.size)
+                                                .text_color(bubble_text_color)
+                                                .child(label),
+                                        );
+                                    chips = chips.child(chip);
+                                }
+
+                                bubble = bubble.child(chips);
+
+                                if let Some(artifact_id) = previewed_image
+                                    && let Some(attachment) = image_attachments
+                                        .iter()
+                                        .find(|attachment| attachment.artifact.artifact_id == artifact_id)
+                                {
+                                    let preview = match timeline_view.read(cx).image_attachment_path(attachment)
+                                    {
+                                        Ok(path) if path.exists() => div()
+                                            .id((bubble_id.clone(), "image_preview"))
+                                            .rounded(theme.radius.lg)
+                                            .border_1()
+                                            .border_color(theme.colors.border.opacity(0.4))
+                                            .bg(theme.colors.surface)
+                                            .p(theme.spacing.xs)
+                                            .child(
+                                                img(path)
+                                                    .w_full()
+                                                    .max_h(px(260.0))
+                                                    .rounded_md()
+                                                    .into_any_element(),
+                                            )
+                                            .into_any_element(),
+                                        Ok(path) => div()
+                                            .id((bubble_id.clone(), "image_preview_missing"))
+                                            .text_size(theme.typography.caption.size)
+                                            .text_color(theme.colors.foreground_muted)
+                                            .child(format!(
+                                                "Image file is missing: {}",
+                                                path.display()
+                                            ))
+                                            .into_any_element(),
+                                        Err(err) => div()
+                                            .id((bubble_id.clone(), "image_preview_error"))
+                                            .text_size(theme.typography.caption.size)
+                                            .text_color(theme.colors.foreground_muted)
+                                            .child(err)
+                                            .into_any_element(),
+                                    };
+                                    bubble = bubble.child(preview);
+                                }
+                            }
 
                             let mut row = div()
                                 .id((bubble_id.clone(), "row"))
@@ -6389,6 +6766,11 @@ impl Render for SessionView {
             .as_ref()
             .map(|feed| feed.composer.draft.as_str())
             .unwrap_or_default();
+        let composer_attachment_count = self
+            .feed
+            .as_ref()
+            .map(|feed| feed.composer.image_attachments.len())
+            .unwrap_or_default();
         let composer_sending = self.feed.as_ref().is_some_and(|feed| feed.composer.sending);
         let (composer_can_send, disabled_reason) = if composer_sending {
             (false, "Sending…")
@@ -6398,7 +6780,7 @@ impl Render for SessionView {
             (false, "Updating…")
         } else if self.client.is_none() || self.feed.is_none() {
             (false, "Chat is unavailable")
-        } else if composer_draft.trim().is_empty() {
+        } else if composer_draft.trim().is_empty() && composer_attachment_count == 0 {
             (false, "Message is empty")
         } else {
             (true, "")
@@ -7273,11 +7655,164 @@ impl Render for SessionView {
             )
             .child(send_button);
 
+        let composer_image_attachments = self
+            .feed
+            .as_ref()
+            .map(|feed| feed.composer.image_attachments.clone())
+            .unwrap_or_default();
+
+        let composer_image_strip = if composer_image_attachments.is_empty() {
+            None
+        } else {
+            let mut chips = div()
+                .id(("composer_image_strip", cx.entity_id()))
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .gap(theme.spacing.xs)
+                .mb(theme.spacing.xs);
+
+            for (index, attachment) in composer_image_attachments.iter().enumerate() {
+                let artifact_id = attachment.artifact.artifact_id;
+                let artifact_key = stable_str_key(&artifact_id.to_string());
+                let selected = self.selected_image_preview == Some(artifact_id);
+                let label = image_chip_label(attachment);
+                let thumb = match self.image_attachment_path(attachment) {
+                    Ok(path) if path.exists() => img(path)
+                        .w(px(18.0))
+                        .h(px(18.0))
+                        .rounded_sm()
+                        .into_any_element(),
+                    _ => div()
+                        .w(px(18.0))
+                        .h(px(18.0))
+                        .rounded_sm()
+                        .bg(theme.colors.surface_elevated.opacity(0.65))
+                        .text_size(theme.typography.caption.size)
+                        .text_color(theme.colors.foreground_muted)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child("◻")
+                        .into_any_element(),
+                };
+
+                let chip = div()
+                    .id(("composer_image_chip", artifact_key ^ index as u64))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(theme.spacing.xs)
+                    .px(theme.spacing.xs)
+                    .py(px(3.0))
+                    .rounded_full()
+                    .cursor_pointer()
+                    .bg(if selected {
+                        theme.colors.surface_elevated.opacity(0.72)
+                    } else {
+                        theme.colors.surface_elevated.opacity(0.5)
+                    })
+                    .on_mouse_down(gpui::MouseButton::Left, {
+                        let view = view.clone();
+                        move |_, _, cx| {
+                            view.update(cx, |this, cx| {
+                                this.toggle_image_preview(artifact_id, cx);
+                            });
+                        }
+                    })
+                    .child(thumb)
+                    .child(
+                        div()
+                            .text_size(theme.typography.caption.size)
+                            .text_color(theme.colors.foreground)
+                            .child(label),
+                    )
+                    .child(
+                        div()
+                            .id(("composer_image_chip_remove", artifact_key ^ index as u64))
+                            .cursor_pointer()
+                            .text_size(theme.typography.caption.size)
+                            .text_color(theme.colors.foreground_muted)
+                            .on_mouse_down(gpui::MouseButton::Left, {
+                                let view = view.clone();
+                                move |_, _, cx| {
+                                    cx.stop_propagation();
+                                    view.update(cx, |this, cx| {
+                                        this.remove_composer_image_attachment(artifact_id, cx);
+                                    });
+                                }
+                            })
+                            .child("✕"),
+                    );
+
+                chips = chips.child(chip);
+            }
+
+            Some(chips.into_any_element())
+        };
+
+        let composer_image_hovercard = self
+            .selected_image_preview
+            .and_then(|artifact_id| {
+                composer_image_attachments
+                    .iter()
+                    .find(|attachment| attachment.artifact.artifact_id == artifact_id)
+                    .cloned()
+            })
+            .map(|attachment| {
+                let label = image_chip_label(&attachment);
+                let preview: AnyElement = match self.image_attachment_path(&attachment) {
+                    Ok(path) if path.exists() => img(path)
+                        .w_full()
+                        .max_h(px(260.0))
+                        .rounded_md()
+                        .into_any_element(),
+                    Ok(path) => div()
+                        .text_size(theme.typography.caption.size)
+                        .text_color(theme.colors.foreground_muted)
+                        .child(format!("Image file is missing: {}", path.display()))
+                        .into_any_element(),
+                    Err(err) => div()
+                        .text_size(theme.typography.caption.size)
+                        .text_color(theme.colors.foreground_muted)
+                        .child(err)
+                        .into_any_element(),
+                };
+
+                div()
+                    .id(("composer_image_hovercard", cx.entity_id()))
+                    .absolute()
+                    .left(theme.spacing.sm)
+                    .bottom(px(56.0))
+                    .w(px(360.0))
+                    .max_w(relative(0.8))
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                    })
+                    .child(
+                        overlay_surface(&theme, OverlaySurfaceKind::Menu, theme.radius.lg)
+                            .p(theme.spacing.xs)
+                            .child(
+                                div()
+                                    .pb(theme.spacing.xs)
+                                    .text_size(theme.typography.caption.size)
+                                    .text_color(theme.colors.foreground_muted)
+                                    .child(label),
+                            )
+                            .child(preview),
+                    )
+                    .into_any_element()
+            });
+
         let composer = div()
             .relative()
             .w_full()
             .key_context("SessionComposer")
+            .when_some(composer_image_strip, |this, strip| this.child(strip))
             .child(self.composer_input.clone())
+            .when_some(composer_image_hovercard, |this, hovercard| {
+                this.child(hovercard)
+            })
             .child(
                 div()
                     .absolute()

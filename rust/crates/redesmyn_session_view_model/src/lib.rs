@@ -4,13 +4,13 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use redesmyn_ids::{SessionEventId, SessionId};
+use redesmyn_ids::{ArtifactId, SessionEventId, SessionId};
 use redesmyn_protocol::client::SessionEventCursor;
 use redesmyn_protocol::session::{
     ArtifactEmitted, AssistantMessage, CodexApprovalPolicy, CodexApprovalPolicyChanged,
-    CodexSandboxPolicy, CodexSandboxPolicyChanged, PermissionDecided, PermissionRequested,
-    PermissionsMode, PermissionsModeChanged, SessionEventKind, StatusUpdate, ToolInvocation,
-    ToolResult, TurnCompleted, TurnStarted, UserMessage,
+    CodexSandboxPolicy, CodexSandboxPolicyChanged, ImageAttachment, PermissionDecided,
+    PermissionRequested, PermissionsMode, PermissionsModeChanged, SessionEventKind, StatusUpdate,
+    ToolInvocation, ToolResult, TurnCompleted, TurnStarted, UserMessage,
 };
 use redesmyn_protocol::session_live::{SessionLiveEvent, SessionLiveEventKind};
 use redesmyn_protocol::{ArtifactRef, SessionEvent, Timestamp};
@@ -175,6 +175,8 @@ pub struct MessageItem {
     pub preview: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub full_text_artifact: Option<ArtifactRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub image_attachments: Vec<ImageAttachment>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -278,6 +280,8 @@ pub struct SessionComposerState {
     pub last_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conflict_prompt: Option<SessionComposerConflictPrompt>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub image_attachments: Vec<ImageAttachment>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -829,6 +833,26 @@ impl SessionFeedState {
         self.composer.conflict_prompt = None;
     }
 
+    pub fn add_composer_image_attachment(&mut self, attachment: ImageAttachment) {
+        self.composer.image_attachments.push(attachment);
+        self.composer.last_error = None;
+        self.composer.conflict_prompt = None;
+    }
+
+    pub fn remove_composer_image_attachment(
+        &mut self,
+        artifact_id: ArtifactId,
+    ) -> Option<ImageAttachment> {
+        let index = self
+            .composer
+            .image_attachments
+            .iter()
+            .position(|attachment| attachment.artifact.artifact_id == artifact_id)?;
+        self.composer.last_error = None;
+        self.composer.conflict_prompt = None;
+        Some(self.composer.image_attachments.remove(index))
+    }
+
     pub fn start_sending(&mut self) {
         self.composer.sending = true;
         self.composer.last_error = None;
@@ -838,6 +862,7 @@ impl SessionFeedState {
     pub fn finish_sending_success(&mut self) {
         self.composer.sending = false;
         self.composer.draft.clear();
+        self.composer.image_attachments.clear();
         self.composer.last_error = None;
         self.composer.conflict_prompt = None;
     }
@@ -974,6 +999,7 @@ impl SessionEventItem {
                     text: ev.text.clone(),
                     preview: ev.preview.clone(),
                     full_text_artifact: ev.full_text_artifact.clone(),
+                    image_attachments: ev.image_attachments.clone(),
                 })
             }
             SessionEventKind::AssistantMessage(ev) => {
@@ -982,6 +1008,7 @@ impl SessionEventItem {
                     text: ev.text.clone(),
                     preview: ev.preview.clone(),
                     full_text_artifact: ev.full_text_artifact.clone(),
+                    image_attachments: Vec::new(),
                 })
             }
             SessionEventKind::AssistantReasoning(ev) => {
@@ -1199,6 +1226,23 @@ mod tests {
         Timestamp::from_offset_date_time(dt)
     }
 
+    fn sample_image_attachment() -> ImageAttachment {
+        let artifact_id = ArtifactId::new();
+        ImageAttachment {
+            artifact: ArtifactRef {
+                artifact_id,
+                kind: redesmyn_protocol::ArtifactKind::Image,
+                content_hash: None,
+                byte_len: Some(128),
+                mime: Some("image/png".to_string()),
+                storage_hint: Some(redesmyn_protocol::StorageHint::BlobKey {
+                    blob_key: format!("artifact/{artifact_id}"),
+                }),
+            },
+            label: Some("image.png".to_string()),
+        }
+    }
+
     fn user_event(
         session_id: SessionId,
         id: SessionEventId,
@@ -1215,6 +1259,7 @@ mod tests {
                 text: preview.to_string(),
                 preview: preview.to_string(),
                 full_text_artifact: None,
+                image_attachments: Vec::new(),
             }),
         }
     }
@@ -1404,9 +1449,11 @@ mod tests {
         let mut state = SessionFeedState::new(session_id);
 
         state.set_draft("hi");
+        state.add_composer_image_attachment(sample_image_attachment());
         state.start_sending();
         state.finish_sending_success();
         assert_eq!(state.composer.draft, "");
+        assert!(state.composer.image_attachments.is_empty());
         assert!(state.composer.last_error.is_none());
         assert!(state.composer.conflict_prompt.is_none());
     }
@@ -1431,6 +1478,21 @@ mod tests {
                 .map(|p| p.code.as_str()),
             Some("structured_turn_in_progress")
         );
+    }
+
+    #[test]
+    fn test_composer_remove_image_attachment() {
+        let session_id = SessionId::new();
+        let mut state = SessionFeedState::new(session_id);
+        let attachment = sample_image_attachment();
+        let artifact_id = attachment.artifact.artifact_id;
+
+        state.add_composer_image_attachment(attachment.clone());
+        assert_eq!(state.composer.image_attachments.len(), 1);
+
+        let removed = state.remove_composer_image_attachment(artifact_id);
+        assert_eq!(removed, Some(attachment));
+        assert!(state.composer.image_attachments.is_empty());
     }
 
     #[test]

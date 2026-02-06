@@ -115,6 +115,7 @@ async fn daemon_link_persists_session_event_batches() {
             text: "hello".to_string(),
             preview: "hello".to_string(),
             full_text_artifact: None,
+            image_attachments: Vec::new(),
         }),
     };
 

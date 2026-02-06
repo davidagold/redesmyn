@@ -95,6 +95,7 @@ fn user_event(session_id: SessionId, id: SessionEventId, created_at: Timestamp) 
             text: "hello".to_string(),
             preview: "hello".to_string(),
             full_text_artifact: None,
+            image_attachments: Vec::new(),
         }),
     }
 }
@@ -201,6 +202,7 @@ async fn append_session_event_creates_missing_task_session_row() {
             text: "hello".to_string(),
             preview: "hello".to_string(),
             full_text_artifact: None,
+            image_attachments: Vec::new(),
         }),
     };
 

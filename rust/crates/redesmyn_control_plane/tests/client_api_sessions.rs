@@ -42,6 +42,7 @@ fn user_event(session_id: SessionId, id: SessionEventId, created_at: Timestamp) 
             text: "hello".to_string(),
             preview: "hello".to_string(),
             full_text_artifact: None,
+            image_attachments: Vec::new(),
         }),
     }
 }
@@ -386,6 +387,7 @@ async fn uds_server_supports_session_query_surfaces() {
             payload: RequestPayload::SendSessionMessage(SendSessionMessageRequest {
                 session_id: chat_session_id,
                 message: "hello from client".to_string(),
+                image_attachments: Vec::new(),
                 on_conflict: AgentMessageConflictAction::Fail,
             }),
         }),

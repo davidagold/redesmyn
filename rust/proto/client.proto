@@ -168,6 +168,7 @@ message SendSessionMessageRequest {
   bytes session_id = 1;
   string message = 2;
   AgentMessageConflictAction on_conflict = 3;
+  repeated ImageAttachment image_attachments = 4;
 }
 
 message SendSessionMessageResponse {

@@ -51,7 +51,7 @@ impl AppServerClient for FakeAppServerClient {
         let events_tx = self.events_tx.clone();
         Box::pin(async move {
             match request {
-                AppServerRequest::SendMessage { intent } => {
+                AppServerRequest::SendMessage { intent, .. } => {
                     let prompt = match intent {
                         AppServerTurnIntent::StartNew { prompt } => prompt,
                         AppServerTurnIntent::Resume { prompt, .. } => prompt,
@@ -333,6 +333,7 @@ async fn send_message_round_trips_and_emits_structured_event() {
             AppServerTurnIntent::StartNew {
                 prompt: "hi".to_owned(),
             },
+            Vec::new(),
         )
         .await
         .expect("send_message");
@@ -398,6 +399,7 @@ async fn send_message_emits_live_assistant_deltas() {
             AppServerTurnIntent::StartNew {
                 prompt: "hi".to_owned(),
             },
+            Vec::new(),
         )
         .await
         .expect("send_message");
@@ -545,6 +547,7 @@ async fn reconnect_failure_does_not_kill_event_forwarding() {
             AppServerTurnIntent::StartNew {
                 prompt: "hi".to_owned(),
             },
+            Vec::new(),
         )
         .await
         .expect("send_message");

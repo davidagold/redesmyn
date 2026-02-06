@@ -9,8 +9,8 @@ use redesmyn_ids::{SessionId, TaskId};
 
 use crate::client::{AgentKind, ModelReasoningEffort};
 use crate::session::{
-    CodexApprovalPolicy, CodexSandboxPolicy, ExternalSessionRef, PermissionDecision,
-    PermissionsMode,
+    CodexApprovalPolicy, CodexSandboxPolicy, ExternalSessionRef, ImageAttachment,
+    PermissionDecision, PermissionsMode,
 };
 
 fn default_permissions_mode() -> PermissionsMode {
@@ -61,6 +61,8 @@ pub struct StartAgentSessionCommand {
     pub agent_kind: AgentKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub image_attachments: Vec<ImageAttachment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy_snapshot: Option<SessionPolicySnapshot>,
     /// Session ids to stop before starting this session.
@@ -103,6 +105,8 @@ pub struct ResumeByIdTaskAgentTurnCommand {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_id: Option<TaskId>,
     pub prompt: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub image_attachments: Vec<ImageAttachment>,
     pub external_session_ref: ExternalSessionRef,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy_snapshot: Option<SessionPolicySnapshot>,

@@ -657,8 +657,17 @@ async fn ensure_event_artifacts(
 
     match kind {
         SessionEventKind::UserMessage(UserMessage {
-            full_text_artifact, ..
-        }) => artifacts.extend(full_text_artifact.as_ref()),
+            image_attachments,
+            full_text_artifact,
+            ..
+        }) => {
+            artifacts.extend(full_text_artifact.as_ref());
+            artifacts.extend(
+                image_attachments
+                    .iter()
+                    .map(|attachment| &attachment.artifact),
+            );
+        }
         SessionEventKind::AssistantMessage(AssistantMessage {
             full_text_artifact, ..
         }) => artifacts.extend(full_text_artifact.as_ref()),
@@ -757,6 +766,7 @@ fn artifact_kind_db_value(kind: ArtifactKind) -> &'static str {
         ArtifactKind::Patch => "patch",
         ArtifactKind::FileSnapshot => "file_snapshot",
         ArtifactKind::Trace => "trace",
+        ArtifactKind::Image => "image",
         ArtifactKind::Unknown => "unknown",
     }
 }
@@ -970,7 +980,11 @@ fn message_preview_from_kind(kind: &SessionEventKind) -> Option<String> {
 
 fn artifact_id_from_kind(kind: &SessionEventKind) -> Option<redesmyn_ids::ArtifactId> {
     match kind {
-        SessionEventKind::UserMessage(ev) => ev.full_text_artifact.as_ref().map(|a| a.artifact_id),
+        SessionEventKind::UserMessage(ev) => ev
+            .full_text_artifact
+            .as_ref()
+            .map(|a| a.artifact_id)
+            .or_else(|| ev.image_attachments.first().map(|a| a.artifact.artifact_id)),
         SessionEventKind::AssistantMessage(ev) => {
             ev.full_text_artifact.as_ref().map(|a| a.artifact_id)
         }

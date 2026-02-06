@@ -31,16 +31,17 @@ use redesmyn_protocol::client::{
     ListAgentModelsResponse, ListChatSessionsResponse, ListEpicsResponse,
     ListSessionModelsResponse, ListTaskSessionsResponse, MergeReadiness,
     PinChatSessionToEpicResponse, RespondPermissionRequestResponse, Response, ResponseResult,
-    SendSessionMessageResponse, SessionSummary, SetSessionCodexApprovalPolicyResponse,
-    SetSessionCodexSandboxPolicyResponse, SetSessionModelResponse,
-    SetSessionPermissionsModeResponse, StatusResponse, Subscribed, SubscriptionEvent, TaskState,
-    UnpinChatSessionFromEpicResponse, WaitForCommandResponse, WaitForEventResponse,
-    WaitForIdleResponse,
+    SEND_SESSION_MESSAGE_MAX_IMAGE_ATTACHMENT_BYTES, SEND_SESSION_MESSAGE_MAX_IMAGE_ATTACHMENTS,
+    SEND_SESSION_MESSAGE_MAX_IMAGE_TOTAL_BYTES, SendSessionMessageResponse, SessionSummary,
+    SetSessionCodexApprovalPolicyResponse, SetSessionCodexSandboxPolicyResponse,
+    SetSessionModelResponse, SetSessionPermissionsModeResponse, StatusResponse, Subscribed,
+    SubscriptionEvent, TaskState, UnpinChatSessionFromEpicResponse, WaitForCommandResponse,
+    WaitForEventResponse, WaitForIdleResponse,
 };
 use redesmyn_protocol::{
-    CodexApprovalPolicy, CodexSandboxPolicy, ErrorCategory, ErrorDetail, ErrorEnvelope,
-    ExternalSessionRef, PermissionDecision, PermissionsMode, ProtocolEnvelope, ProtocolVersion,
-    Scope, SessionEvent, SessionEventKind, SessionScope, Timestamp, UserMessage,
+    ArtifactKind, CodexApprovalPolicy, CodexSandboxPolicy, ErrorCategory, ErrorDetail,
+    ErrorEnvelope, ExternalSessionRef, PermissionDecision, PermissionsMode, ProtocolEnvelope,
+    ProtocolVersion, Scope, SessionEvent, SessionEventKind, SessionScope, Timestamp, UserMessage,
 };
 use redesmyn_transport::client::codec::{Codec, JsonCodec, ProtobufCodec};
 use redesmyn_transport::client::framed::FramedEndpoint;
@@ -674,15 +675,16 @@ async fn handle_request_result(
             let _guard = span.enter();
 
             let trimmed = send.message.trim();
-            if trimmed.is_empty() {
+            let has_text = !trimmed.is_empty();
+            if !has_text && send.image_attachments.is_empty() {
                 return Ok(ResponseResult::Error(ErrorEnvelope::new(
                     ErrorCategory::InvalidRequest,
-                    "Message text is required.",
+                    "Message text or image attachment is required.",
                 )));
             }
 
             const MAX_TEXT_CHARS: usize = 20_000;
-            if trimmed.chars().count() > MAX_TEXT_CHARS {
+            if has_text && trimmed.chars().count() > MAX_TEXT_CHARS {
                 return Ok(ResponseResult::Error(
                     ErrorEnvelope::new(ErrorCategory::InvalidRequest, "Message text is too long.")
                         .with_detail(ErrorDetail::from([(
@@ -690,6 +692,9 @@ async fn handle_request_result(
                             MAX_TEXT_CHARS.to_string(),
                         )])),
                 ));
+            }
+            if let Err(err) = validate_image_attachments(&send.image_attachments) {
+                return Ok(ResponseResult::Error(err));
             }
 
             let text = send.message.trim_end();
@@ -941,8 +946,9 @@ async fn handle_request_result(
                 turn_id: None,
                 kind: SessionEventKind::UserMessage(UserMessage {
                     text: text.to_string(),
-                    preview: session_message_preview(trimmed),
+                    preview: session_message_preview(trimmed, send.image_attachments.len()),
                     full_text_artifact: None,
+                    image_attachments: send.image_attachments.clone(),
                 }),
             };
 
@@ -996,6 +1002,7 @@ async fn handle_request_result(
                         session_id,
                         task_id,
                         prompt: text.to_string(),
+                        image_attachments: send.image_attachments.clone(),
                         external_session_ref,
                         policy_snapshot: policy_snapshot.clone(),
                         interrupt_turn,
@@ -1010,7 +1017,8 @@ async fn handle_request_result(
                     session_id,
                     task_id,
                     agent_kind,
-                    initial_prompt: Some(text.to_string()),
+                    initial_prompt: has_text.then(|| text.to_string()),
+                    image_attachments: send.image_attachments.clone(),
                     policy_snapshot,
                     stop_session_ids,
                 }) {
@@ -2265,11 +2273,113 @@ fn conflict_error(
     ]))
 }
 
-fn session_message_preview(text: &str) -> String {
+fn session_message_preview(text: &str, image_count: usize) -> String {
     const MAX_PREVIEW_CHARS: usize = 140;
     let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
 
-    normalized.chars().take(MAX_PREVIEW_CHARS).collect()
+    if !normalized.is_empty() {
+        return normalized.chars().take(MAX_PREVIEW_CHARS).collect();
+    }
+
+    match image_count {
+        0 => String::new(),
+        1 => "[image]".to_string(),
+        count => format!("[{count} images]"),
+    }
+}
+
+fn validate_image_attachments(
+    image_attachments: &[redesmyn_protocol::session::ImageAttachment],
+) -> Result<(), ErrorEnvelope> {
+    if image_attachments.len() > SEND_SESSION_MESSAGE_MAX_IMAGE_ATTACHMENTS {
+        return Err(ErrorEnvelope::new(
+            ErrorCategory::InvalidRequest,
+            "Too many image attachments.",
+        )
+        .with_detail(ErrorDetail::from([
+            (
+                "max_image_attachments".to_string(),
+                SEND_SESSION_MESSAGE_MAX_IMAGE_ATTACHMENTS.to_string(),
+            ),
+            (
+                "actual_image_attachments".to_string(),
+                image_attachments.len().to_string(),
+            ),
+        ])));
+    }
+
+    let mut total_bytes = 0_u64;
+    for (index, attachment) in image_attachments.iter().enumerate() {
+        if attachment.artifact.kind != ArtifactKind::Image {
+            return Err(ErrorEnvelope::new(
+                ErrorCategory::InvalidRequest,
+                "Image attachments must reference image artifacts.",
+            )
+            .with_detail(ErrorDetail::from([
+                ("index".to_string(), index.to_string()),
+                (
+                    "artifact_kind".to_string(),
+                    format!("{:?}", attachment.artifact.kind),
+                ),
+            ])));
+        }
+
+        let Some(byte_len) = attachment.artifact.byte_len else {
+            return Err(ErrorEnvelope::new(
+                ErrorCategory::InvalidRequest,
+                "Image attachment byte length is required.",
+            )
+            .with_detail(ErrorDetail::from([(
+                "index".to_string(),
+                index.to_string(),
+            )])));
+        };
+
+        if byte_len > SEND_SESSION_MESSAGE_MAX_IMAGE_ATTACHMENT_BYTES {
+            return Err(ErrorEnvelope::new(
+                ErrorCategory::InvalidRequest,
+                "Image attachment is too large.",
+            )
+            .with_detail(ErrorDetail::from([
+                ("index".to_string(), index.to_string()),
+                (
+                    "max_bytes".to_string(),
+                    SEND_SESSION_MESSAGE_MAX_IMAGE_ATTACHMENT_BYTES.to_string(),
+                ),
+                ("actual_bytes".to_string(), byte_len.to_string()),
+            ])));
+        }
+
+        total_bytes = total_bytes.saturating_add(byte_len);
+        if total_bytes > SEND_SESSION_MESSAGE_MAX_IMAGE_TOTAL_BYTES {
+            return Err(ErrorEnvelope::new(
+                ErrorCategory::InvalidRequest,
+                "Total image attachment payload is too large.",
+            )
+            .with_detail(ErrorDetail::from([
+                (
+                    "max_total_bytes".to_string(),
+                    SEND_SESSION_MESSAGE_MAX_IMAGE_TOTAL_BYTES.to_string(),
+                ),
+                ("actual_total_bytes".to_string(), total_bytes.to_string()),
+            ])));
+        }
+
+        if let Some(mime) = attachment.artifact.mime.as_deref() {
+            if !mime.starts_with("image/") {
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "Image attachment mime type is invalid.",
+                )
+                .with_detail(ErrorDetail::from([
+                    ("index".to_string(), index.to_string()),
+                    ("mime".to_string(), mime.to_string()),
+                ])));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn agent_session_summary_from_record(record: AgentSessionRecord) -> AgentSessionSummary {

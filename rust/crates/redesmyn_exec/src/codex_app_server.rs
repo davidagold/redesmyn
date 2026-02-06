@@ -142,6 +142,7 @@ struct TurnStartParams {
 #[serde(tag = "type", rename_all = "camelCase")]
 enum UserInput {
     Text { text: String },
+    LocalImage { path: String },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -593,7 +594,11 @@ impl CodexAppServerClient {
         Ok(())
     }
 
-    async fn send_user_message(&self, prompt: &str) -> Result<(), AppServerRequestError> {
+    async fn send_user_message(
+        &self,
+        prompt: &str,
+        image_paths: &[String],
+    ) -> Result<(), AppServerRequestError> {
         let span = redesmyn_logging::redesmyn_info_span!("codex_app_server.turn_start");
         let _guard = span.enter();
 
@@ -608,11 +613,27 @@ impl CodexAppServerClient {
         let approval_policy = self.state.approval_policy().await;
         let sandbox_policy = self.state.sandbox_policy().await;
 
+        let mut input = Vec::new();
+        if !prompt.trim().is_empty() {
+            input.push(UserInput::Text {
+                text: prompt.to_owned(),
+            });
+        }
+        input.extend(
+            image_paths
+                .iter()
+                .cloned()
+                .map(|path| UserInput::LocalImage { path }),
+        );
+        if input.is_empty() {
+            return Err(AppServerRequestError::Failed {
+                reason: "turn/start requires text or image input".to_owned(),
+            });
+        }
+
         let params = TurnStartParams {
             thread_id,
-            input: vec![UserInput::Text {
-                text: prompt.to_owned(),
-            }],
+            input,
             approval_policy,
             sandbox_policy,
         };
@@ -747,7 +768,10 @@ impl AppServerClient for CodexAppServerClient {
     ) -> BoxFuture<'_, Result<AppServerResponse, AppServerRequestError>> {
         Box::pin(async move {
             match request {
-                AppServerRequest::SendMessage { intent } => {
+                AppServerRequest::SendMessage {
+                    intent,
+                    image_paths,
+                } => {
                     let prompt = match &intent {
                         AppServerTurnIntent::StartNew { prompt } => prompt.as_str(),
                         AppServerTurnIntent::Resume { prompt, .. } => prompt.as_str(),
@@ -789,7 +813,7 @@ impl AppServerClient for CodexAppServerClient {
                         }
                     };
 
-                    self.send_user_message(prompt).await?;
+                    self.send_user_message(prompt, &image_paths).await?;
                     Ok(AppServerResponse::MessageAccepted)
                 }
                 AppServerRequest::Interrupt => {

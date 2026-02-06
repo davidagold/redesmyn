@@ -190,6 +190,7 @@ async fn handle_task_agent_start(
         task_id: Some(cmd.task_id),
         agent_kind: cmd.agent_kind,
         initial_prompt: cmd.initial_prompt,
+        image_attachments: Vec::new(),
         policy_snapshot: cmd.policy_snapshot,
         stop_session_ids: cmd.stop_session_ids,
     };
@@ -245,6 +246,7 @@ async fn handle_agent_start(
         scope,
         repo_root,
         initial_prompt: cmd.initial_prompt,
+        image_attachments: cmd.image_attachments,
         policy_snapshot: cmd.policy_snapshot,
         stop_session_ids: cmd.stop_session_ids,
     };
@@ -319,6 +321,7 @@ async fn handle_session_agent_resume_by_id_turn(
         repo_root,
         external_session_ref: external,
         prompt: cmd.prompt,
+        image_attachments: cmd.image_attachments,
         policy_snapshot: cmd.policy_snapshot,
         interrupt_turn: cmd.interrupt_turn,
     };

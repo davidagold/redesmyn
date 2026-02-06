@@ -18,9 +18,9 @@ use crate::session::{
     ArtifactEmitted, AssistantMessage, AssistantReasoning, AssistantReasoningText,
     CodexApprovalPolicy, CodexApprovalPolicyChanged, CodexNetworkAccess, CodexSandboxPolicy,
     CodexSandboxPolicyChanged, CommandExecutionPermissionRequest, ExternalSessionRef,
-    FileChangePermissionRequest, InterfaceMode, PermissionDecided, PermissionDecision,
-    PermissionDecisionBy, PermissionRequest, PermissionRequested, PermissionsMode,
-    PermissionsModeChanged, SessionEvent, SessionEventKind, SessionModelChanged,
+    FileChangePermissionRequest, ImageAttachment, InterfaceMode, PermissionDecided,
+    PermissionDecision, PermissionDecisionBy, PermissionRequest, PermissionRequested,
+    PermissionsMode, PermissionsModeChanged, SessionEvent, SessionEventKind, SessionModelChanged,
     SessionModelReasoningEffort, SessionScope, StatusUpdate, ToolInvocation, ToolResult,
     TurnCompleted, TurnStarted, TurnState, UnknownSessionEvent, UserMessage,
 };
@@ -918,6 +918,7 @@ fn encode_artifact_kind(value: ArtifactKind) -> i32 {
         ArtifactKind::Patch => pbv1::ArtifactKind::Patch as i32,
         ArtifactKind::FileSnapshot => pbv1::ArtifactKind::FileSnapshot as i32,
         ArtifactKind::Trace => pbv1::ArtifactKind::Trace as i32,
+        ArtifactKind::Image => pbv1::ArtifactKind::Image as i32,
         ArtifactKind::Unknown => pbv1::ArtifactKind::Unspecified as i32,
     }
 }
@@ -929,6 +930,7 @@ fn decode_artifact_kind(value: i32) -> ArtifactKind {
         Ok(pbv1::ArtifactKind::Patch) => ArtifactKind::Patch,
         Ok(pbv1::ArtifactKind::FileSnapshot) => ArtifactKind::FileSnapshot,
         Ok(pbv1::ArtifactKind::Trace) => ArtifactKind::Trace,
+        Ok(pbv1::ArtifactKind::Image) => ArtifactKind::Image,
         Ok(pbv1::ArtifactKind::Unspecified) | Err(_) => ArtifactKind::Unknown,
     }
 }
@@ -1216,6 +1218,11 @@ impl UserMessage {
                 .full_text_artifact
                 .as_ref()
                 .map(ArtifactRef::to_protobuf),
+            image_attachments: self
+                .image_attachments
+                .iter()
+                .map(ImageAttachment::to_protobuf)
+                .collect(),
         }
     }
 
@@ -1227,6 +1234,30 @@ impl UserMessage {
                 .full_text_artifact
                 .map(ArtifactRef::try_from_protobuf)
                 .transpose()?,
+            image_attachments: proto
+                .image_attachments
+                .into_iter()
+                .map(ImageAttachment::try_from_protobuf)
+                .collect::<Result<Vec<_>, _>>()?,
+        })
+    }
+}
+
+impl ImageAttachment {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::ImageAttachment {
+        pbv1::ImageAttachment {
+            artifact: Some(self.artifact.to_protobuf()),
+            label: normalize_optional_string(self.label.clone()),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::ImageAttachment) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            artifact: ArtifactRef::try_from_protobuf(
+                proto.artifact.ok_or_else(|| missing_required("artifact"))?,
+            )?,
+            label: normalize_optional_string(proto.label),
         })
     }
 }
@@ -3310,6 +3341,11 @@ impl crate::client::SendSessionMessageRequest {
             session_id: self.session_id.to_bytes().to_vec(),
             message: self.message.clone(),
             on_conflict: encode_agent_message_conflict_action(self.on_conflict),
+            image_attachments: self
+                .image_attachments
+                .iter()
+                .map(ImageAttachment::to_protobuf)
+                .collect(),
         }
     }
 
@@ -3320,6 +3356,11 @@ impl crate::client::SendSessionMessageRequest {
             session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
             message: proto.message,
             on_conflict: decode_agent_message_conflict_action(proto.on_conflict)?,
+            image_attachments: proto
+                .image_attachments
+                .into_iter()
+                .map(ImageAttachment::try_from_protobuf)
+                .collect::<Result<Vec<_>, _>>()?,
         })
     }
 }

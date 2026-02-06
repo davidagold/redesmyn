@@ -9,6 +9,7 @@ use redesmyn_ids::{
     SessionEventId, SessionId, SubscriptionId, TaskId, WorkspaceId,
 };
 
+use crate::session::ImageAttachment;
 use crate::{
     CodexApprovalPolicy, CodexSandboxPolicy, ErrorEnvelope, PermissionDecision, PermissionsMode,
     ProtocolEnvelope, ProtocolVersion, Scope, SessionEvent, SessionLiveEvent, Timestamp,
@@ -507,12 +508,18 @@ impl Default for AgentMessageConflictAction {
     }
 }
 
+pub const SEND_SESSION_MESSAGE_MAX_IMAGE_ATTACHMENTS: usize = 8;
+pub const SEND_SESSION_MESSAGE_MAX_IMAGE_ATTACHMENT_BYTES: u64 = 8 * 1024 * 1024;
+pub const SEND_SESSION_MESSAGE_MAX_IMAGE_TOTAL_BYTES: u64 = 32 * 1024 * 1024;
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SendSessionMessageRequest {
     pub session_id: SessionId,
     pub message: String,
     #[serde(default)]
     pub on_conflict: AgentMessageConflictAction,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub image_attachments: Vec<ImageAttachment>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

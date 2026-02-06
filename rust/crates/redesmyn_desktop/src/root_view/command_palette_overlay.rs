@@ -102,6 +102,7 @@ impl CommandPaletteOverlay {
             TextInputEvent::Submitted(text) => {
                 self.on_submit(text, cx);
             }
+            TextInputEvent::PastedImages(_) => {}
         }
     }
 

@@ -4,11 +4,11 @@ use std::{
 };
 
 use gpui::{
-    App, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId, ElementInputHandler,
-    Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, IntoElement,
-    KeyBinding, LayoutId, MouseButton, PaintQuad, Pixels, Point, Render, ScrollHandle, ShapedLine,
-    SharedString, Size, Style, TextRun, UTF16Selection, UnderlineStyle, Window, WrappedLine,
-    actions, div, fill, point, prelude::*, px, relative, size,
+    App, Bounds, ClipboardEntry, ClipboardItem, Context, CursorStyle, Element, ElementId,
+    ElementInputHandler, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
+    GlobalElementId, IntoElement, KeyBinding, LayoutId, MouseButton, PaintQuad, Pixels, Point,
+    Render, ScrollHandle, ShapedLine, SharedString, Size, Style, TextRun, UTF16Selection,
+    UnderlineStyle, Window, WrappedLine, actions, div, fill, point, prelude::*, px, relative, size,
 };
 
 use crate::utils::{
@@ -172,6 +172,26 @@ pub fn bind_text_input_keys(cx: &mut App) {
 pub enum TextInputEvent {
     Changed(SharedString),
     Submitted(SharedString),
+    PastedImages(Vec<TextInputPastedImage>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextInputPastedImage {
+    pub format: gpui::ImageFormat,
+    pub bytes: Vec<u8>,
+}
+
+fn pasted_images_from_clipboard(item: &ClipboardItem) -> Vec<TextInputPastedImage> {
+    item.entries()
+        .iter()
+        .filter_map(|entry| match entry {
+            ClipboardEntry::Image(image) => Some(TextInputPastedImage {
+                format: image.format,
+                bytes: image.bytes.clone(),
+            }),
+            ClipboardEntry::String(_) => None,
+        })
+        .collect()
 }
 
 const EDIT_HISTORY_LIMIT: usize = 128;
@@ -581,7 +601,17 @@ impl TextInput {
     }
 
     fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+        let Some(item) = cx.read_from_clipboard() else {
+            return;
+        };
+
+        let pasted_images = pasted_images_from_clipboard(&item);
+        if !pasted_images.is_empty() {
+            cx.emit(TextInputEvent::PastedImages(pasted_images));
+            return;
+        }
+
+        if let Some(text) = item.text() {
             let replacement_range = self.replacement_range_for_input(None);
             self.apply_edit_range(
                 replacement_range,
@@ -2156,7 +2186,17 @@ impl TextArea {
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         self.preferred_vertical_x = None;
-        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+        let Some(item) = cx.read_from_clipboard() else {
+            return;
+        };
+
+        let pasted_images = pasted_images_from_clipboard(&item);
+        if !pasted_images.is_empty() {
+            cx.emit(TextInputEvent::PastedImages(pasted_images));
+            return;
+        }
+
+        if let Some(text) = item.text() {
             let text = text.replace("\r\n", "\n");
             let replacement_range = self.replacement_range_for_input(None);
             self.apply_edit_range(

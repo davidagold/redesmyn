@@ -525,6 +525,7 @@ async fn initialize_new_session_user_message_emits_codex_session_ref() {
             AppServerTurnIntent::StartNew {
                 prompt: "hi".to_owned(),
             },
+            Vec::new(),
         )
         .await
         .expect("send_message");
@@ -593,6 +594,7 @@ async fn resume_reuses_conversation_and_skips_reinitialize() {
             AppServerTurnIntent::StartNew {
                 prompt: "first".to_owned(),
             },
+            Vec::new(),
         )
         .await
         .expect("send_message");
@@ -612,6 +614,7 @@ async fn resume_reuses_conversation_and_skips_reinitialize() {
                 },
                 prompt: "again".to_owned(),
             },
+            Vec::new(),
         )
         .await
         .expect("send_message");
@@ -687,6 +690,7 @@ async fn cancel_mid_turn_emits_turn_completed() {
             AppServerTurnIntent::StartNew {
                 prompt: "block please".to_owned(),
             },
+            Vec::new(),
         )
         .await
         .expect("send_message");

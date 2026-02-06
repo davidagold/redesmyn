@@ -20,6 +20,7 @@ enum ArtifactKind {
   ARTIFACT_KIND_PATCH = 3;
   ARTIFACT_KIND_FILE_SNAPSHOT = 4;
   ARTIFACT_KIND_TRACE = 5;
+  ARTIFACT_KIND_IMAGE = 6;
 }
 
 // Content hash for integrity/dedup. Algorithm is a stable string identifier.
@@ -172,6 +173,13 @@ message UserMessage {
   string text = 1;
   string preview = 2;
   ArtifactRef full_text_artifact = 3;
+  repeated ImageAttachment image_attachments = 4;
+}
+
+// User-supplied image attachment referenced by artifact id.
+message ImageAttachment {
+  ArtifactRef artifact = 1;
+  optional string label = 2;
 }
 
 // Assistant message text is bounded; use `full_text_artifact` for large content.

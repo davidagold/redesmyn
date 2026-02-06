@@ -42,7 +42,7 @@ async fn insert_task_session(
     task_id: TaskId,
     agent_kind: AgentKind,
 ) -> Result<SessionId, ErrorEnvelope> {
-    use redesmyn_storage::sessions::{AgentSessionRecord, insert_agent_session};
+    use redesmyn_storage::sessions::{insert_agent_session, AgentSessionRecord};
 
     let session_id = SessionId::new();
     let now_ms = now_ms();
@@ -189,6 +189,7 @@ async fn append_user_message(
             text: text.to_owned(),
             preview,
             full_text_artifact: None,
+            image_attachments: Vec::new(),
         }),
     };
 

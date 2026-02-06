@@ -10,7 +10,7 @@ use redesmyn_ids::{SessionId, TaskId};
 use redesmyn_protocol::agent_commands::SessionPolicySnapshot;
 use redesmyn_protocol::client::{SessionModelOption, SessionModelSelection};
 use redesmyn_protocol::session::{
-    CodexApprovalPolicy, CodexSandboxPolicy, PermissionsMode, SessionScope,
+    CodexApprovalPolicy, CodexSandboxPolicy, ImageAttachment, PermissionsMode, SessionScope,
 };
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope};
 
@@ -23,6 +23,7 @@ pub struct StartSessionSpec {
     pub scope: SessionScope,
     pub repo_root: PathBuf,
     pub initial_prompt: Option<String>,
+    pub image_attachments: Vec<ImageAttachment>,
     pub policy_snapshot: Option<SessionPolicySnapshot>,
     pub stop_session_ids: Vec<SessionId>,
 }
@@ -35,6 +36,7 @@ pub struct ResumeByIdTurnSpec {
     pub repo_root: PathBuf,
     pub external_session_ref: DomainExternalSessionRef,
     pub prompt: String,
+    pub image_attachments: Vec<ImageAttachment>,
     pub policy_snapshot: Option<SessionPolicySnapshot>,
     pub interrupt_turn: bool,
 }
@@ -160,7 +162,7 @@ impl AgentDriver for CodexDriver {
             if let Some(prompt) = spec.initial_prompt {
                 let intent = AppServerTurnIntent::StartNew { prompt };
                 app_server
-                    .send_message(spec.session_id, intent)
+                    .send_message(spec.session_id, intent, spec.image_attachments)
                     .await
                     .map_err(|err| ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()))?;
             }
@@ -204,7 +206,7 @@ impl AgentDriver for CodexDriver {
 
             driver
                 .app_server
-                .send_message(spec.session_id, intent)
+                .send_message(spec.session_id, intent, spec.image_attachments)
                 .await
                 .map_err(|err| ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()))?;
 

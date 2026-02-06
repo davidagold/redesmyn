@@ -63,6 +63,7 @@ pub(super) fn resume_by_id_turn(
         session_id,
         task_id,
         prompt,
+        image_attachments: Vec::new(),
         external_session_ref,
         policy_snapshot,
         interrupt_turn,

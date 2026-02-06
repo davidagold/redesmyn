@@ -104,6 +104,15 @@ pub struct UserMessage {
     pub preview: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub full_text_artifact: Option<ArtifactRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub image_attachments: Vec<ImageAttachment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ImageAttachment {
+    pub artifact: ArtifactRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 /// Assistant message text is bounded; use `full_text_artifact` for large content.
