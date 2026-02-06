@@ -274,6 +274,16 @@ fn normalize_session_model_selection(selection: SessionModelSelection) -> Sessio
     }
 }
 
+fn normalize_optional_session_model_selection(
+    selection: Option<SessionModelSelection>,
+) -> Option<SessionModelSelection> {
+    selection.and_then(|selection| {
+        let normalized = normalize_session_model_selection(selection);
+        (normalized.model_id.is_some() || normalized.reasoning_effort.is_some())
+            .then_some(normalized)
+    })
+}
+
 fn model_reasoning_effort_label(effort: Option<ModelReasoningEffort>) -> &'static str {
     match effort {
         Some(ModelReasoningEffort::Minimal) => "Minimal",
@@ -911,6 +921,7 @@ async fn respond_permission_request(
 async fn start_task_agent(
     client: &Client,
     task_id: TaskId,
+    session_model_selection: Option<SessionModelSelection>,
     on_conflict: AgentMessageConflictAction,
 ) -> Result<StartAgentResponse, ErrorEnvelope> {
     let response = client
@@ -919,6 +930,7 @@ async fn start_task_agent(
             agent_kind: AgentKind::Codex,
             initial_prompt: None,
             on_conflict,
+            session_model_selection,
         }))
         .await?;
 
@@ -1187,6 +1199,7 @@ pub struct SessionView {
     codex_sandbox_policy_action: UserActionState,
     set_codex_sandbox_policy_task: Option<Task<()>>,
     codex_sandbox_policy_timeout_task: Option<Task<()>>,
+    task_start_model_selection: Option<SessionModelSelection>,
     session_model_options: Vec<SessionModelOption>,
     session_model_selection: SessionModelSelection,
     pending_session_model_selection: Option<SessionModelSelection>,
@@ -1354,6 +1367,7 @@ impl SessionView {
             codex_sandbox_policy_action: UserActionState::default(),
             set_codex_sandbox_policy_task: None,
             codex_sandbox_policy_timeout_task: None,
+            task_start_model_selection: None,
             session_model_options: Vec::new(),
             session_model_selection: SessionModelSelection {
                 model_id: None,
@@ -1439,6 +1453,38 @@ impl SessionView {
     #[must_use]
     pub fn session_model_options_snapshot(&self) -> Vec<SessionModelOption> {
         self.session_model_options.clone()
+    }
+
+    #[must_use]
+    pub fn task_start_model_selection_snapshot(&self) -> Option<SessionModelSelection> {
+        self.task_start_model_selection.clone()
+    }
+
+    pub fn set_task_start_model_selection(
+        &mut self,
+        selection: Option<SessionModelSelection>,
+        cx: &mut Context<Self>,
+    ) {
+        let normalized = normalize_optional_session_model_selection(selection);
+        if self.task_start_model_selection == normalized {
+            return;
+        }
+
+        self.task_start_model_selection = normalized.clone();
+        if self.feed.is_none() {
+            self.session_model_options.clear();
+            self.session_model_selection = normalized.unwrap_or(SessionModelSelection {
+                model_id: None,
+                reasoning_effort: None,
+            });
+            self.pending_session_model_selection = None;
+            self.model_fetch_in_flight = false;
+            self.model_fetch_error = None;
+            self.model_fetch_task = None;
+            self.set_session_model_menu_index_from_selection();
+            self.set_session_reasoning_menu_index_from_selection();
+            cx.notify();
+        }
     }
 
     pub fn bind_latest_task_session(&mut self, task_id: Option<TaskId>, cx: &mut Context<Self>) {
@@ -1611,6 +1657,7 @@ impl SessionView {
             return;
         };
 
+        let session_model_selection = self.task_start_model_selection.clone();
         self.start_agent_generation = self.start_agent_generation.wrapping_add(1);
         let generation = self.start_agent_generation;
         self.task_operation = Some(TaskSessionOperation::StartAgent);
@@ -1623,10 +1670,16 @@ impl SessionView {
         let view = cx.entity();
         self.start_agent_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
             let client = client.clone();
+            let session_model_selection = session_model_selection.clone();
             let cx = cx.clone();
             async move {
-                let result =
-                    start_task_agent(&client, task_id, AgentMessageConflictAction::Fail).await;
+                let result = start_task_agent(
+                    &client,
+                    task_id,
+                    session_model_selection.clone(),
+                    AgentMessageConflictAction::Fail,
+                )
+                .await;
                 let _ = cx.update(|cx| {
                     view.update(cx, |this, cx| {
                         this.on_start_agent_completed(generation, task_id, result, cx)
@@ -1731,6 +1784,23 @@ impl SessionView {
             self.session_settings_hovered = None;
             self.session_settings_focus = SessionSettingsMenuFocus::Primary;
             self.session_settings_submenu_index = 0;
+            self.session_model_options.clear();
+            self.session_model_selection =
+                self.task_start_model_selection
+                    .clone()
+                    .unwrap_or(SessionModelSelection {
+                        model_id: None,
+                        reasoning_effort: None,
+                    });
+            self.pending_session_model_selection = None;
+            self.session_model_action = UserActionState::default();
+            self.set_session_model_task = None;
+            self.model_fetch_generation = self.model_fetch_generation.wrapping_add(1);
+            self.model_fetch_in_flight = false;
+            self.model_fetch_error = None;
+            self.model_fetch_task = None;
+            self.set_session_model_menu_index_from_selection();
+            self.set_session_reasoning_menu_index_from_selection();
             self.permission_request_ids = Rc::new(HashSet::new());
             self.permission_decisions_by_request_id = Rc::new(HashMap::new());
             self.expanded_permission_requests.clear();
@@ -6916,6 +6986,21 @@ impl Render for SessionView {
         } else {
             None
         };
+        let start_defaults_status = if self.feed.is_none() && self.task_binding_task_id.is_some() {
+            let label = if self.task_start_model_selection.is_some() {
+                "Applies on Start agent"
+            } else {
+                "Uses runtime defaults on Start agent"
+            };
+            Some(
+                div()
+                    .text_color(theme.colors.foreground_muted)
+                    .text_size(theme.typography.caption.size)
+                    .child(label),
+            )
+        } else {
+            None
+        };
 
         let settings_disabled = self.client.is_none() || self.feed.is_none();
         let open_menu = cx
@@ -7651,7 +7736,8 @@ impl Render for SessionView {
                     .child(model_selector_anchor)
                     .child(reasoning_selector_anchor)
                     .child(settings_anchor)
-                    .when_some(policies_status, |this, status| this.child(status)),
+                    .when_some(policies_status, |this, status| this.child(status))
+                    .when_some(start_defaults_status, |this, status| this.child(status)),
             )
             .child(send_button);
 

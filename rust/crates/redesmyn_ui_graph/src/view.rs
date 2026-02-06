@@ -40,8 +40,9 @@ use crate::scene::{AgentStatus, GraphEdgeId, GraphNodeId, GraphScene, TrunkMarkK
 
 use redesmyn_markdown::{MarkdownParseOptions, parse_markdown};
 use redesmyn_protocol::client::{
-    AgentKind, AgentMessageConflictAction, MergeReadiness, RequestPayload, ResponseResult,
-    RestartAgentRequest, StartAgentRequest, StopAgentRequest, TaskState,
+    AgentKind, AgentMessageConflictAction, MergeReadiness, ModelReasoningEffort, RequestPayload,
+    ResponseResult, RestartAgentRequest, SessionModelSelection, StartAgentRequest,
+    StopAgentRequest, TaskState,
 };
 use redesmyn_protocol::ui_driver::{
     UiGraphCameraState, UiGraphEdgeId as UiDriverGraphEdgeId, UiGraphLoadState,
@@ -1510,7 +1511,9 @@ impl GraphView {
         kind: TaskQuickActionKind,
         cx: &mut Context<Self>,
     ) {
-        let client = self.task_session_view.read(cx).client();
+        let session_view = self.task_session_view.read(cx);
+        let client = session_view.client();
+        let start_model_selection = session_view.task_start_model_selection_snapshot();
 
         let state = self.quick_action_state_mut(task_id);
         let (action, task_slot) = match kind {
@@ -1536,9 +1539,16 @@ impl GraphView {
         *task_slot = Some(
             cx.spawn(move |_: gpui::WeakEntity<Self>, cx: &mut AsyncApp| {
                 let client = client.clone();
+                let start_model_selection = start_model_selection.clone();
                 let cx = cx.clone();
                 async move {
-                    let result = task_quick_action_request(&client, task_id, kind).await;
+                    let result = task_quick_action_request(
+                        &client,
+                        task_id,
+                        kind,
+                        start_model_selection.clone(),
+                    )
+                    .await;
                     let _ = cx.update(|cx| {
                         view.update(cx, |this, cx| {
                             this.on_task_quick_action_completed(task_id, kind, result, cx);
@@ -2993,9 +3003,21 @@ impl Render for GraphView {
 
                                                             let task_session_view =
                                                                 self.task_session_view.clone();
+                                                            let start_defaults_label = {
+                                                                let selection = self
+                                                                    .task_session_view
+                                                                    .read(cx)
+                                                                    .task_start_model_selection_snapshot();
+                                                                format_start_model_selection_label(
+                                                                    selection.as_ref(),
+                                                                )
+                                                            };
+                                                            let no_session_message = format!(
+                                                                "No session yet. Start agent will use {start_defaults_label}."
+                                                            );
 
                                                             this = this.child(
-                                                                Callout::new("No session yet.")
+                                                                Callout::new(no_session_message)
                                                                     .kind(CalloutKind::Info)
                                                                     .title("Session")
                                                                     .action(
@@ -3523,6 +3545,40 @@ fn approx_eq_point(a: gpui::Point<f32>, b: gpui::Point<f32>) -> bool {
     (a.x - b.x).abs() < 1e-3 && (a.y - b.y).abs() < 1e-3
 }
 
+fn start_model_reasoning_effort_label(effort: ModelReasoningEffort) -> &'static str {
+    match effort {
+        ModelReasoningEffort::Minimal => "minimal",
+        ModelReasoningEffort::Low => "low",
+        ModelReasoningEffort::Medium => "medium",
+        ModelReasoningEffort::High => "high",
+        ModelReasoningEffort::Xhigh => "xhigh",
+        ModelReasoningEffort::Unknown => "default",
+    }
+}
+
+fn format_start_model_selection_label(selection: Option<&SessionModelSelection>) -> String {
+    let Some(selection) = selection else {
+        return "runtime defaults".to_string();
+    };
+
+    let model_id = selection
+        .model_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let reasoning = selection.reasoning_effort.and_then(|effort| {
+        (!matches!(effort, ModelReasoningEffort::Unknown))
+            .then(|| format!("{} reasoning", start_model_reasoning_effort_label(effort)))
+    });
+
+    match (model_id, reasoning) {
+        (Some(model_id), Some(reasoning)) => format!("{model_id} with {reasoning}"),
+        (Some(model_id), None) => model_id.to_string(),
+        (None, Some(reasoning)) => reasoning,
+        (None, None) => "runtime defaults".to_string(),
+    }
+}
+
 fn truncate_shared_string(value: &gpui::SharedString, max_chars: usize) -> gpui::SharedString {
     let value_str = value.as_ref();
     for (index, (offset, _)) in value_str.char_indices().enumerate() {
@@ -3568,6 +3624,7 @@ async fn task_quick_action_request(
     client: &Client,
     task_id: TaskId,
     kind: TaskQuickActionKind,
+    start_model_selection: Option<SessionModelSelection>,
 ) -> Result<ResponseResult, redesmyn_protocol::ErrorEnvelope> {
     let payload = match kind {
         TaskQuickActionKind::Start => RequestPayload::StartAgent(StartAgentRequest {
@@ -3575,6 +3632,7 @@ async fn task_quick_action_request(
             agent_kind: AgentKind::Codex,
             initial_prompt: None,
             on_conflict: AgentMessageConflictAction::Fail,
+            session_model_selection: start_model_selection,
         }),
         TaskQuickActionKind::Restart => RequestPayload::RestartAgent(RestartAgentRequest {
             task_id,

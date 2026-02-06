@@ -32,6 +32,16 @@ impl ControlPlane {
                 "Unsupported agent kind for daemon execution.",
             ));
         }
+        if matches!(
+            req.session_model_selection
+                .as_ref()
+                .and_then(|selection| selection.reasoning_effort),
+            Some(redesmyn_protocol::client::ModelReasoningEffort::Unknown)
+        ) {
+            return Err(super::conflicts::invalid_request(
+                "Unknown model reasoning effort.",
+            ));
+        }
 
         let active_sessions = state::load_active_task_session_ids(self.pool(), req.task_id).await?;
         let plan = planner::plan_start_agent(active_sessions, req.on_conflict)?;
@@ -45,6 +55,7 @@ impl ControlPlane {
             req.task_id,
             req.agent_kind,
             req.initial_prompt,
+            req.session_model_selection,
             plan.stop_session_ids,
         )
         .await
@@ -91,6 +102,7 @@ impl ControlPlane {
             agent_kind: req.agent_kind,
             initial_prompt: req.initial_prompt,
             on_conflict: AgentMessageConflictAction::StopSessionAndStartNew,
+            session_model_selection: None,
         };
 
         let started = self.start_agent(workspace_id, repo_id, start).await?;

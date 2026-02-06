@@ -1,7 +1,7 @@
 use redesmyn_control_plane::ControlPlane;
 use redesmyn_ids::{EpicId, RepoId, TaskId, WorkspaceId};
-use redesmyn_protocol::client::{AgentKind, AgentMessageConflictAction, StartAgentRequest};
 use redesmyn_protocol::ErrorCategory;
+use redesmyn_protocol::client::{AgentKind, AgentMessageConflictAction, StartAgentRequest};
 
 async fn seed_repo_and_task(control_plane: &ControlPlane) -> (WorkspaceId, RepoId, TaskId) {
     let pool = control_plane.pool();
@@ -90,6 +90,7 @@ async fn start_agent_returns_unavailable_and_rolls_back_session_when_no_daemon_i
                 agent_kind: AgentKind::Codex,
                 initial_prompt: None,
                 on_conflict: AgentMessageConflictAction::Fail,
+                session_model_selection: None,
             },
         )
         .await;

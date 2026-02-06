@@ -531,6 +531,8 @@ message StartAgentRequest {
   AgentKind agent_kind = 2;
   optional string initial_prompt = 4;
   AgentMessageConflictAction on_conflict = 5;
+  // Optional model + reasoning to apply before the first turn.
+  SessionModelSelection session_model_selection = 6;
 }
 
 message StartAgentResponse {

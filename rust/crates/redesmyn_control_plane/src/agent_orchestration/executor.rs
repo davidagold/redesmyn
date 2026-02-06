@@ -6,11 +6,14 @@ use redesmyn_protocol::agent_commands::{
     TASK_AGENT_STOP,
 };
 use redesmyn_protocol::client::{
-    AgentKind, AttachAgentSessionResponse, CommandState, CommandSummary,
-    SendTaskAgentMessageResponse, StartAgentResponse, StopAgentResponse,
+    AgentKind, AttachAgentSessionResponse, CommandState, CommandSummary, ModelReasoningEffort,
+    SendTaskAgentMessageResponse, SessionModelSelection, StartAgentResponse, StopAgentResponse,
     TaskAgentMessageConversationContinuity, TaskAgentMessageDelivery,
 };
-use redesmyn_protocol::session::{SessionEnded, SessionEventKind, SessionScope, SessionStarted};
+use redesmyn_protocol::session::{
+    SessionEnded, SessionEventKind, SessionModelChanged, SessionModelReasoningEffort, SessionScope,
+    SessionStarted,
+};
 use redesmyn_protocol::{
     ErrorCategory, ErrorDetail, ErrorEnvelope, ExternalSessionRef, RepoScope, SessionEvent,
     Timestamp,
@@ -42,7 +45,7 @@ async fn insert_task_session(
     task_id: TaskId,
     agent_kind: AgentKind,
 ) -> Result<SessionId, ErrorEnvelope> {
-    use redesmyn_storage::sessions::{insert_agent_session, AgentSessionRecord};
+    use redesmyn_storage::sessions::{AgentSessionRecord, insert_agent_session};
 
     let session_id = SessionId::new();
     let now_ms = now_ms();
@@ -204,6 +207,70 @@ async fn append_user_message(
     Ok(())
 }
 
+fn normalize_start_model_selection(
+    selection: &SessionModelSelection,
+) -> Option<SessionModelSelection> {
+    let model_id = selection.model_id.as_ref().and_then(|value| {
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    });
+    let reasoning_effort = selection
+        .reasoning_effort
+        .and_then(|effort| (!matches!(effort, ModelReasoningEffort::Unknown)).then_some(effort));
+    (model_id.is_some() || reasoning_effort.is_some()).then_some(SessionModelSelection {
+        model_id,
+        reasoning_effort,
+    })
+}
+
+fn session_reasoning_effort_from_client(
+    effort: ModelReasoningEffort,
+) -> SessionModelReasoningEffort {
+    match effort {
+        ModelReasoningEffort::Minimal => SessionModelReasoningEffort::Minimal,
+        ModelReasoningEffort::Low => SessionModelReasoningEffort::Low,
+        ModelReasoningEffort::Medium => SessionModelReasoningEffort::Medium,
+        ModelReasoningEffort::High => SessionModelReasoningEffort::High,
+        ModelReasoningEffort::Xhigh => SessionModelReasoningEffort::Xhigh,
+        ModelReasoningEffort::Unknown => SessionModelReasoningEffort::Unknown,
+    }
+}
+
+async fn append_session_model_changed(
+    control_plane: &ControlPlane,
+    session_id: SessionId,
+    task_id: TaskId,
+    selection: &SessionModelSelection,
+) -> Result<(), ErrorEnvelope> {
+    let Some(selection) = normalize_start_model_selection(selection) else {
+        return Ok(());
+    };
+
+    let event = SessionEvent {
+        session_event_id: SessionEventId::new(),
+        created_at: Timestamp::now_utc(),
+        scope: SessionScope::Task { task_id },
+        session_id,
+        turn_id: None,
+        kind: SessionEventKind::SessionModelChanged(SessionModelChanged {
+            model_id: selection.model_id,
+            reasoning_effort: selection
+                .reasoning_effort
+                .map(session_reasoning_effort_from_client),
+        }),
+    };
+
+    control_plane
+        .session_events()
+        .append_session_event(&event)
+        .await
+        .map_err(|err| {
+            ErrorEnvelope::new(ErrorCategory::Internal, "Failed to persist session event.")
+                .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
+        })?;
+    Ok(())
+}
+
 async fn issue_repo_command(
     control_plane: &ControlPlane,
     workspace_id: WorkspaceId,
@@ -262,6 +329,7 @@ pub(super) async fn execute_start_agent(
     task_id: TaskId,
     agent_kind: AgentKind,
     initial_prompt: Option<String>,
+    session_model_selection: Option<SessionModelSelection>,
     stop_session_ids: Vec<SessionId>,
 ) -> Result<StartAgentResponse, ErrorEnvelope> {
     let RepoScope {
@@ -286,6 +354,9 @@ pub(super) async fn execute_start_agent(
     .await?;
 
     append_session_started(control_plane, session_id, task_id).await?;
+    if let Some(selection) = session_model_selection.as_ref() {
+        append_session_model_changed(control_plane, session_id, task_id, selection).await?;
+    }
     if let Some(prompt) = initial_prompt.as_deref() {
         let trimmed = prompt.trim();
         if !trimmed.is_empty() {

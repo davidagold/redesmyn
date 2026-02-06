@@ -4397,6 +4397,10 @@ impl WorkspacePaneHost {
         });
         let task_session_view =
             cx.new(|cx| SessionView::new(task_session_client, None, artifact_store_root, cx));
+        let task_start_model_selection = load_default_session_model_selection();
+        task_session_view.update(cx, |view, cx| {
+            view.set_task_start_model_selection(task_start_model_selection, cx);
+        });
         let graph_session_view = task_session_view.clone();
         let graph_view = cx.new(|cx| GraphView::new_empty(graph_session_view, cx));
         subscriptions.push(

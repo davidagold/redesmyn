@@ -674,6 +674,8 @@ pub struct StartAgentRequest {
     pub initial_prompt: Option<String>,
     #[serde(default)]
     pub on_conflict: AgentMessageConflictAction,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_model_selection: Option<SessionModelSelection>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

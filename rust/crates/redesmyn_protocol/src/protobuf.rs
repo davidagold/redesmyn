@@ -3635,6 +3635,10 @@ impl crate::client::StartAgentRequest {
             agent_kind: encode_agent_kind(self.agent_kind),
             initial_prompt: self.initial_prompt.clone(),
             on_conflict: encode_agent_message_conflict_action(self.on_conflict),
+            session_model_selection: self
+                .session_model_selection
+                .as_ref()
+                .map(crate::client::SessionModelSelection::to_protobuf),
         }
     }
 
@@ -3644,6 +3648,9 @@ impl crate::client::StartAgentRequest {
             agent_kind: decode_agent_kind(proto.agent_kind)?,
             initial_prompt: proto.initial_prompt,
             on_conflict: decode_agent_message_conflict_action(proto.on_conflict)?,
+            session_model_selection: proto
+                .session_model_selection
+                .map(crate::client::SessionModelSelection::from_protobuf),
         })
     }
 }
