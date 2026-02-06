@@ -1,11 +1,13 @@
 use std::time::Duration;
 
 use redesmyn_control_plane::ControlPlane;
-use redesmyn_ids::{HostId, HostInstanceId, RepoId, RequestId, SessionEventId, SessionId, TaskId, WorkspaceId};
+use redesmyn_ids::{
+    HostId, HostInstanceId, RepoId, RequestId, SessionEventId, SessionId, TaskId, WorkspaceId,
+};
 use redesmyn_protocol::ProtocolEnvelope;
 use redesmyn_protocol::agent_commands::{
-    ResumeByIdTaskAgentTurnCommand, StartAgentSessionCommand, SESSION_AGENT_RESUME_BY_ID_TURN,
-    SESSION_AGENT_START,
+    ResumeByIdTaskAgentTurnCommand, SESSION_AGENT_RESUME_BY_ID_TURN, SESSION_AGENT_START,
+    StartAgentSessionCommand,
 };
 use redesmyn_protocol::client::{
     AgentMessageConflictAction, ClientFrame, ClientMessage, Request, RequestPayload,
@@ -577,7 +579,10 @@ async fn send_session_message_dispatches_session_start_for_chat_session() {
     let DaemonMessage::CommandDispatch(dispatch) = frame.message else {
         panic!("expected CommandDispatch, got {:?}", frame.message);
     };
-    assert_eq!(dispatch.command_id, resp.command.as_ref().unwrap().command_id);
+    assert_eq!(
+        dispatch.command_id,
+        resp.command.as_ref().unwrap().command_id
+    );
     assert_eq!(dispatch.command_kind, SESSION_AGENT_START);
 
     let payload: StartAgentSessionCommand =
@@ -698,7 +703,10 @@ async fn send_session_message_dispatches_resume_by_id_turn_for_chat_session_inte
     let DaemonMessage::CommandDispatch(dispatch) = frame.message else {
         panic!("expected CommandDispatch, got {:?}", frame.message);
     };
-    assert_eq!(dispatch.command_id, resp.command.as_ref().unwrap().command_id);
+    assert_eq!(
+        dispatch.command_id,
+        resp.command.as_ref().unwrap().command_id
+    );
     assert_eq!(dispatch.command_kind, SESSION_AGENT_RESUME_BY_ID_TURN);
 
     let payload: ResumeByIdTaskAgentTurnCommand =

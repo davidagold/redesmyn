@@ -27,6 +27,11 @@ impl ControlPlane {
         let _enter = span.enter();
 
         ensure_task_exists(self.pool(), workspace_id, repo_id, req.task_id).await?;
+        if !state::is_daemon_supported_agent_kind(req.agent_kind) {
+            return Err(super::conflicts::invalid_request(
+                "Unsupported agent kind for daemon execution.",
+            ));
+        }
 
         let active_sessions = state::load_active_task_session_ids(self.pool(), req.task_id).await?;
         let plan = planner::plan_start_agent(active_sessions, req.on_conflict)?;
@@ -129,6 +134,11 @@ impl ControlPlane {
         if trimmed.is_empty() {
             return Err(super::conflicts::invalid_request("Message is empty."));
         }
+        if !state::is_daemon_supported_agent_kind(req.agent_kind) {
+            return Err(super::conflicts::invalid_request(
+                "Unsupported agent kind for daemon execution.",
+            ));
+        }
 
         ensure_task_exists(self.pool(), workspace_id, repo_id, req.task_id).await?;
 
@@ -136,12 +146,9 @@ impl ControlPlane {
 
         let recent_sessions =
             state::load_recent_task_sessions(self.pool(), req.task_id, 50).await?;
-        let resumable_structured = state::load_resumable_structured_session(
-            self.pool(),
-            &recent_sessions,
-            req.agent_kind,
-        )
-        .await?;
+        let resumable_structured =
+            state::load_resumable_structured_session(self.pool(), &recent_sessions, req.agent_kind)
+                .await?;
 
         let plan = planner::plan_send_task_agent_message(
             &recent_sessions,
@@ -171,31 +178,6 @@ impl ControlPlane {
                     },
                     req.task_id,
                     req.agent_kind,
-                    trimmed,
-                    plan,
-                )
-                .await
-            }
-            planner::SendTaskAgentMessagePlan::InteractiveStart(plan) => {
-                executor::execute_new_session_send(
-                    self,
-                    RepoScope {
-                        workspace_id,
-                        repo_id,
-                    },
-                    req.task_id,
-                    req.agent_kind,
-                    trimmed,
-                    plan,
-                )
-                .await
-            }
-            planner::SendTaskAgentMessagePlan::InteractiveSendExisting(plan) => {
-                executor::execute_send_existing_interactive(
-                    self,
-                    workspace_id,
-                    repo_id,
-                    req.task_id,
                     trimmed,
                     plan,
                 )

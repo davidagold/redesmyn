@@ -7,26 +7,28 @@ use redesmyn_exec::app_server::{
     AppServerProcess, AppServerRequest, AppServerResponse, AppServerSupervisor,
     AppServerSupervisorConfig,
 };
-use redesmyn_exec::codex_app_server::{CodexAppServerProcess, CodexAppServerProcessConfig};
 use redesmyn_exec::artifact_store::LocalArtifactStore;
+use redesmyn_exec::codex_app_server::{CodexAppServerProcess, CodexAppServerProcessConfig};
 use redesmyn_logging::tracing;
 use redesmyn_protocol::agent_commands::{
     AGENT_LIST_MODELS, InterruptTaskAgentTurnCommand, ListAgentModelsCommand,
-    ListSessionModelsCommand, RespondPermissionRequestCommand,
-    ResumeByIdTaskAgentTurnCommand, SetSessionCodexApprovalPolicyCommand,
-    SetSessionCodexSandboxPolicyCommand, SetSessionModelCommand, SetSessionPermissionsModeCommand,
-    StartAgentSessionCommand, StartTaskAgentSessionCommand, SESSION_AGENT_INTERRUPT_TURN,
-    SESSION_AGENT_LIST_MODELS, SESSION_AGENT_RESPOND_PERMISSION_REQUEST,
-    SESSION_AGENT_RESUME_BY_ID_TURN, SESSION_AGENT_SEND_MESSAGE, SESSION_AGENT_SET_PERMISSIONS_MODE,
+    ListSessionModelsCommand, RespondPermissionRequestCommand, ResumeByIdTaskAgentTurnCommand,
+    SESSION_AGENT_INTERRUPT_TURN, SESSION_AGENT_LIST_MODELS,
+    SESSION_AGENT_RESPOND_PERMISSION_REQUEST, SESSION_AGENT_RESUME_BY_ID_TURN,
     SESSION_AGENT_SET_CODEX_APPROVAL_POLICY, SESSION_AGENT_SET_CODEX_SANDBOX_POLICY,
-    SESSION_AGENT_SET_MODEL, SESSION_AGENT_START, TASK_AGENT_START,
+    SESSION_AGENT_SET_MODEL, SESSION_AGENT_SET_PERMISSIONS_MODE, SESSION_AGENT_START,
+    SetSessionCodexApprovalPolicyCommand, SetSessionCodexSandboxPolicyCommand,
+    SetSessionModelCommand, SetSessionPermissionsModeCommand, StartAgentSessionCommand,
+    StartTaskAgentSessionCommand, TASK_AGENT_START,
 };
 use redesmyn_protocol::client::AgentKind;
 use redesmyn_protocol::daemon::{
     CommandDispatch, CommandProgress, CommandState, CommandUpdate, DaemonFrame, DaemonMessage,
 };
 use redesmyn_protocol::session::{ExternalSessionRef, SessionScope};
-use redesmyn_protocol::{ErrorCategory, ErrorDetail, ErrorEnvelope, ProtocolEnvelope, RepoScope, Scope};
+use redesmyn_protocol::{
+    ErrorCategory, ErrorDetail, ErrorEnvelope, ProtocolEnvelope, RepoScope, Scope,
+};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinSet;
 
@@ -103,7 +105,11 @@ pub async fn run_command_router(
     }
 }
 
-async fn handle_dispatch(router: CommandRouter, frames_tx: mpsc::Sender<DaemonFrame>, dispatch: CommandDispatch) {
+async fn handle_dispatch(
+    router: CommandRouter,
+    frames_tx: mpsc::Sender<DaemonFrame>,
+    dispatch: CommandDispatch,
+) {
     let span = tracing::info_span!(
         "daemon.command_router.dispatch",
         command_id = %dispatch.command_id,
@@ -139,24 +145,14 @@ async fn handle_dispatch(router: CommandRouter, frames_tx: mpsc::Sender<DaemonFr
         SESSION_AGENT_RESPOND_PERMISSION_REQUEST => {
             handle_session_agent_respond_permission_request(router, &frames_tx, dispatch).await
         }
-        SESSION_AGENT_SEND_MESSAGE => reject_command(
-            &frames_tx,
-            dispatch,
-            ErrorEnvelope::new(
-                ErrorCategory::InvalidRequest,
-                "session.agent.send_message is not supported by this daemon yet.",
-            ),
-        )
-        .await,
-        _ => reject_command(
-            &frames_tx,
-            dispatch,
-            ErrorEnvelope::new(
-                ErrorCategory::InvalidRequest,
-                "Unknown command kind.",
-            ),
-        )
-        .await,
+        _ => {
+            reject_command(
+                &frames_tx,
+                dispatch,
+                ErrorEnvelope::new(ErrorCategory::InvalidRequest, "Unknown command kind."),
+            )
+            .await
+        }
     }
 }
 
@@ -286,7 +282,17 @@ async fn handle_session_agent_resume_by_id_turn(
         }
     };
 
-    if let Err(err) = send_command_update(frames_tx, &dispatch, CommandState::Accepted, Some("accepted".to_owned()), None, None, None).await {
+    if let Err(err) = send_command_update(
+        frames_tx,
+        &dispatch,
+        CommandState::Accepted,
+        Some("accepted".to_owned()),
+        None,
+        None,
+        None,
+    )
+    .await
+    {
         tracing::warn!(error = ?err, "failed to send accepted command update");
     }
 
@@ -322,7 +328,17 @@ async fn handle_session_agent_resume_by_id_turn(
         return;
     }
 
-    if let Err(err) = send_command_update(frames_tx, &dispatch, CommandState::Succeeded, Some("dispatched".to_owned()), None, None, None).await {
+    if let Err(err) = send_command_update(
+        frames_tx,
+        &dispatch,
+        CommandState::Succeeded,
+        Some("dispatched".to_owned()),
+        None,
+        None,
+        None,
+    )
+    .await
+    {
         tracing::warn!(error = ?err, "failed to send succeeded command update");
     }
 }
@@ -340,7 +356,17 @@ async fn handle_session_agent_interrupt_turn(
         }
     };
 
-    if let Err(err) = send_command_update(frames_tx, &dispatch, CommandState::Accepted, Some("accepted".to_owned()), None, None, None).await {
+    if let Err(err) = send_command_update(
+        frames_tx,
+        &dispatch,
+        CommandState::Accepted,
+        Some("accepted".to_owned()),
+        None,
+        None,
+        None,
+    )
+    .await
+    {
         tracing::warn!(error = ?err, "failed to send accepted command update");
     }
 
@@ -458,12 +484,7 @@ async fn handle_session_agent_set_codex_approval_policy(
 
     match router
         .codex_driver
-        .set_codex_approval_policy(
-            repo_root,
-            cmd.session_id,
-            cmd.task_id,
-            cmd.approval_policy,
-        )
+        .set_codex_approval_policy(repo_root, cmd.session_id, cmd.task_id, cmd.approval_policy)
         .await
     {
         Ok(()) => {
@@ -521,12 +542,7 @@ async fn handle_session_agent_set_codex_sandbox_policy(
 
     match router
         .codex_driver
-        .set_codex_sandbox_policy(
-            repo_root,
-            cmd.session_id,
-            cmd.task_id,
-            cmd.sandbox_policy,
-        )
+        .set_codex_sandbox_policy(repo_root, cmd.session_id, cmd.task_id, cmd.sandbox_policy)
         .await
     {
         Ok(()) => {
@@ -574,22 +590,20 @@ async fn handle_session_agent_set_model(
         tracing::warn!(error = ?err, "failed to send accepted command update");
     }
 
-    if let Err(err) = ensure_app_server_session_started(
-        &router,
-        dispatch.scope,
-        cmd.session_id,
-        cmd.task_id,
-    )
-    .await
-    {
-        fail_command(frames_tx, dispatch, err).await;
-        return;
-    }
+    let repo_root = match resolve_repo_root(&router.repo_registry, dispatch.scope) {
+        Ok(path) => path,
+        Err(err) => {
+            fail_command(frames_tx, dispatch, err).await;
+            return;
+        }
+    };
 
     match router
-        .app_server
+        .codex_driver
         .set_model(
+            repo_root,
             cmd.session_id,
+            cmd.task_id,
             redesmyn_protocol::client::SessionModelSelection {
                 model_id: cmd.model_id,
                 reasoning_effort: cmd.reasoning_effort,
@@ -610,12 +624,7 @@ async fn handle_session_agent_set_model(
             .await;
         }
         Err(err) => {
-            fail_command(
-                frames_tx,
-                dispatch,
-                ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()),
-            )
-            .await;
+            fail_command(frames_tx, dispatch, err).await;
         }
     }
 }
@@ -647,29 +656,34 @@ async fn handle_session_agent_list_models(
         tracing::warn!(error = ?err, "failed to send accepted command update");
     }
 
-    if let Err(err) = ensure_app_server_session_started(
-        &router,
-        dispatch.scope,
-        cmd.session_id,
-        cmd.task_id,
-    )
-    .await
-    {
-        fail_command(frames_tx, dispatch, err).await;
-        return;
-    }
+    let repo_root = match resolve_repo_root(&router.repo_registry, dispatch.scope) {
+        Ok(path) => path,
+        Err(err) => {
+            fail_command(frames_tx, dispatch, err).await;
+            return;
+        }
+    };
 
-    match router.app_server.list_models(cmd.session_id).await {
+    match router
+        .codex_driver
+        .list_models(repo_root, cmd.session_id, cmd.task_id)
+        .await
+    {
         Ok((options, selection)) => {
-            let detail = match serde_json::to_string(
-                &redesmyn_protocol::client::ListSessionModelsResponse { options, selection },
-            ) {
-                Ok(models_json) => Some(ErrorDetail::from([("models_json".to_string(), models_json)])),
-                Err(err) => {
-                    tracing::warn!(error = %err, "failed to encode list-models detail payload");
-                    None
-                }
-            };
+            let detail =
+                match serde_json::to_string(&redesmyn_protocol::client::ListSessionModelsResponse {
+                    options,
+                    selection,
+                }) {
+                    Ok(models_json) => Some(ErrorDetail::from([(
+                        "models_json".to_string(),
+                        models_json,
+                    )])),
+                    Err(err) => {
+                        tracing::warn!(error = %err, "failed to encode list-models detail payload");
+                        None
+                    }
+                };
 
             let _ = send_command_update(
                 frames_tx,
@@ -683,12 +697,7 @@ async fn handle_session_agent_list_models(
             .await;
         }
         Err(err) => {
-            fail_command(
-                frames_tx,
-                dispatch,
-                ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()),
-            )
-            .await;
+            fail_command(frames_tx, dispatch, err).await;
         }
     }
 }
@@ -732,21 +741,29 @@ async fn handle_agent_list_models(
         AgentKind::Codex => list_codex_models_from_app_server(repo_root).await,
         AgentKind::ClaudeCode | AgentKind::Shell => Err(ErrorEnvelope::new(
             ErrorCategory::InvalidRequest,
-            format!("Unsupported agent kind for model listing: {:?}", cmd.agent_kind),
+            format!(
+                "Unsupported agent kind for model listing: {:?}",
+                cmd.agent_kind
+            ),
         )),
     };
 
     match list_result {
         Ok((options, selection)) => {
-            let detail = match serde_json::to_string(
-                &redesmyn_protocol::client::ListSessionModelsResponse { options, selection },
-            ) {
-                Ok(models_json) => Some(ErrorDetail::from([("models_json".to_string(), models_json)])),
-                Err(err) => {
-                    tracing::warn!(error = %err, "failed to encode list-models detail payload");
-                    None
-                }
-            };
+            let detail =
+                match serde_json::to_string(&redesmyn_protocol::client::ListSessionModelsResponse {
+                    options,
+                    selection,
+                }) {
+                    Ok(models_json) => Some(ErrorDetail::from([(
+                        "models_json".to_string(),
+                        models_json,
+                    )])),
+                    Err(err) => {
+                        tracing::warn!(error = %err, "failed to encode list-models detail payload");
+                        None
+                    }
+                };
 
             let _ = send_command_update(
                 frames_tx,
@@ -882,8 +899,11 @@ fn resolve_repo_root(
     match registry.resolve_repo_root(scope) {
         Ok(path) => Ok(path),
         Err(RepoRegistryError::Unconfigured) => std::env::current_dir().map_err(|err| {
-            ErrorEnvelope::new(ErrorCategory::Unavailable, "Repo registry is not configured.")
-                .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
+            ErrorEnvelope::new(
+                ErrorCategory::Unavailable,
+                "Repo registry is not configured.",
+            )
+            .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
         }),
     }
 }
@@ -893,21 +913,24 @@ fn domain_external_session_ref(
 ) -> Result<DomainExternalSessionRef, ErrorEnvelope> {
     match external {
         ExternalSessionRef::None => Ok(DomainExternalSessionRef::None),
-        ExternalSessionRef::CodexThread { thread_id, turn_id } => Ok(
-            DomainExternalSessionRef::CodexThread {
+        ExternalSessionRef::CodexThread { thread_id, turn_id } => {
+            Ok(DomainExternalSessionRef::CodexThread {
                 thread_id: thread_id.clone(),
                 turn_id: turn_id.clone(),
-            },
-        ),
-        ExternalSessionRef::CodexSession { session_id, turn_id } => Ok(
-            DomainExternalSessionRef::CodexSession {
-                session_id: session_id.clone(),
-                turn_id: turn_id.clone(),
-            },
-        ),
-        ExternalSessionRef::ClaudeSession { session_id } => Ok(DomainExternalSessionRef::ClaudeSession {
+            })
+        }
+        ExternalSessionRef::CodexSession {
+            session_id,
+            turn_id,
+        } => Ok(DomainExternalSessionRef::CodexSession {
             session_id: session_id.clone(),
+            turn_id: turn_id.clone(),
         }),
+        ExternalSessionRef::ClaudeSession { session_id } => {
+            Ok(DomainExternalSessionRef::ClaudeSession {
+                session_id: session_id.clone(),
+            })
+        }
         ExternalSessionRef::Unknown {
             unknown_type,
             json_payload,
@@ -984,7 +1007,9 @@ async fn send_command_update(
     };
 
     let mut envelope = ProtocolEnvelope::new();
-    envelope.scope = Some(Scope::Repo { repo: dispatch.scope });
+    envelope.scope = Some(Scope::Repo {
+        repo: dispatch.scope,
+    });
 
     frames_tx
         .send(DaemonFrame::new(

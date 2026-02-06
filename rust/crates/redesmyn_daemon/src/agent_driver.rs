@@ -8,7 +8,10 @@ use redesmyn_exec::app_server::{AppServerSessionSpec, AppServerSupervisor};
 use redesmyn_exec::codex_app_server::{CodexAppServerProcess, CodexAppServerProcessConfig};
 use redesmyn_ids::{SessionId, TaskId};
 use redesmyn_protocol::agent_commands::SessionPolicySnapshot;
-use redesmyn_protocol::session::{CodexApprovalPolicy, CodexSandboxPolicy, PermissionsMode, SessionScope};
+use redesmyn_protocol::client::{SessionModelOption, SessionModelSelection};
+use redesmyn_protocol::session::{
+    CodexApprovalPolicy, CodexSandboxPolicy, PermissionsMode, SessionScope,
+};
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope};
 
 pub type DriverFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -64,6 +67,19 @@ pub trait AgentDriver: Send + Sync {
         task_id: Option<TaskId>,
         sandbox_policy: Option<CodexSandboxPolicy>,
     ) -> DriverFuture<'_, Result<(), ErrorEnvelope>>;
+    fn set_model(
+        &self,
+        repo_root: PathBuf,
+        session_id: SessionId,
+        task_id: Option<TaskId>,
+        selection: SessionModelSelection,
+    ) -> DriverFuture<'_, Result<(), ErrorEnvelope>>;
+    fn list_models(
+        &self,
+        repo_root: PathBuf,
+        session_id: SessionId,
+        task_id: Option<TaskId>,
+    ) -> DriverFuture<'_, Result<(Vec<SessionModelOption>, SessionModelSelection), ErrorEnvelope>>;
     fn respond_permission_request(
         &self,
         session_id: SessionId,
@@ -89,9 +105,9 @@ impl CodexDriver {
         task_id: Option<TaskId>,
         scope: SessionScope,
     ) -> Result<(), ErrorEnvelope> {
-        let process = Arc::new(CodexAppServerProcess::new(CodexAppServerProcessConfig::codex_default(
-            repo_root,
-        )));
+        let process = Arc::new(CodexAppServerProcess::new(
+            CodexAppServerProcessConfig::codex_default(repo_root),
+        ));
         let spec = AppServerSessionSpec {
             scope,
             allow_concurrent_for_task: false,
@@ -120,9 +136,9 @@ impl AgentDriver for CodexDriver {
                 }
             }
 
-            let process = Arc::new(CodexAppServerProcess::new(CodexAppServerProcessConfig::codex_default(
-                spec.repo_root,
-            )));
+            let process = Arc::new(CodexAppServerProcess::new(
+                CodexAppServerProcessConfig::codex_default(spec.repo_root),
+            ));
             let session_spec = AppServerSessionSpec {
                 scope: spec.scope,
                 allow_concurrent_for_task: false,
@@ -160,12 +176,7 @@ impl AgentDriver for CodexDriver {
         let driver = self.clone();
         Box::pin(async move {
             driver
-                .ensure_session_started(
-                    spec.repo_root,
-                    spec.session_id,
-                    spec.task_id,
-                    spec.scope,
-                )
+                .ensure_session_started(spec.repo_root, spec.session_id, spec.task_id, spec.scope)
                 .await?;
 
             if let Some(snapshot) = spec.policy_snapshot {
@@ -222,12 +233,7 @@ impl AgentDriver for CodexDriver {
         let driver = self.clone();
         Box::pin(async move {
             driver
-                .ensure_session_started(
-                    repo_root,
-                    session_id,
-                    task_id,
-                    session_scope(task_id),
-                )
+                .ensure_session_started(repo_root, session_id, task_id, session_scope(task_id))
                 .await?;
 
             driver
@@ -249,12 +255,7 @@ impl AgentDriver for CodexDriver {
         let driver = self.clone();
         Box::pin(async move {
             driver
-                .ensure_session_started(
-                    repo_root,
-                    session_id,
-                    task_id,
-                    session_scope(task_id),
-                )
+                .ensure_session_started(repo_root, session_id, task_id, session_scope(task_id))
                 .await?;
 
             driver
@@ -276,12 +277,7 @@ impl AgentDriver for CodexDriver {
         let driver = self.clone();
         Box::pin(async move {
             driver
-                .ensure_session_started(
-                    repo_root,
-                    session_id,
-                    task_id,
-                    session_scope(task_id),
-                )
+                .ensure_session_started(repo_root, session_id, task_id, session_scope(task_id))
                 .await?;
 
             driver
@@ -306,6 +302,49 @@ impl AgentDriver for CodexDriver {
                 .await
                 .map_err(|err| ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()))?;
             Ok(())
+        })
+    }
+
+    fn set_model(
+        &self,
+        repo_root: PathBuf,
+        session_id: SessionId,
+        task_id: Option<TaskId>,
+        selection: SessionModelSelection,
+    ) -> DriverFuture<'_, Result<(), ErrorEnvelope>> {
+        let driver = self.clone();
+        Box::pin(async move {
+            driver
+                .ensure_session_started(repo_root, session_id, task_id, session_scope(task_id))
+                .await?;
+
+            driver
+                .app_server
+                .set_model(session_id, selection)
+                .await
+                .map_err(|err| ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()))?;
+            Ok(())
+        })
+    }
+
+    fn list_models(
+        &self,
+        repo_root: PathBuf,
+        session_id: SessionId,
+        task_id: Option<TaskId>,
+    ) -> DriverFuture<'_, Result<(Vec<SessionModelOption>, SessionModelSelection), ErrorEnvelope>>
+    {
+        let driver = self.clone();
+        Box::pin(async move {
+            driver
+                .ensure_session_started(repo_root, session_id, task_id, session_scope(task_id))
+                .await?;
+
+            driver
+                .app_server
+                .list_models(session_id)
+                .await
+                .map_err(|err| ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()))
         })
     }
 }

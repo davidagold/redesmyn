@@ -2,8 +2,8 @@ use serde::Serialize;
 
 use redesmyn_ids::{SessionId, TaskId};
 use redesmyn_protocol::agent_commands::{
-    AttachTaskAgentSessionCommand, ResumeByIdTaskAgentTurnCommand, SendTaskAgentMessageCommand,
-    SessionPolicySnapshot, StartTaskAgentSessionCommand, StopTaskAgentSessionCommand,
+    AttachTaskAgentSessionCommand, ResumeByIdTaskAgentTurnCommand, SessionPolicySnapshot,
+    StartTaskAgentSessionCommand, StopTaskAgentSessionCommand,
 };
 use redesmyn_protocol::client::AgentKind;
 use redesmyn_protocol::{ErrorCategory, ErrorDetail, ErrorEnvelope, ExternalSessionRef};
@@ -66,19 +66,5 @@ pub(super) fn resume_by_id_turn(
         external_session_ref,
         policy_snapshot,
         interrupt_turn,
-    })
-}
-
-pub(super) fn send_message(
-    session_id: SessionId,
-    text: String,
-    interrupt_turn: bool,
-    submit: bool,
-) -> Result<Vec<u8>, ErrorEnvelope> {
-    encode_payload(&SendTaskAgentMessageCommand {
-        session_id,
-        text,
-        interrupt_turn,
-        submit,
     })
 }

@@ -9,7 +9,8 @@ use redesmyn_ids::{SessionId, TaskId};
 
 use crate::client::{AgentKind, ModelReasoningEffort};
 use crate::session::{
-    CodexApprovalPolicy, CodexSandboxPolicy, ExternalSessionRef, PermissionDecision, PermissionsMode,
+    CodexApprovalPolicy, CodexSandboxPolicy, ExternalSessionRef, PermissionDecision,
+    PermissionsMode,
 };
 
 fn default_permissions_mode() -> PermissionsMode {
@@ -37,11 +38,11 @@ pub struct SessionPolicySnapshot {
 pub const SESSION_AGENT_START: &str = "session.agent.start";
 pub const SESSION_AGENT_STOP: &str = "session.agent.stop";
 pub const SESSION_AGENT_INTERRUPT_TURN: &str = "session.agent.interrupt_turn";
-pub const SESSION_AGENT_SEND_MESSAGE: &str = "session.agent.send_message";
 pub const SESSION_AGENT_RESUME_BY_ID_TURN: &str = "session.agent.resume_by_id_turn";
 pub const SESSION_AGENT_ATTACH_SESSION: &str = "session.agent.attach_session";
 pub const SESSION_AGENT_SET_PERMISSIONS_MODE: &str = "session.agent.set_permissions_mode";
-pub const SESSION_AGENT_RESPOND_PERMISSION_REQUEST: &str = "session.agent.respond_permission_request";
+pub const SESSION_AGENT_RESPOND_PERMISSION_REQUEST: &str =
+    "session.agent.respond_permission_request";
 pub const SESSION_AGENT_SET_CODEX_APPROVAL_POLICY: &str = "session.agent.set_codex_approval_policy";
 pub const SESSION_AGENT_SET_CODEX_SANDBOX_POLICY: &str = "session.agent.set_codex_sandbox_policy";
 pub const SESSION_AGENT_SET_MODEL: &str = "session.agent.set_model";
@@ -94,16 +95,6 @@ pub struct StopTaskAgentSessionCommand {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct InterruptTaskAgentTurnCommand {
     pub session_id: SessionId,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct SendTaskAgentMessageCommand {
-    pub session_id: SessionId,
-    pub text: String,
-    #[serde(default)]
-    pub interrupt_turn: bool,
-    #[serde(default)]
-    pub submit: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

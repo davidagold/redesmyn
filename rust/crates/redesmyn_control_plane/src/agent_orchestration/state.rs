@@ -20,6 +20,10 @@ pub(super) fn is_structured_agent_kind(agent_kind: AgentKind) -> bool {
     matches!(agent_kind, AgentKind::Codex | AgentKind::ClaudeCode)
 }
 
+pub(super) fn is_daemon_supported_agent_kind(agent_kind: AgentKind) -> bool {
+    matches!(agent_kind, AgentKind::Codex)
+}
+
 pub(super) fn is_active_task_session(row: &StorageAgentSessionRecord) -> bool {
     row.ended_at_ms.is_none()
         && matches!(
@@ -105,8 +109,8 @@ pub(super) async fn load_resumable_structured_session(
             continue;
         }
 
-        let turn_in_progress = crate::turn_state::structured_turn_in_progress(pool, row.session_id)
-            .await?;
+        let turn_in_progress =
+            crate::turn_state::structured_turn_in_progress(pool, row.session_id).await?;
         return Ok(Some(ResumableStructuredSession {
             session_id: row.session_id,
             external_session_ref: parsed,

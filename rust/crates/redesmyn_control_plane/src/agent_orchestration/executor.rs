@@ -2,8 +2,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use redesmyn_ids::{RepoId, SessionEventId, SessionId, TaskId, WorkspaceId};
 use redesmyn_protocol::agent_commands::{
-    SESSION_AGENT_ATTACH_SESSION, SESSION_AGENT_RESUME_BY_ID_TURN, SESSION_AGENT_SEND_MESSAGE,
-    TASK_AGENT_START, TASK_AGENT_STOP,
+    SESSION_AGENT_ATTACH_SESSION, SESSION_AGENT_RESUME_BY_ID_TURN, TASK_AGENT_START,
+    TASK_AGENT_STOP,
 };
 use redesmyn_protocol::client::{
     AgentKind, AttachAgentSessionResponse, CommandSummary, SendTaskAgentMessageResponse,
@@ -20,7 +20,7 @@ use sqlx::SqlitePool;
 use crate::ControlPlane;
 
 use super::payloads;
-use super::planner::{InteractiveSendExistingPlan, NewSessionPlan, StructuredResumePlan};
+use super::planner::{NewSessionPlan, StructuredResumePlan};
 
 type StorageAgentKind = redesmyn_storage::schema::AgentKind;
 type StorageAgentSessionScopeKind = redesmyn_storage::schema::AgentSessionScopeKind;
@@ -271,13 +271,18 @@ pub(super) async fn execute_start_agent(
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
-    let policy_snapshot =
-        crate::policy_snapshot::load_session_policy_snapshot(control_plane.session_events(), session_id)
-            .await
-            .map_err(|err| {
-                ErrorEnvelope::new(ErrorCategory::Internal, "Failed to load session policy snapshot.")
-                    .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
-            })?;
+    let policy_snapshot = crate::policy_snapshot::load_session_policy_snapshot(
+        control_plane.session_events(),
+        session_id,
+    )
+    .await
+    .map_err(|err| {
+        ErrorEnvelope::new(
+            ErrorCategory::Internal,
+            "Failed to load session policy snapshot.",
+        )
+        .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
+    })?;
 
     let json_payload = payloads::start_task_session(
         session_id,
@@ -369,8 +374,11 @@ pub(super) async fn execute_structured_resume(
     )
     .await
     .map_err(|err| {
-        ErrorEnvelope::new(ErrorCategory::Internal, "Failed to load session policy snapshot.")
-            .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
+        ErrorEnvelope::new(
+            ErrorCategory::Internal,
+            "Failed to load session policy snapshot.",
+        )
+        .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
     })?;
 
     let json_payload = payloads::resume_by_id_turn(
@@ -433,13 +441,18 @@ pub(super) async fn execute_new_session_send(
     append_session_started(control_plane, session_id, task_id).await?;
     append_user_message(control_plane, session_id, task_id, message).await?;
 
-    let policy_snapshot =
-        crate::policy_snapshot::load_session_policy_snapshot(control_plane.session_events(), session_id)
-            .await
-            .map_err(|err| {
-                ErrorEnvelope::new(ErrorCategory::Internal, "Failed to load session policy snapshot.")
-                    .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
-            })?;
+    let policy_snapshot = crate::policy_snapshot::load_session_policy_snapshot(
+        control_plane.session_events(),
+        session_id,
+    )
+    .await
+    .map_err(|err| {
+        ErrorEnvelope::new(
+            ErrorCategory::Internal,
+            "Failed to load session policy snapshot.",
+        )
+        .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
+    })?;
 
     let json_payload = payloads::start_task_session(
         session_id,
@@ -466,41 +479,5 @@ pub(super) async fn execute_new_session_send(
         delivery: plan.delivery,
         conversation_continuity: plan.conversation_continuity,
         warnings: Vec::new(),
-    })
-}
-
-pub(super) async fn execute_send_existing_interactive(
-    control_plane: &ControlPlane,
-    workspace_id: WorkspaceId,
-    repo_id: RepoId,
-    task_id: TaskId,
-    message: &str,
-    plan: InteractiveSendExistingPlan,
-) -> Result<SendTaskAgentMessageResponse, ErrorEnvelope> {
-    append_user_message(control_plane, plan.session_id, task_id, message).await?;
-
-    let json_payload = payloads::send_message(
-        plan.session_id,
-        message.to_string(),
-        plan.interrupt_turn,
-        true,
-    )?;
-
-    let command = issue_repo_command(
-        control_plane,
-        workspace_id,
-        repo_id,
-        SESSION_AGENT_SEND_MESSAGE.to_string(),
-        Some(task_id),
-        json_payload,
-    )
-    .await?;
-
-    Ok(SendTaskAgentMessageResponse {
-        command,
-        session_id: plan.session_id,
-        delivery: plan.delivery,
-        conversation_continuity: plan.conversation_continuity,
-        warnings: plan.warnings,
     })
 }

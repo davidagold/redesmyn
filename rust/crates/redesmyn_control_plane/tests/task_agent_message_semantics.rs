@@ -7,7 +7,7 @@ use redesmyn_control_plane::client_api::ClientApiCodec;
 use redesmyn_control_plane::{ControlPlane, DaemonLinkHandle};
 use redesmyn_ids::{CommandId, EpicId, RepoId, RequestId, SessionId, TaskId, WorkspaceId};
 use redesmyn_protocol::agent_commands::{
-    ResumeByIdTaskAgentTurnCommand, StartTaskAgentSessionCommand, SESSION_AGENT_RESUME_BY_ID_TURN,
+    ResumeByIdTaskAgentTurnCommand, SESSION_AGENT_RESUME_BY_ID_TURN, StartTaskAgentSessionCommand,
     TASK_AGENT_START,
 };
 use redesmyn_protocol::client::{
