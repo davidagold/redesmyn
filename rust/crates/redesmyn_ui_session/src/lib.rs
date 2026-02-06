@@ -37,7 +37,8 @@ use redesmyn_protocol::client::{
 };
 use redesmyn_protocol::session::{
     CodexApprovalPolicy, CodexSandboxPolicy, ImageAttachment, PermissionDecision,
-    PermissionDecisionBy, PermissionRequest, SessionEventKind, ToolResult,
+    PermissionDecisionBy, PermissionRequest, SessionEventKind, SessionModelChanged,
+    SessionModelReasoningEffort, ToolResult,
 };
 use redesmyn_protocol::ui_driver::UiComposerState;
 use redesmyn_protocol::{
@@ -303,6 +304,19 @@ fn model_reasoning_effort_label(effort: Option<ModelReasoningEffort>) -> &'stati
         Some(ModelReasoningEffort::High) => "High",
         Some(ModelReasoningEffort::Xhigh) => "XHigh",
         Some(ModelReasoningEffort::Unknown) | None => "Default",
+    }
+}
+
+fn model_reasoning_effort_from_session(
+    effort: Option<SessionModelReasoningEffort>,
+) -> Option<ModelReasoningEffort> {
+    match effort {
+        Some(SessionModelReasoningEffort::Minimal) => Some(ModelReasoningEffort::Minimal),
+        Some(SessionModelReasoningEffort::Low) => Some(ModelReasoningEffort::Low),
+        Some(SessionModelReasoningEffort::Medium) => Some(ModelReasoningEffort::Medium),
+        Some(SessionModelReasoningEffort::High) => Some(ModelReasoningEffort::High),
+        Some(SessionModelReasoningEffort::Xhigh) => Some(ModelReasoningEffort::Xhigh),
+        Some(SessionModelReasoningEffort::Unknown) | None => None,
     }
 }
 
@@ -750,6 +764,14 @@ async fn fetch_latest_policy_events(
         vec![SessionEventKindFilter::PermissionsModeChanged],
     )
     .await?;
+    let session_model = get_session_events_filtered(
+        client,
+        session_id,
+        None,
+        1,
+        vec![SessionEventKindFilter::SessionModelChanged],
+    )
+    .await?;
 
     let mut events = Vec::new();
     if let Some(event) = approval.events.into_iter().next() {
@@ -759,6 +781,9 @@ async fn fetch_latest_policy_events(
         events.push(event);
     }
     if let Some(event) = permissions_mode.events.into_iter().next() {
+        events.push(event);
+    }
+    if let Some(event) = session_model.events.into_iter().next() {
         events.push(event);
     }
 
@@ -1267,6 +1292,18 @@ impl Focusable for SessionView {
 impl gpui::EventEmitter<SessionViewEvent> for SessionView {}
 
 impl SessionView {
+    fn apply_session_model_changed_event(&mut self, changed: &SessionModelChanged) {
+        let selection = normalize_session_model_selection(SessionModelSelection {
+            model_id: changed.model_id.clone(),
+            reasoning_effort: model_reasoning_effort_from_session(changed.reasoning_effort),
+        });
+        self.session_model_selection = selection;
+        self.pending_session_model_selection = None;
+        self.session_model_action.clear_error();
+        self.set_session_model_menu_index_from_selection();
+        self.set_session_reasoning_menu_index_from_selection();
+    }
+
     pub fn new(
         control_plane_client: Option<ClientInProcEndpoint>,
         initial_session_id: Option<SessionId>,
@@ -3457,11 +3494,18 @@ impl SessionView {
         match result {
             Ok(events) => {
                 self.policies_fetch_error = None;
-                if let Some(feed) = self.feed.as_mut()
-                    && feed.session_id == session_id
+                if self
+                    .feed
+                    .as_ref()
+                    .is_some_and(|feed| feed.session_id == session_id)
                 {
                     for event in events {
-                        feed.apply_live_event(event);
+                        if let SessionEventKind::SessionModelChanged(changed) = &event.kind {
+                            self.apply_session_model_changed_event(changed);
+                        }
+                        if let Some(feed) = self.feed.as_mut() {
+                            feed.apply_live_event(event);
+                        }
                     }
                     self.refresh_timeline_items();
                 }
@@ -3526,13 +3570,13 @@ impl SessionView {
     }
 
     fn on_subscription_event(&mut self, event: SubscriptionEvent, cx: &mut Context<Self>) {
-        let Some(feed) = self.feed.as_mut() else {
+        let Some(current_session_id) = self.feed.as_ref().map(|feed| feed.session_id) else {
             return;
         };
 
         match event {
             SubscriptionEvent::SessionEvent(ev) => {
-                if ev.session_id != feed.session_id {
+                if ev.session_id != current_session_id {
                     return;
                 }
                 if let SessionEventKind::CodexApprovalPolicyChanged(changed) = &ev.kind {
@@ -3558,6 +3602,9 @@ impl SessionView {
                     }
                     self.codex_sandbox_policy_action.clear_error();
                 }
+                if let SessionEventKind::SessionModelChanged(changed) = &ev.kind {
+                    self.apply_session_model_changed_event(changed);
+                }
                 let reasoning_key = match &ev.kind {
                     SessionEventKind::AssistantReasoning(reasoning) => Some(
                         reasoning
@@ -3578,7 +3625,9 @@ impl SessionView {
                         "markdown input truncated for rendering"
                     );
                 }
-                feed.apply_live_event(ev);
+                if let Some(feed) = self.feed.as_mut() {
+                    feed.apply_live_event(ev);
+                }
                 self.refresh_timeline_items();
                 if let Some(key) = reasoning_key {
                     if self.seen_reasoning_keys.insert(key.clone()) {
@@ -3592,7 +3641,7 @@ impl SessionView {
                 }
             }
             SubscriptionEvent::SessionLiveEvent(ev) => {
-                if ev.session_id != feed.session_id {
+                if ev.session_id != current_session_id {
                     return;
                 }
                 let reasoning_key = match &ev.kind {
@@ -3611,7 +3660,9 @@ impl SessionView {
                     ),
                     _ => None,
                 };
-                feed.apply_live_session_event(ev);
+                if let Some(feed) = self.feed.as_mut() {
+                    feed.apply_live_session_event(ev);
+                }
                 self.refresh_timeline_items();
                 if let Some(key) = reasoning_key
                     && self.seen_reasoning_keys.insert(key.clone())
@@ -3620,7 +3671,9 @@ impl SessionView {
                 }
             }
             SubscriptionEvent::Error(err) => {
-                feed.apply_live_error(err.message);
+                if let Some(feed) = self.feed.as_mut() {
+                    feed.apply_live_error(err.message);
+                }
             }
             SubscriptionEvent::Subscribed(_) | SubscriptionEvent::EventLog(_) => {}
         }

@@ -32,8 +32,8 @@ use redesmyn_protocol::client::{
     ListSessionModelsResponse, ListTaskSessionsResponse, MergeReadiness,
     PinChatSessionToEpicResponse, RespondPermissionRequestResponse, Response, ResponseResult,
     SEND_SESSION_MESSAGE_MAX_IMAGE_ATTACHMENT_BYTES, SEND_SESSION_MESSAGE_MAX_IMAGE_ATTACHMENTS,
-    SEND_SESSION_MESSAGE_MAX_IMAGE_TOTAL_BYTES, SendSessionMessageResponse, SessionSummary,
-    SetSessionCodexApprovalPolicyResponse, SetSessionCodexSandboxPolicyResponse,
+    SEND_SESSION_MESSAGE_MAX_IMAGE_TOTAL_BYTES, SendSessionMessageResponse, SessionModelSelection,
+    SessionSummary, SetSessionCodexApprovalPolicyResponse, SetSessionCodexSandboxPolicyResponse,
     SetSessionModelResponse, SetSessionPermissionsModeResponse, StatusResponse, Subscribed,
     SubscriptionEvent, TaskState, UnpinChatSessionFromEpicResponse, WaitForCommandResponse,
     WaitForEventResponse, WaitForIdleResponse,
@@ -1548,6 +1548,23 @@ async fn handle_request_result(
                 )));
             }
 
+            let durable_selection_override = if matches!(
+                session.status,
+                StorageAgentSessionStatus::Stopped | StorageAgentSessionStatus::Error
+            ) {
+                let snapshot = crate::policy_snapshot::load_session_policy_snapshot(
+                    control_plane.session_events(),
+                    req.session_id,
+                )
+                .await?;
+                Some(SessionModelSelection {
+                    model_id: snapshot.model_id,
+                    reasoning_effort: snapshot.model_reasoning_effort,
+                })
+            } else {
+                None
+            };
+
             let json_payload = match encode_agent_command_payload(&ListSessionModelsCommand {
                 session_id: req.session_id,
                 task_id: session.task_id,
@@ -1626,7 +1643,12 @@ async fn handle_request_result(
             };
 
             match decode_list_session_models_from_command_detail(&detail_bytes) {
-                Ok(resp) => Ok(ResponseResult::ListSessionModels(resp)),
+                Ok(mut resp) => {
+                    if let Some(selection) = durable_selection_override {
+                        resp.selection = selection;
+                    }
+                    Ok(ResponseResult::ListSessionModels(resp))
+                }
                 Err(err) => Ok(ResponseResult::Error(err)),
             }
         }
