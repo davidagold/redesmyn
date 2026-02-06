@@ -263,6 +263,11 @@ impl Render for SplitPane {
         let divider_line_color = theme.colors.ring.opacity(0.25);
 
         let divider_line_thickness = px(1.0);
+        let effective_divider_thickness = if self.state.collapsed {
+            px(0.0)
+        } else {
+            divider_line_thickness
+        };
         let divider_hit_inset = px(-3.0);
 
         let show_drag_ghost = self.resize_mode == SplitPaneResizeMode::Deferred
@@ -299,19 +304,19 @@ impl Render for SplitPane {
             .id(("split_pane_divider", cx.entity_id()))
             .relative()
             .when(axis == SplitPaneAxis::Horizontal, |this| {
-                this.w(divider_line_thickness).h_full()
+                this.w(effective_divider_thickness).h_full()
             })
             .when(axis == SplitPaneAxis::Vertical, |this| {
-                this.h(divider_line_thickness).w_full()
+                this.h(effective_divider_thickness).w_full()
             })
             .child(divider_hit)
             .child(
                 div()
                     .when(axis == SplitPaneAxis::Horizontal, |this| {
-                        this.w(divider_line_thickness).h_full()
+                        this.w(effective_divider_thickness).h_full()
                     })
                     .when(axis == SplitPaneAxis::Vertical, |this| {
-                        this.h(divider_line_thickness).w_full()
+                        this.h(effective_divider_thickness).w_full()
                     })
                     .bg(divider_line_color)
                     .opacity(if show_drag_ghost { 0.0 } else { 1.0 }),
@@ -356,6 +361,7 @@ impl Render for SplitPane {
 
         let primary = div()
             .absolute()
+            .overflow_hidden()
             .when(axis == SplitPaneAxis::Horizontal, |this| {
                 this.left(px(0.0))
                     .top(px(0.0))
@@ -374,7 +380,7 @@ impl Render for SplitPane {
             .absolute()
             .overflow_hidden()
             .when(axis == SplitPaneAxis::Horizontal, |this| {
-                this.left(divider_offset + divider_line_thickness)
+                this.left(divider_offset + effective_divider_thickness)
                     .right(px(0.0))
                     .top(px(0.0))
                     .bottom(px(0.0))
@@ -382,7 +388,7 @@ impl Render for SplitPane {
             .when(axis == SplitPaneAxis::Vertical, |this| {
                 this.left(px(0.0))
                     .right(px(0.0))
-                    .top(divider_offset + divider_line_thickness)
+                    .top(divider_offset + effective_divider_thickness)
                     .bottom(px(0.0))
             })
             .child(self.secondary.clone());
@@ -405,7 +411,7 @@ impl Render for SplitPane {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .child(secondary)
-            .child(divider)
+            .when(!self.state.collapsed, |this| this.child(divider))
             .child(primary);
 
         if let Some(ghost) = drag_ghost {
