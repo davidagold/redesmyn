@@ -94,6 +94,7 @@ fn main() {
         crate::command_palette::bind_command_palette_keys(cx);
         crate::settings_dialog_keys::bind_settings_dialog_keys(cx);
         crate::task_filters::bind_task_filter_keys(cx);
+        redesmyn_ui_session::bind_session_shortcut_keys(cx);
 
         let window_size = gpui::Size::new(
             gpui::px(ui_config.desktop.window.width as f32),

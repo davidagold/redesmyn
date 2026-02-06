@@ -34,8 +34,9 @@ pub use session::{
     CodexSandboxPolicyChanged, CommandExecutionPermissionRequest, FileChangePermissionRequest,
     PermissionDecided, PermissionDecision, PermissionDecisionBy, PermissionRequest,
     PermissionRequested, PermissionsMode, PermissionsModeChanged, SessionEnded, SessionEvent,
-    SessionEventKind, SessionScope, SessionStarted, StatusUpdate, ToolInvocation, ToolResult,
-    TurnCompleted, TurnStarted, TurnState, UnknownSessionEvent, UserMessage,
+    SessionEventKind, SessionModelChanged, SessionModelReasoningEffort, SessionScope,
+    SessionStarted, StatusUpdate, ToolInvocation, ToolResult, TurnCompleted, TurnStarted,
+    TurnState, UnknownSessionEvent, UserMessage,
 };
 pub use session_live::{
     AssistantMessageDelta, SessionLiveEvent, SessionLiveEventKind, UnknownSessionLiveEvent,

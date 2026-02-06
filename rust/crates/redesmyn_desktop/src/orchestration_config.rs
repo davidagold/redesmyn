@@ -189,6 +189,51 @@ impl std::str::FromStr for CodexSandboxPolicyDefault {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodexReasoningEffortDefault {
+    Default,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+}
+
+impl CodexReasoningEffortDefault {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Minimal => "minimal",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Xhigh => "xhigh",
+        }
+    }
+}
+
+impl Default for CodexReasoningEffortDefault {
+    fn default() -> Self {
+        Self::Default
+    }
+}
+
+impl std::str::FromStr for CodexReasoningEffortDefault {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "default" => Ok(Self::Default),
+            "minimal" => Ok(Self::Minimal),
+            "low" => Ok(Self::Low),
+            "medium" => Ok(Self::Medium),
+            "high" => Ok(Self::High),
+            "xhigh" | "x_high" | "x-high" => Ok(Self::Xhigh),
+            _ => Err(()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodexModelName(String);
 
@@ -211,6 +256,7 @@ pub struct CodexSessionDefaults {
     pub approval_policy: CodexApprovalPolicyDefault,
     pub sandbox_policy: CodexSandboxPolicyDefault,
     pub model: Option<CodexModelName>,
+    pub reasoning_effort: CodexReasoningEffortDefault,
 }
 
 impl Default for CodexSessionDefaults {
@@ -219,6 +265,7 @@ impl Default for CodexSessionDefaults {
             approval_policy: CodexApprovalPolicyDefault::Default,
             sandbox_policy: CodexSandboxPolicyDefault::Default,
             model: None,
+            reasoning_effort: CodexReasoningEffortDefault::Default,
         }
     }
 }
@@ -306,6 +353,7 @@ struct PartialCodexSessionDefaults {
     approval_policy: Option<CodexApprovalPolicyDefault>,
     sandbox_policy: Option<CodexSandboxPolicyDefault>,
     model: Option<Option<CodexModelName>>,
+    reasoning_effort: Option<CodexReasoningEffortDefault>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -470,6 +518,10 @@ fn parse_partial_from_doc(doc: &DocumentMut) -> PartialOrchestrationDefaults {
                         .and_then(CodexModelName::parse),
                 );
             }
+            partial.session_defaults.codex.reasoning_effort = codex
+                .get("reasoning_effort")
+                .and_then(|item| item.as_str())
+                .and_then(|value| value.parse::<CodexReasoningEffortDefault>().ok());
         }
     }
 
@@ -511,6 +563,9 @@ fn apply_partial(defaults: &mut OrchestrationDefaults, partial: PartialOrchestra
     }
     if let Some(model) = partial.session_defaults.codex.model {
         defaults.session_defaults.codex.model = model;
+    }
+    if let Some(reasoning_effort) = partial.session_defaults.codex.reasoning_effort {
+        defaults.session_defaults.codex.reasoning_effort = reasoning_effort;
     }
 }
 
@@ -612,6 +667,15 @@ fn write_defaults_to_path(
         }
         None => {
             codex.remove("model");
+        }
+    }
+
+    match defaults.session_defaults.codex.reasoning_effort {
+        CodexReasoningEffortDefault::Default => {
+            codex.remove("reasoning_effort");
+        }
+        other => {
+            codex["reasoning_effort"] = value(other.as_str());
         }
     }
 

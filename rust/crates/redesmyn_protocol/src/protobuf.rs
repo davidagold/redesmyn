@@ -20,9 +20,9 @@ use crate::session::{
     CodexSandboxPolicyChanged, CommandExecutionPermissionRequest, ExternalSessionRef,
     FileChangePermissionRequest, InterfaceMode, PermissionDecided, PermissionDecision,
     PermissionDecisionBy, PermissionRequest, PermissionRequested, PermissionsMode,
-    PermissionsModeChanged, SessionEvent, SessionEventKind, SessionScope, StatusUpdate,
-    ToolInvocation, ToolResult, TurnCompleted, TurnStarted, TurnState, UnknownSessionEvent,
-    UserMessage,
+    PermissionsModeChanged, SessionEvent, SessionEventKind, SessionModelChanged,
+    SessionModelReasoningEffort, SessionScope, StatusUpdate, ToolInvocation, ToolResult,
+    TurnCompleted, TurnStarted, TurnState, UnknownSessionEvent, UserMessage,
 };
 use crate::session_live::{
     AssistantMessageDelta, AssistantReasoningRawDelta, AssistantReasoningSummaryDelta,
@@ -1396,6 +1396,32 @@ fn decode_permissions_mode(value: i32) -> PermissionsMode {
     }
 }
 
+fn encode_model_reasoning_effort(value: crate::client::ModelReasoningEffort) -> i32 {
+    match value {
+        crate::client::ModelReasoningEffort::Minimal => pbv1::ModelReasoningEffort::Minimal as i32,
+        crate::client::ModelReasoningEffort::Low => pbv1::ModelReasoningEffort::Low as i32,
+        crate::client::ModelReasoningEffort::Medium => pbv1::ModelReasoningEffort::Medium as i32,
+        crate::client::ModelReasoningEffort::High => pbv1::ModelReasoningEffort::High as i32,
+        crate::client::ModelReasoningEffort::Xhigh => pbv1::ModelReasoningEffort::Xhigh as i32,
+        crate::client::ModelReasoningEffort::Unknown => {
+            pbv1::ModelReasoningEffort::Unspecified as i32
+        }
+    }
+}
+
+fn decode_model_reasoning_effort(value: i32) -> crate::client::ModelReasoningEffort {
+    match pbv1::ModelReasoningEffort::try_from(value) {
+        Ok(pbv1::ModelReasoningEffort::Minimal) => crate::client::ModelReasoningEffort::Minimal,
+        Ok(pbv1::ModelReasoningEffort::Low) => crate::client::ModelReasoningEffort::Low,
+        Ok(pbv1::ModelReasoningEffort::Medium) => crate::client::ModelReasoningEffort::Medium,
+        Ok(pbv1::ModelReasoningEffort::High) => crate::client::ModelReasoningEffort::High,
+        Ok(pbv1::ModelReasoningEffort::Xhigh) => crate::client::ModelReasoningEffort::Xhigh,
+        Ok(pbv1::ModelReasoningEffort::Unspecified) | Err(_) => {
+            crate::client::ModelReasoningEffort::Unknown
+        }
+    }
+}
+
 fn encode_codex_approval_policy(value: CodexApprovalPolicy) -> i32 {
     match value {
         CodexApprovalPolicy::UnlessTrusted => pbv1::CodexApprovalPolicy::UnlessTrusted as i32,
@@ -1465,6 +1491,32 @@ fn decode_permission_decision_by(value: i32) -> PermissionDecisionBy {
         Ok(pbv1::PermissionDecisionBy::ModeAutoDeny) => PermissionDecisionBy::ModeAutoDeny,
         Ok(pbv1::PermissionDecisionBy::Timeout) => PermissionDecisionBy::Timeout,
         Ok(pbv1::PermissionDecisionBy::Unspecified) | Err(_) => PermissionDecisionBy::Unknown,
+    }
+}
+
+fn encode_session_model_reasoning_effort(value: SessionModelReasoningEffort) -> i32 {
+    match value {
+        SessionModelReasoningEffort::Minimal => pbv1::SessionModelReasoningEffort::Minimal as i32,
+        SessionModelReasoningEffort::Low => pbv1::SessionModelReasoningEffort::Low as i32,
+        SessionModelReasoningEffort::Medium => pbv1::SessionModelReasoningEffort::Medium as i32,
+        SessionModelReasoningEffort::High => pbv1::SessionModelReasoningEffort::High as i32,
+        SessionModelReasoningEffort::Xhigh => pbv1::SessionModelReasoningEffort::Xhigh as i32,
+        SessionModelReasoningEffort::Unknown => {
+            pbv1::SessionModelReasoningEffort::Unspecified as i32
+        }
+    }
+}
+
+fn decode_session_model_reasoning_effort(value: i32) -> SessionModelReasoningEffort {
+    match pbv1::SessionModelReasoningEffort::try_from(value) {
+        Ok(pbv1::SessionModelReasoningEffort::Minimal) => SessionModelReasoningEffort::Minimal,
+        Ok(pbv1::SessionModelReasoningEffort::Low) => SessionModelReasoningEffort::Low,
+        Ok(pbv1::SessionModelReasoningEffort::Medium) => SessionModelReasoningEffort::Medium,
+        Ok(pbv1::SessionModelReasoningEffort::High) => SessionModelReasoningEffort::High,
+        Ok(pbv1::SessionModelReasoningEffort::Xhigh) => SessionModelReasoningEffort::Xhigh,
+        Ok(pbv1::SessionModelReasoningEffort::Unspecified) | Err(_) => {
+            SessionModelReasoningEffort::Unknown
+        }
     }
 }
 
@@ -1579,6 +1631,30 @@ impl CodexSandboxPolicyChanged {
                 Some(policy) => Some(CodexSandboxPolicy::try_from_protobuf(policy)?),
                 None => None,
             },
+        })
+    }
+}
+
+impl SessionModelChanged {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SessionModelChanged {
+        pbv1::SessionModelChanged {
+            model_id: normalize_optional_string(self.model_id.clone()),
+            reasoning_effort: encode_session_model_reasoning_effort(
+                self.reasoning_effort
+                    .unwrap_or(SessionModelReasoningEffort::Unknown),
+            ),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::SessionModelChanged) -> Result<Self, ErrorEnvelope> {
+        let reasoning_effort = match decode_session_model_reasoning_effort(proto.reasoning_effort) {
+            SessionModelReasoningEffort::Unknown => None,
+            other => Some(other),
+        };
+        Ok(Self {
+            model_id: normalize_optional_string(proto.model_id),
+            reasoning_effort,
         })
     }
 }
@@ -1985,6 +2061,9 @@ impl SessionEvent {
                 SessionEventKind::CodexSandboxPolicyChanged(ev) => {
                     pbv1::session_event::Kind::CodexSandboxPolicyChanged(ev.to_protobuf())
                 }
+                SessionEventKind::SessionModelChanged(ev) => {
+                    pbv1::session_event::Kind::SessionModelChanged(ev.to_protobuf())
+                }
                 SessionEventKind::PermissionRequested(ev) => {
                     pbv1::session_event::Kind::PermissionRequested(ev.to_protobuf())
                 }
@@ -2047,6 +2126,9 @@ impl SessionEvent {
                 SessionEventKind::CodexSandboxPolicyChanged(
                     CodexSandboxPolicyChanged::try_from_protobuf(ev)?,
                 )
+            }
+            Some(pbv1::session_event::Kind::SessionModelChanged(ev)) => {
+                SessionEventKind::SessionModelChanged(SessionModelChanged::try_from_protobuf(ev)?)
             }
             Some(pbv1::session_event::Kind::PermissionRequested(ev)) => {
                 SessionEventKind::PermissionRequested(PermissionRequested::try_from_protobuf(ev)?)
@@ -2127,6 +2209,15 @@ fn encode_client_method(value: crate::client::ClientMethod) -> i32 {
         crate::client::ClientMethod::SetSessionCodexSandboxPolicy => {
             pbv1::ClientMethod::SetSessionCodexSandboxPolicy as i32
         }
+        crate::client::ClientMethod::ListAgentModels => {
+            pbv1::ClientMethod::ListAgentModels as i32
+        }
+        crate::client::ClientMethod::ListSessionModels => {
+            pbv1::ClientMethod::ListSessionModels as i32
+        }
+        crate::client::ClientMethod::SetSessionModel => {
+            pbv1::ClientMethod::SetSessionModel as i32
+        }
         crate::client::ClientMethod::RespondPermissionRequest => {
             pbv1::ClientMethod::RespondPermissionRequest as i32
         }
@@ -2192,6 +2283,13 @@ fn decode_client_method(value: i32) -> Result<crate::client::ClientMethod, Error
         Ok(pbv1::ClientMethod::SetSessionCodexSandboxPolicy) => {
             Ok(crate::client::ClientMethod::SetSessionCodexSandboxPolicy)
         }
+        Ok(pbv1::ClientMethod::ListAgentModels) => {
+            Ok(crate::client::ClientMethod::ListAgentModels)
+        }
+        Ok(pbv1::ClientMethod::ListSessionModels) => {
+            Ok(crate::client::ClientMethod::ListSessionModels)
+        }
+        Ok(pbv1::ClientMethod::SetSessionModel) => Ok(crate::client::ClientMethod::SetSessionModel),
         Ok(pbv1::ClientMethod::RespondPermissionRequest) => {
             Ok(crate::client::ClientMethod::RespondPermissionRequest)
         }
@@ -2617,6 +2715,15 @@ impl crate::client::Request {
                 crate::client::RequestPayload::SetSessionCodexSandboxPolicy(req) => {
                     pbv1::request::Payload::SetSessionCodexSandboxPolicy(req.to_protobuf())
                 }
+                crate::client::RequestPayload::ListAgentModels(req) => {
+                    pbv1::request::Payload::ListAgentModels(req.to_protobuf())
+                }
+                crate::client::RequestPayload::ListSessionModels(req) => {
+                    pbv1::request::Payload::ListSessionModels(req.to_protobuf())
+                }
+                crate::client::RequestPayload::SetSessionModel(req) => {
+                    pbv1::request::Payload::SetSessionModel(req.to_protobuf())
+                }
                 crate::client::RequestPayload::RespondPermissionRequest(req) => {
                     pbv1::request::Payload::RespondPermissionRequest(req.to_protobuf())
                 }
@@ -2724,6 +2831,21 @@ impl crate::client::Request {
             pbv1::request::Payload::SetSessionCodexSandboxPolicy(req) => {
                 crate::client::RequestPayload::SetSessionCodexSandboxPolicy(
                     crate::client::SetSessionCodexSandboxPolicyRequest::try_from_protobuf(req)?,
+                )
+            }
+            pbv1::request::Payload::ListAgentModels(req) => {
+                crate::client::RequestPayload::ListAgentModels(
+                    crate::client::ListAgentModelsRequest::try_from_protobuf(req)?,
+                )
+            }
+            pbv1::request::Payload::ListSessionModels(req) => {
+                crate::client::RequestPayload::ListSessionModels(
+                    crate::client::ListSessionModelsRequest::try_from_protobuf(req)?,
+                )
+            }
+            pbv1::request::Payload::SetSessionModel(req) => {
+                crate::client::RequestPayload::SetSessionModel(
+                    crate::client::SetSessionModelRequest::try_from_protobuf(req)?,
                 )
             }
             pbv1::request::Payload::RespondPermissionRequest(req) => {
@@ -2942,6 +3064,9 @@ fn encode_session_event_kind_filter(value: crate::client::SessionEventKindFilter
         crate::client::SessionEventKindFilter::CodexSandboxPolicyChanged => {
             pbv1::SessionEventKindFilter::CodexSandboxPolicyChanged as i32
         }
+        crate::client::SessionEventKindFilter::SessionModelChanged => {
+            pbv1::SessionEventKindFilter::SessionModelChanged as i32
+        }
         crate::client::SessionEventKindFilter::Unknown => {
             pbv1::SessionEventKindFilter::Unspecified as i32
         }
@@ -2997,6 +3122,9 @@ fn decode_session_event_kind_filter(value: i32) -> crate::client::SessionEventKi
         }
         Ok(pbv1::SessionEventKindFilter::CodexSandboxPolicyChanged) => {
             crate::client::SessionEventKindFilter::CodexSandboxPolicyChanged
+        }
+        Ok(pbv1::SessionEventKindFilter::SessionModelChanged) => {
+            crate::client::SessionEventKindFilter::SessionModelChanged
         }
         Ok(pbv1::SessionEventKindFilter::Unspecified) | Err(_) => {
             crate::client::SessionEventKindFilter::Unknown
@@ -3289,6 +3417,184 @@ impl crate::client::SetSessionCodexSandboxPolicyRequest {
     }
 }
 
+impl crate::client::SessionModelOption {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SessionModelOption {
+        pbv1::SessionModelOption {
+            model_id: self.model_id.clone(),
+            display_name: self.display_name.clone(),
+            description: self.description.clone(),
+            is_default: self.is_default,
+            provider_model: self.provider_model.clone(),
+            default_reasoning_effort: encode_model_reasoning_effort(self.default_reasoning_effort),
+            supported_reasoning_efforts: self
+                .supported_reasoning_efforts
+                .iter()
+                .copied()
+                .map(encode_model_reasoning_effort)
+                .collect(),
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::SessionModelOption) -> Self {
+        Self {
+            model_id: proto.model_id,
+            display_name: proto.display_name,
+            description: proto.description,
+            is_default: proto.is_default,
+            provider_model: proto.provider_model,
+            default_reasoning_effort: decode_model_reasoning_effort(proto.default_reasoning_effort),
+            supported_reasoning_efforts: proto
+                .supported_reasoning_efforts
+                .into_iter()
+                .map(decode_model_reasoning_effort)
+                .collect(),
+        }
+    }
+}
+
+impl crate::client::SessionModelSelection {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SessionModelSelection {
+        pbv1::SessionModelSelection {
+            model_id: self.model_id.clone().unwrap_or_default(),
+            reasoning_effort: encode_model_reasoning_effort(
+                self.reasoning_effort
+                    .unwrap_or(crate::client::ModelReasoningEffort::Unknown),
+            ),
+        }
+    }
+
+    #[must_use]
+    pub fn from_protobuf(proto: pbv1::SessionModelSelection) -> Self {
+        let model_id = normalize_nonempty_string(proto.model_id);
+        let reasoning_effort = match decode_model_reasoning_effort(proto.reasoning_effort) {
+            crate::client::ModelReasoningEffort::Unknown => None,
+            other => Some(other),
+        };
+        Self {
+            model_id,
+            reasoning_effort,
+        }
+    }
+}
+
+impl crate::client::ListSessionModelsRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::ListSessionModelsRequest {
+        pbv1::ListSessionModelsRequest {
+            session_id: self.session_id.to_bytes().to_vec(),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::ListSessionModelsRequest,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
+        })
+    }
+}
+
+impl crate::client::ListAgentModelsRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::ListAgentModelsRequest {
+        pbv1::ListAgentModelsRequest {
+            agent_kind: encode_agent_kind(self.agent_kind),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::ListAgentModelsRequest,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            agent_kind: decode_agent_kind(proto.agent_kind)?,
+        })
+    }
+}
+
+impl crate::client::ListAgentModelsResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::ListAgentModelsResponse {
+        pbv1::ListAgentModelsResponse {
+            options: self
+                .options
+                .iter()
+                .map(crate::client::SessionModelOption::to_protobuf)
+                .collect(),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::ListAgentModelsResponse,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            options: proto
+                .options
+                .into_iter()
+                .map(crate::client::SessionModelOption::from_protobuf)
+                .collect(),
+        })
+    }
+}
+
+impl crate::client::ListSessionModelsResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::ListSessionModelsResponse {
+        pbv1::ListSessionModelsResponse {
+            options: self
+                .options
+                .iter()
+                .map(crate::client::SessionModelOption::to_protobuf)
+                .collect(),
+            selection: Some(self.selection.to_protobuf()),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::ListSessionModelsResponse,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            options: proto
+                .options
+                .into_iter()
+                .map(crate::client::SessionModelOption::from_protobuf)
+                .collect(),
+            selection: proto
+                .selection
+                .map(crate::client::SessionModelSelection::from_protobuf)
+                .unwrap_or(crate::client::SessionModelSelection {
+                    model_id: None,
+                    reasoning_effort: None,
+                }),
+        })
+    }
+}
+
+impl crate::client::SetSessionModelRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SetSessionModelRequest {
+        pbv1::SetSessionModelRequest {
+            session_id: self.session_id.to_bytes().to_vec(),
+            selection: Some(self.selection.to_protobuf()),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::SetSessionModelRequest) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
+            selection: proto
+                .selection
+                .map(crate::client::SessionModelSelection::from_protobuf)
+                .unwrap_or(crate::client::SessionModelSelection {
+                    model_id: None,
+                    reasoning_effort: None,
+                }),
+        })
+    }
+}
+
 impl crate::client::RespondPermissionRequestRequest {
     #[must_use]
     pub fn to_protobuf(&self) -> pbv1::RespondPermissionRequestRequest {
@@ -3547,6 +3853,15 @@ impl crate::client::Response {
                 crate::client::ResponseResult::SetSessionCodexSandboxPolicy(resp) => {
                     pbv1::response::Result::SetSessionCodexSandboxPolicy(resp.to_protobuf())
                 }
+                crate::client::ResponseResult::ListAgentModels(resp) => {
+                    pbv1::response::Result::ListAgentModels(resp.to_protobuf())
+                }
+                crate::client::ResponseResult::ListSessionModels(resp) => {
+                    pbv1::response::Result::ListSessionModels(resp.to_protobuf())
+                }
+                crate::client::ResponseResult::SetSessionModel(resp) => {
+                    pbv1::response::Result::SetSessionModel(resp.to_protobuf())
+                }
                 crate::client::ResponseResult::RespondPermissionRequest(resp) => {
                     pbv1::response::Result::RespondPermissionRequest(resp.to_protobuf())
                 }
@@ -3657,6 +3972,21 @@ impl crate::client::Response {
             pbv1::response::Result::SetSessionCodexSandboxPolicy(resp) => {
                 crate::client::ResponseResult::SetSessionCodexSandboxPolicy(
                     crate::client::SetSessionCodexSandboxPolicyResponse::try_from_protobuf(resp)?,
+                )
+            }
+            pbv1::response::Result::ListAgentModels(resp) => {
+                crate::client::ResponseResult::ListAgentModels(
+                    crate::client::ListAgentModelsResponse::try_from_protobuf(resp)?,
+                )
+            }
+            pbv1::response::Result::ListSessionModels(resp) => {
+                crate::client::ResponseResult::ListSessionModels(
+                    crate::client::ListSessionModelsResponse::try_from_protobuf(resp)?,
+                )
+            }
+            pbv1::response::Result::SetSessionModel(resp) => {
+                crate::client::ResponseResult::SetSessionModel(
+                    crate::client::SetSessionModelResponse::try_from_protobuf(resp)?,
                 )
             }
             pbv1::response::Result::RespondPermissionRequest(resp) => {
@@ -4317,6 +4647,29 @@ impl crate::client::SetSessionCodexSandboxPolicyResponse {
 
     pub fn try_from_protobuf(
         proto: pbv1::SetSessionCodexSandboxPolicyResponse,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            command: proto
+                .command
+                .map(crate::client::CommandSummary::try_from_protobuf)
+                .transpose()?,
+        })
+    }
+}
+
+impl crate::client::SetSessionModelResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::SetSessionModelResponse {
+        pbv1::SetSessionModelResponse {
+            command: self
+                .command
+                .as_ref()
+                .map(crate::client::CommandSummary::to_protobuf),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::SetSessionModelResponse,
     ) -> Result<Self, ErrorEnvelope> {
         Ok(Self {
             command: proto

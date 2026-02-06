@@ -7,6 +7,8 @@ use super::overlay_surface::{OverlaySurfaceKind, overlay_surface};
 pub enum CascadingMenuId {
     TaskFilters,
     SessionSettings,
+    SessionModel,
+    SessionReasoning,
 }
 
 #[derive(Debug, Default)]
@@ -164,6 +166,33 @@ pub fn cascading_menu_row_value(theme: &UiTheme, value: impl IntoElement) -> Div
         .text_color(theme.colors.foreground_muted)
         .truncate()
         .child(value)
+}
+
+/// Standard select-style row with an icon/radio slot and a truncating label.
+///
+/// Use this for option menus that should share keyboard-highlight and hover behavior.
+#[must_use]
+pub fn cascading_select_menu_item(
+    theme: &UiTheme,
+    style: CascadingMenuRowStyle,
+    keyboard_selected: bool,
+    hover_opacity: f32,
+    icon: impl IntoElement,
+    label: impl IntoElement,
+) -> Div {
+    cascading_menu_row(theme, style, keyboard_selected, hover_opacity)
+        .child(icon)
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_row()
+                .items_center()
+                .text_color(theme.colors.foreground)
+                .truncate()
+                .child(label),
+        )
 }
 
 /// Standardized surface wrapper for cascading menus.

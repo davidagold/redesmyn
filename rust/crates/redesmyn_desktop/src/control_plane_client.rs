@@ -1,10 +1,13 @@
 use redesmyn_client_api::Client;
 use redesmyn_ids::{EpicId, SessionId};
 use redesmyn_protocol::client::{
-    CloseChatSessionRequest, CreateChatSessionRequest, CreateChatSessionResponse,
-    GetEpicGraphRequest, GetEpicPinnedChatSessionRequest, ListChatSessionsRequest,
-    ListEpicsRequest, PinChatSessionToEpicRequest, RequestPayload, ResponseResult, StatusRequest,
-    StatusResponse, UnpinChatSessionFromEpicRequest,
+    AgentKind, CloseChatSessionRequest, CommandState, CommandSummary, CreateChatSessionRequest,
+    CreateChatSessionResponse, GetEpicGraphRequest, GetEpicPinnedChatSessionRequest,
+    ListAgentModelsRequest, ListChatSessionsRequest, ListEpicsRequest,
+    PinChatSessionToEpicRequest, RequestPayload, ResponseResult, SessionModelOption,
+    SessionModelSelection, SetSessionModelRequest, SetSessionModelResponse, StatusRequest,
+    StatusResponse, WaitForCommandRequest,
+    UnpinChatSessionFromEpicRequest,
 };
 use redesmyn_protocol::{ProtocolEnvelope, RepoScope};
 use redesmyn_transport::client::in_proc::InProcEndpoint;
@@ -209,6 +212,75 @@ impl ControlPlaneClient {
             .await?
         {
             ResponseResult::UnpinChatSessionFromEpic(_) => Ok(()),
+            ResponseResult::Error(err) => Err(ControlPlaneClientError::Server {
+                message: err.message,
+            }),
+            _ => Err(ControlPlaneClientError::UnexpectedMessage),
+        }
+    }
+
+    pub async fn list_agent_models(
+        &self,
+        scope: RepoScope,
+        agent_kind: AgentKind,
+    ) -> Result<Vec<SessionModelOption>, ControlPlaneClientError> {
+        match self
+            .request_scoped(
+                scope,
+                RequestPayload::ListAgentModels(ListAgentModelsRequest { agent_kind }),
+            )
+            .await?
+        {
+            ResponseResult::ListAgentModels(resp) => Ok(resp.options),
+            ResponseResult::Error(err) => Err(ControlPlaneClientError::Server {
+                message: err.message,
+            }),
+            _ => Err(ControlPlaneClientError::UnexpectedMessage),
+        }
+    }
+
+    pub async fn set_session_model(
+        &self,
+        scope: RepoScope,
+        session_id: SessionId,
+        selection: SessionModelSelection,
+    ) -> Result<SetSessionModelResponse, ControlPlaneClientError> {
+        match self
+            .request_scoped(
+                scope,
+                RequestPayload::SetSessionModel(SetSessionModelRequest {
+                    session_id,
+                    selection,
+                }),
+            )
+            .await?
+        {
+            ResponseResult::SetSessionModel(resp) => Ok(resp),
+            ResponseResult::Error(err) => Err(ControlPlaneClientError::Server {
+                message: err.message,
+            }),
+            _ => Err(ControlPlaneClientError::UnexpectedMessage),
+        }
+    }
+
+    pub async fn wait_for_command(
+        &self,
+        command_id: redesmyn_ids::CommandId,
+        timeout_ms: u64,
+    ) -> Result<CommandSummary, ControlPlaneClientError> {
+        match self
+            .request(RequestPayload::WaitForCommand(WaitForCommandRequest {
+                command_id,
+                terminal_states: vec![
+                    CommandState::Succeeded,
+                    CommandState::Failed,
+                    CommandState::Canceled,
+                ],
+                timeout_ms,
+            }))
+            .await?
+        {
+            ResponseResult::WaitForCommand(resp) => Ok(resp.command),
             ResponseResult::Error(err) => Err(ControlPlaneClientError::Server {
                 message: err.message,
             }),

@@ -267,6 +267,29 @@ pub struct CodexSandboxPolicyChanged {
     pub sandbox_policy: Option<CodexSandboxPolicy>,
 }
 
+/// Reasoning effort associated with a session model selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionModelReasoningEffort {
+    Minimal,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    /// A value not understood by this binary (forward compatible).
+    #[serde(other)]
+    Unknown,
+}
+
+/// A change in the session's effective model + reasoning selection.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionModelChanged {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<SessionModelReasoningEffort>,
+}
+
 /// How the session handles permission/approval requests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -382,6 +405,7 @@ pub enum SessionEventKind {
     PermissionsModeChanged(PermissionsModeChanged),
     CodexApprovalPolicyChanged(CodexApprovalPolicyChanged),
     CodexSandboxPolicyChanged(CodexSandboxPolicyChanged),
+    SessionModelChanged(SessionModelChanged),
     PermissionRequested(PermissionRequested),
     PermissionDecided(PermissionDecided),
     ArtifactEmitted(ArtifactEmitted),

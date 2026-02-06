@@ -19,6 +19,7 @@ use redesmyn_protocol::ui_driver::{
     UiSnapshotPredicate, WaitForUiIdleRequest, WaitForUiIdleResponse, WaitForUiSnapshotRequest,
     WaitForUiSnapshotResponse,
 };
+use redesmyn_protocol::client::{ModelReasoningEffort, SessionModelSelection};
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, RepoScope, Timestamp};
 use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 use redesmyn_ui_session::SessionView;
@@ -29,7 +30,7 @@ use redesmyn_ui::components::{
     CascadingMenuRowStyle, CascadingMenuSecondarySide, CascadingMenuState,
     CascadingMenuSurfaceStyle, IconButton, OverlaySurfaceKind, ProgressPill, ScrollArea, SplitPane,
     SplitPaneAxis, SplitPaneEvent, SplitPaneResizeMode, SplitPaneState, TextButton, TextInput,
-    TextInputEvent, Tooltip, cascading_menu_checkbox_indicator, cascading_menu_row,
+    TextInputEvent, cascading_menu_checkbox_indicator, cascading_menu_row,
     cascading_menu_surface, overlay_surface, set_open_cascading_menu,
 };
 use redesmyn_ui::settings::ThemePreference;
@@ -48,6 +49,7 @@ use crate::command_palette::{
     CloseCommandPalette, SelectNextCommand, SelectPreviousCommand, ToggleCommandPalette,
 };
 use crate::control_plane_client::{ControlPlaneClient, ControlPlaneClientError};
+use crate::orchestration_config::{CodexReasoningEffortDefault, load_effective_defaults, repo_root_from_cwd};
 use crate::settings_dialog_keys::{CloseSettingsDialog, ToggleSettingsDialog};
 use crate::task_filters::{
     CloseTaskFilters, OpenTaskFilters, TaskFiltersActivate, TaskFiltersClearFocusedChip,
@@ -141,6 +143,7 @@ pub struct RootView {
     focus_handle: FocusHandle,
     command_palette: CommandPaletteOverlay,
     settings_dialog: SettingsDialog,
+    settings_model_catalog_task: Option<Task<()>>,
     chrome: ChromeState,
     ui_updates: UiUpdateCounter,
     did_first_render: bool,
@@ -196,7 +199,6 @@ impl RootView {
         let palette_input = command_palette.input_entity();
         let settings_dialog = SettingsDialog::new(focus_handle.clone(), cx);
         let settings_prelude_input = settings_dialog.prelude_input_entity();
-        let settings_codex_model_input = settings_dialog.codex_model_input_entity();
 
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.observe_global::<UiContext>(|this, cx| this.notify_ui_updated(cx)));
@@ -225,11 +227,6 @@ impl RootView {
                 .handle_prelude_input_event(event.clone(), cx);
             this.ui_updates.bump();
         }));
-        subscriptions.push(cx.subscribe(&settings_codex_model_input, |this, _, event, cx| {
-            this.settings_dialog
-                .handle_codex_model_input_event(event.clone(), cx);
-            this.ui_updates.bump();
-        }));
 
         let mut this = Self {
             model,
@@ -239,6 +236,7 @@ impl RootView {
             focus_handle,
             command_palette,
             settings_dialog,
+            settings_model_catalog_task: None,
             chrome: ChromeState::new(),
             ui_updates,
             did_first_render: false,
@@ -315,6 +313,9 @@ impl RootView {
         }
 
         self.toggle_panel(ChromePanel::Settings, cx);
+        if opening {
+            self.refresh_settings_model_catalog(cx);
+        }
         self.ui_updates.bump();
     }
 
@@ -408,6 +409,77 @@ impl RootView {
             self.chrome.connections_menu_active = None;
             self.notify_ui_updated(cx);
         }
+    }
+
+    fn refresh_settings_model_catalog(&mut self, cx: &mut Context<Self>) {
+        if self.settings_model_catalog_task.is_some() {
+            return;
+        }
+
+        let (client, epic_slug) = (
+            self.model.read(cx).chrome_control_plane_client.clone(),
+            self.chrome
+                .selected_epic_slug
+                .clone()
+                .or_else(|| self.chrome.epics.first().map(|epic| epic.slug.clone())),
+        );
+        let Some(client) = client else {
+            return;
+        };
+        let Some(epic_slug) = epic_slug else {
+            return;
+        };
+
+        self.settings_dialog.set_codex_model_options_loading(true);
+        cx.notify();
+
+        self.settings_model_catalog_task = Some(cx.spawn(
+            move |weak: WeakEntity<Self>, cx: &mut AsyncApp| {
+                let cx = cx.clone();
+                async move {
+                    let result = async {
+                        let graph = client.get_epic_graph(epic_slug).await?;
+                        let Some(workspace_id) = graph.workspace_id else {
+                            return Err(ControlPlaneClientError::Server {
+                                message: "Workspace id unavailable for selected epic.".to_string(),
+                            });
+                        };
+                        let Some(repo_id) = graph.repo_id else {
+                            return Err(ControlPlaneClientError::Server {
+                                message: "Repo id unavailable for selected epic.".to_string(),
+                            });
+                        };
+                        let scope = RepoScope::new(workspace_id, repo_id);
+                        client
+                            .list_agent_models(scope, redesmyn_protocol::client::AgentKind::Codex)
+                            .await
+                    }
+                    .await;
+
+                    let _ = cx.update(|cx| {
+                        let Some(root) = weak.upgrade() else {
+                            return;
+                        };
+                        root.update(cx, |this, cx| {
+                            this.settings_model_catalog_task = None;
+                            this.settings_dialog.set_codex_model_options_loading(false);
+                            match result {
+                                Ok(options) => {
+                                    this.settings_dialog.set_codex_model_options(options);
+                                    cx.notify();
+                                }
+                                Err(err) => {
+                                    redesmyn_logging::tracing::warn!(
+                                        error = %err,
+                                        "failed to load agent model catalog for settings"
+                                    );
+                                }
+                            }
+                        });
+                    });
+                }
+            },
+        ));
     }
 
     fn sync_cascading_menu_state(&mut self, cx: &mut Context<Self>) {
@@ -797,6 +869,12 @@ impl RootView {
                 .unwrap_or_else(|| "Working…".to_string());
             in_flight.push(UiInFlightAction {
                 label,
+                command_id: None,
+            });
+        }
+        if self.settings_model_catalog_task.is_some() {
+            in_flight.push(UiInFlightAction {
+                label: "Loading settings models…".to_string(),
                 command_id: None,
             });
         }
@@ -1838,6 +1916,108 @@ fn epic_id_from_graph_or_fail(
     Ok(epic_id)
 }
 
+fn reasoning_effort_from_default(
+    value: CodexReasoningEffortDefault,
+) -> Option<ModelReasoningEffort> {
+    match value {
+        CodexReasoningEffortDefault::Default => None,
+        CodexReasoningEffortDefault::Minimal => Some(ModelReasoningEffort::Minimal),
+        CodexReasoningEffortDefault::Low => Some(ModelReasoningEffort::Low),
+        CodexReasoningEffortDefault::Medium => Some(ModelReasoningEffort::Medium),
+        CodexReasoningEffortDefault::High => Some(ModelReasoningEffort::High),
+        CodexReasoningEffortDefault::Xhigh => Some(ModelReasoningEffort::Xhigh),
+    }
+}
+
+fn load_default_session_model_selection() -> Option<SessionModelSelection> {
+    let repo_root = match repo_root_from_cwd() {
+        Ok(repo_root) => repo_root,
+        Err(err) => {
+            redesmyn_logging::tracing::warn!(
+                error = %err,
+                "unable to resolve repo root for session defaults"
+            );
+            return None;
+        }
+    };
+
+    let defaults = match load_effective_defaults(&repo_root) {
+        Ok(defaults) => defaults,
+        Err(err) => {
+            redesmyn_logging::tracing::warn!(
+                error = %err,
+                repo_root = %repo_root.display(),
+                "unable to load orchestration defaults for session"
+            );
+            return None;
+        }
+    };
+
+    let model_id = defaults
+        .session_defaults
+        .codex
+        .model
+        .as_ref()
+        .map(|model| model.as_str().to_owned());
+    let reasoning_effort =
+        reasoning_effort_from_default(defaults.session_defaults.codex.reasoning_effort);
+
+    if model_id.is_none() && reasoning_effort.is_none() {
+        return None;
+    }
+
+    Some(SessionModelSelection {
+        model_id,
+        reasoning_effort,
+    })
+}
+
+async fn apply_default_session_model_selection(
+    client: &ControlPlaneClient,
+    scope: RepoScope,
+    session_id: redesmyn_ids::SessionId,
+) {
+    let Some(selection) = load_default_session_model_selection() else {
+        return;
+    };
+
+    let response = match client.set_session_model(scope, session_id, selection).await {
+        Ok(response) => response,
+        Err(err) => {
+            redesmyn_logging::tracing::warn!(
+                session_id = %session_id,
+                error = %err,
+                "failed to apply configured model defaults to new chat session"
+            );
+            return;
+        }
+    };
+
+    let Some(command) = response.command else {
+        return;
+    };
+
+    match client.wait_for_command(command.command_id, 15_000).await {
+        Ok(summary) if summary.state == redesmyn_protocol::client::CommandState::Succeeded => {}
+        Ok(summary) => {
+            redesmyn_logging::tracing::warn!(
+                session_id = %session_id,
+                command_id = %summary.command_id,
+                state = ?summary.state,
+                "default model command did not succeed"
+            );
+        }
+        Err(err) => {
+            redesmyn_logging::tracing::warn!(
+                session_id = %session_id,
+                command_id = %command.command_id,
+                error = %err,
+                "failed while waiting for default model command"
+            );
+        }
+    }
+}
+
 async fn create_chat_session_via_control_plane(
     root: &WeakEntity<RootView>,
     name_hint: String,
@@ -1897,10 +2077,11 @@ async fn create_chat_session_via_control_plane(
     };
     let scope = repo_scope_from_graph_or_fail(root, cx, &graph)?;
 
-    let resp = match client.create_chat_session(scope, title).await {
+    let resp = match client.create_chat_session(scope.clone(), title).await {
         Ok(resp) => resp,
         Err(err) => return ui_driver_fail(root, cx, control_plane_error_to_envelope(err)),
     };
+    apply_default_session_model_selection(&client, scope, resp.session_id).await;
 
     let _ = cx.update(|cx| {
         if let Some(root) = root.upgrade() {
@@ -2831,6 +3012,21 @@ impl Render for RootView {
         };
 
         let settings_open = matches!(self.chrome.panel, Some(ChromePanel::Settings));
+        let codex_model_options = self
+            .session_pane
+            .read(cx)
+            .session_view
+            .read(cx)
+            .session_model_options_snapshot();
+        if !codex_model_options.is_empty() {
+            self.settings_dialog.set_codex_model_options(codex_model_options);
+        }
+        if settings_open
+            && self.settings_dialog.codex_model_options().is_empty()
+            && self.settings_model_catalog_task.is_none()
+        {
+            self.refresh_settings_model_catalog(cx);
+        }
         self.settings_dialog
             .sync_visibility(settings_open, window, cx);
 
@@ -3238,8 +3434,9 @@ impl EpicSessionPaneHost {
                         }
                     })?;
 
-                    let resp = client.create_chat_session(scope, None).await?;
+                    let resp = client.create_chat_session(scope.clone(), None).await?;
                     let session_id = resp.session_id;
+                    apply_default_session_model_selection(&client, scope.clone(), session_id).await;
 
                     client
                         .pin_chat_session_to_epic(scope, epic_id, session_id)

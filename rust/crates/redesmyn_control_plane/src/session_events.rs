@@ -606,7 +606,8 @@ fn infer_agent_kind(event: &SessionEvent) -> StorageAgentKind {
             .as_ref()
             .and_then(storage_agent_kind_from_external_ref),
         SessionEventKind::CodexApprovalPolicyChanged(_)
-        | SessionEventKind::CodexSandboxPolicyChanged(_) => Some(StorageAgentKind::Codex),
+        | SessionEventKind::CodexSandboxPolicyChanged(_)
+        | SessionEventKind::SessionModelChanged(_) => Some(StorageAgentKind::Codex),
         _ => None,
     }
     .unwrap_or(StorageAgentKind::Shell)
@@ -909,6 +910,7 @@ fn kinds_to_db_values(kinds: &[SessionEventKindFilter]) -> Vec<&'static str> {
             SessionEventKindFilter::CodexSandboxPolicyChanged => {
                 Some("codex_sandbox_policy_changed")
             }
+            SessionEventKindFilter::SessionModelChanged => Some("session_model_changed"),
             SessionEventKindFilter::PermissionRequested => Some("permission_requested"),
             SessionEventKindFilter::PermissionDecided => Some("permission_decided"),
             SessionEventKindFilter::ArtifactEmitted => Some("artifact_emitted"),
@@ -932,6 +934,7 @@ fn kind_db_value_from_kind(kind: &SessionEventKind) -> &'static str {
         SessionEventKind::PermissionsModeChanged(_) => "permissions_mode_changed",
         SessionEventKind::CodexApprovalPolicyChanged(_) => "codex_approval_policy_changed",
         SessionEventKind::CodexSandboxPolicyChanged(_) => "codex_sandbox_policy_changed",
+        SessionEventKind::SessionModelChanged(_) => "session_model_changed",
         SessionEventKind::PermissionRequested(_) => "permission_requested",
         SessionEventKind::PermissionDecided(_) => "permission_decided",
         SessionEventKind::ArtifactEmitted(_) => "artifact_emitted",
@@ -984,6 +987,21 @@ fn message_preview_from_kind(kind: &SessionEventKind) -> Option<String> {
             }
             .to_owned(),
         ),
+        SessionEventKind::SessionModelChanged(ev) => {
+            let model = ev.model_id.as_deref().unwrap_or("default");
+            let effort = match ev.reasoning_effort {
+                None => "default",
+                Some(redesmyn_protocol::session::SessionModelReasoningEffort::Minimal) => {
+                    "minimal"
+                }
+                Some(redesmyn_protocol::session::SessionModelReasoningEffort::Low) => "low",
+                Some(redesmyn_protocol::session::SessionModelReasoningEffort::Medium) => "medium",
+                Some(redesmyn_protocol::session::SessionModelReasoningEffort::High) => "high",
+                Some(redesmyn_protocol::session::SessionModelReasoningEffort::Xhigh) => "xhigh",
+                Some(redesmyn_protocol::session::SessionModelReasoningEffort::Unknown) => "unknown",
+            };
+            Some(format!("{model}:{effort}"))
+        }
         SessionEventKind::PermissionRequested(ev) => Some(ev.summary.clone()),
         SessionEventKind::PermissionDecided(ev) => Some(
             match ev.decision {

@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     AnyElement, App, AsyncApp, ClickEvent, Context, ElementId, Entity, FocusHandle, Focusable,
-    ListOffset, ListState, Render, ScrollHandle, SharedString, Subscription, Task, WeakEntity,
-    Window, div, list, px, relative,
+    KeyBinding, ListOffset, ListState, Render, ScrollHandle, SharedString, Subscription, Task,
+    WeakEntity, Window, div, list, px, relative,
 };
 
 use gpui::prelude::*;
@@ -24,12 +24,14 @@ use redesmyn_ids::{ArtifactId, SessionEventId, SessionId, SubscriptionId, TaskId
 use redesmyn_markdown::{MarkdownDoc, MarkdownParseOptions, parse_markdown};
 use redesmyn_protocol::client::{
     AgentInterfaceMode, AgentKind, AgentMessageConflictAction, GetLatestTaskSessionRequest,
-    GetSessionEventsRequest, GetSessionEventsResponse, RequestPayload,
-    RespondPermissionRequestRequest, RespondPermissionRequestResponse, ResponseResult,
-    SendSessionMessageRequest, SendSessionMessageResponse, SessionEventCursor,
-    SessionEventKindFilter, SetSessionCodexApprovalPolicyRequest,
+    GetSessionEventsRequest, GetSessionEventsResponse, ListSessionModelsRequest,
+    ListSessionModelsResponse, ModelReasoningEffort, RequestPayload, RespondPermissionRequestRequest,
+    RespondPermissionRequestResponse, ResponseResult, SendSessionMessageRequest,
+    SendSessionMessageResponse, SessionEventCursor, SessionEventKindFilter, SessionModelOption,
+    SessionModelSelection, SetSessionCodexApprovalPolicyRequest,
     SetSessionCodexApprovalPolicyResponse, SetSessionCodexSandboxPolicyRequest,
-    SetSessionCodexSandboxPolicyResponse, StartAgentRequest, StartAgentResponse, SubscriptionEvent,
+    SetSessionCodexSandboxPolicyResponse, SetSessionModelRequest, SetSessionModelResponse,
+    StartAgentRequest, StartAgentResponse, SubscriptionEvent,
 };
 use redesmyn_protocol::session::{
     CodexApprovalPolicy, CodexSandboxPolicy, PermissionDecision, PermissionDecisionBy,
@@ -45,15 +47,37 @@ use redesmyn_ui::components::{
     CascadingMenuRowStyle, CascadingMenuState, CascadingMenuSurfaceStyle, Expandable, IconButton,
     MarkdownView, ScrollFade, ScrollbarStyle, StyledScrollbar, TextArea, TextButton, TextInput,
     TextInputEvent, cascading_menu_row, cascading_menu_row_value, cascading_menu_surface,
-    cascading_menu_radio_indicator, set_open_cascading_menu,
+    cascading_menu_radio_indicator, cascading_select_menu_item, set_open_cascading_menu,
 };
 use redesmyn_ui::styles::ThemeMode;
 use redesmyn_ui::utils::{
-    BoundedCache, UiActivityGuard, UserActionState, theme_for_window, ui_idle_tracker,
-    ui_test_mode_animation_duration,
+    ActionAvailabilityProbe, BoundedCache, UiActivityGuard, UserActionState, theme_for_window,
+    ui_idle_tracker, ui_test_mode_animation_duration,
 };
 
 use serde_json::Value as JsonValue;
+
+gpui::actions!(
+    redesmyn_ui_session_shortcuts,
+    [OpenSessionModelSelector, OpenSessionReasoningSelector]
+);
+
+pub fn bind_session_shortcut_keys(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("alt-m", OpenSessionModelSelector, Some("SessionComposer")),
+        KeyBinding::new("alt-m", OpenSessionModelSelector, Some("SessionComposer > TextArea")),
+        KeyBinding::new(
+            "alt-r",
+            OpenSessionReasoningSelector,
+            Some("SessionComposer"),
+        ),
+        KeyBinding::new(
+            "alt-r",
+            OpenSessionReasoningSelector,
+            Some("SessionComposer > TextArea"),
+        ),
+    ]);
+}
 
 fn session_event_id_key(id: SessionEventId) -> u64 {
     let bytes = id.to_bytes();
@@ -178,6 +202,34 @@ fn default_workspace_write_policy() -> CodexSandboxPolicy {
         network_access: false,
         exclude_tmpdir_env_var: false,
         exclude_slash_tmp: false,
+    }
+}
+
+fn normalize_model_id(value: Option<String>) -> Option<String> {
+    value.and_then(|model_id| {
+        let trimmed = model_id.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    })
+}
+
+fn normalize_session_model_selection(selection: SessionModelSelection) -> SessionModelSelection {
+    let reasoning_effort = selection.reasoning_effort.and_then(|effort| {
+        (!matches!(effort, ModelReasoningEffort::Unknown)).then_some(effort)
+    });
+    SessionModelSelection {
+        model_id: normalize_model_id(selection.model_id),
+        reasoning_effort,
+    }
+}
+
+fn model_reasoning_effort_label(effort: Option<ModelReasoningEffort>) -> &'static str {
+    match effort {
+        Some(ModelReasoningEffort::Minimal) => "Minimal",
+        Some(ModelReasoningEffort::Low) => "Low",
+        Some(ModelReasoningEffort::Medium) => "Medium",
+        Some(ModelReasoningEffort::High) => "High",
+        Some(ModelReasoningEffort::Xhigh) => "XHigh",
+        Some(ModelReasoningEffort::Unknown) | None => "Default",
     }
 }
 
@@ -734,6 +786,48 @@ async fn set_session_codex_sandbox_policy(
     }
 }
 
+async fn list_session_models(
+    client: &Client,
+    session_id: SessionId,
+) -> Result<ListSessionModelsResponse, ErrorEnvelope> {
+    let response = client
+        .request(RequestPayload::ListSessionModels(ListSessionModelsRequest {
+            session_id,
+        }))
+        .await?;
+
+    match response {
+        ResponseResult::ListSessionModels(resp) => Ok(resp),
+        ResponseResult::Error(err) => Err(err),
+        other => Err(ErrorEnvelope::new(
+            ErrorCategory::Internal,
+            format!("Unexpected response: {other:?}"),
+        )),
+    }
+}
+
+async fn set_session_model(
+    client: &Client,
+    session_id: SessionId,
+    selection: SessionModelSelection,
+) -> Result<SetSessionModelResponse, ErrorEnvelope> {
+    let response = client
+        .request(RequestPayload::SetSessionModel(SetSessionModelRequest {
+            session_id,
+            selection,
+        }))
+        .await?;
+
+    match response {
+        ResponseResult::SetSessionModel(resp) => Ok(resp),
+        ResponseResult::Error(err) => Err(err),
+        other => Err(ErrorEnvelope::new(
+            ErrorCategory::Internal,
+            format!("Unexpected response: {other:?}"),
+        )),
+    }
+}
+
 async fn respond_permission_request(
     client: &Client,
     session_id: SessionId,
@@ -1039,10 +1133,23 @@ pub struct SessionView {
     codex_sandbox_policy_action: UserActionState,
     set_codex_sandbox_policy_task: Option<Task<()>>,
     codex_sandbox_policy_timeout_task: Option<Task<()>>,
+    session_model_options: Vec<SessionModelOption>,
+    session_model_selection: SessionModelSelection,
+    pending_session_model_selection: Option<SessionModelSelection>,
+    session_model_action: UserActionState,
+    set_session_model_task: Option<Task<()>>,
+    model_fetch_generation: u64,
+    model_fetch_in_flight: bool,
+    model_fetch_error: Option<SharedString>,
+    model_fetch_task: Option<Task<()>>,
     session_settings_open: bool,
     session_settings_hovered: Option<SessionSettingsCategory>,
     session_settings_focus: SessionSettingsMenuFocus,
     session_settings_submenu_index: usize,
+    session_model_menu_index: usize,
+    session_reasoning_menu_index: usize,
+    session_model_shortcut_availability: ActionAvailabilityProbe,
+    session_reasoning_shortcut_availability: ActionAvailabilityProbe,
     policies_fetch_generation: u64,
     policies_fetch_in_flight: bool,
     policies_fetch_error: Option<SharedString>,
@@ -1189,10 +1296,26 @@ impl SessionView {
             codex_sandbox_policy_action: UserActionState::default(),
             set_codex_sandbox_policy_task: None,
             codex_sandbox_policy_timeout_task: None,
+            session_model_options: Vec::new(),
+            session_model_selection: SessionModelSelection {
+                model_id: None,
+                reasoning_effort: None,
+            },
+            pending_session_model_selection: None,
+            session_model_action: UserActionState::default(),
+            set_session_model_task: None,
+            model_fetch_generation: 0,
+            model_fetch_in_flight: false,
+            model_fetch_error: None,
+            model_fetch_task: None,
             session_settings_open: false,
             session_settings_hovered: None,
             session_settings_focus: SessionSettingsMenuFocus::default(),
             session_settings_submenu_index: 0,
+            session_model_menu_index: 0,
+            session_reasoning_menu_index: 0,
+            session_model_shortcut_availability: ActionAvailabilityProbe::new(),
+            session_reasoning_shortcut_availability: ActionAvailabilityProbe::new(),
             policies_fetch_generation: 0,
             policies_fetch_in_flight: false,
             policies_fetch_error: None,
@@ -1253,6 +1376,11 @@ impl SessionView {
     #[must_use]
     pub fn client(&self) -> Option<Client> {
         self.client.clone()
+    }
+
+    #[must_use]
+    pub fn session_model_options_snapshot(&self) -> Vec<SessionModelOption> {
+        self.session_model_options.clone()
     }
 
     pub fn bind_latest_task_session(&mut self, task_id: Option<TaskId>, cx: &mut Context<Self>) {
@@ -1694,10 +1822,24 @@ impl SessionView {
         self.codex_sandbox_policy_action = UserActionState::default();
         self.set_codex_sandbox_policy_task = None;
         self.codex_sandbox_policy_timeout_task = None;
+        self.session_model_options.clear();
+        self.session_model_selection = SessionModelSelection {
+            model_id: None,
+            reasoning_effort: None,
+        };
+        self.pending_session_model_selection = None;
+        self.session_model_action = UserActionState::default();
+        self.set_session_model_task = None;
+        self.model_fetch_generation = self.model_fetch_generation.wrapping_add(1);
+        self.model_fetch_in_flight = true;
+        self.model_fetch_error = None;
+        self.model_fetch_task = None;
         self.session_settings_open = false;
         self.session_settings_hovered = None;
         self.session_settings_focus = SessionSettingsMenuFocus::Primary;
         self.session_settings_submenu_index = 0;
+        self.session_model_menu_index = 0;
+        self.session_reasoning_menu_index = 0;
         self.policies_fetch_generation = self.policies_fetch_generation.wrapping_add(1);
         self.policies_fetch_in_flight = true;
         self.policies_fetch_error = None;
@@ -1742,6 +1884,21 @@ impl SessionView {
                 let _ = cx.update(|cx| {
                     policies_view.update(cx, |this, cx| {
                         this.on_policies_fetched(policies_generation, session_id, result, cx);
+                    })
+                });
+            }
+        }));
+
+        let model_view = view.clone();
+        let model_generation = self.model_fetch_generation;
+        let model_client = client.clone();
+        self.model_fetch_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let result = list_session_models(&model_client, session_id).await;
+                let _ = cx.update(|cx| {
+                    model_view.update(cx, |this, cx| {
+                        this.on_models_fetched(model_generation, session_id, result, cx);
                     })
                 });
             }
@@ -2044,6 +2201,414 @@ impl SessionView {
             .fail("Timed out waiting for sandbox to apply.");
         self.pending_codex_sandbox_policy = None;
         self.codex_sandbox_policy_timeout_task = None;
+        cx.notify();
+    }
+
+    fn on_models_fetched(
+        &mut self,
+        generation: u64,
+        session_id: SessionId,
+        result: Result<ListSessionModelsResponse, ErrorEnvelope>,
+        cx: &mut Context<Self>,
+    ) {
+        if generation != self.model_fetch_generation {
+            return;
+        }
+
+        self.model_fetch_task = None;
+        self.model_fetch_in_flight = false;
+
+        match result {
+            Ok(resp) => {
+                if self
+                    .feed
+                    .as_ref()
+                    .is_some_and(|feed| feed.session_id == session_id)
+                {
+                    self.session_model_options = resp.options;
+                    self.session_model_selection = normalize_session_model_selection(resp.selection);
+                    self.model_fetch_error = None;
+                    self.session_model_action.clear_error();
+                }
+            }
+            Err(err) => {
+                self.model_fetch_error = Some(err.message.clone().into());
+                if self.session_model_options.is_empty() {
+                    self.session_model_action.fail(err.message);
+                }
+            }
+        }
+
+        cx.notify();
+    }
+
+    fn refresh_session_models(&mut self, session_id: SessionId, cx: &mut Context<Self>) {
+        let Some(client) = self.client.clone() else {
+            return;
+        };
+
+        self.model_fetch_generation = self.model_fetch_generation.wrapping_add(1);
+        self.model_fetch_in_flight = true;
+        self.model_fetch_error = None;
+        self.model_fetch_task = None;
+        let generation = self.model_fetch_generation;
+        let view = cx.entity();
+
+        self.model_fetch_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let result = list_session_models(&client, session_id).await;
+                let _ = cx.update(|cx| {
+                    view.update(cx, |this, cx| {
+                        this.on_models_fetched(generation, session_id, result, cx);
+                    })
+                });
+            }
+        }));
+    }
+
+    fn set_session_model_selection(
+        &mut self,
+        selection: SessionModelSelection,
+        close_menu: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(client) = self.client.clone() else {
+            self.session_model_action
+                .fail("Control plane client is unavailable.");
+            cx.notify();
+            return;
+        };
+
+        let Some(feed) = self.feed.as_ref() else {
+            return;
+        };
+
+        if self.session_model_action.in_flight {
+            return;
+        }
+
+        if close_menu {
+            let open_menu = cx
+                .try_global::<CascadingMenuState>()
+                .map(|state| state.open_menu())
+                .unwrap_or(None);
+            if matches!(
+                open_menu,
+                Some(CascadingMenuId::SessionModel | CascadingMenuId::SessionReasoning)
+            ) {
+                set_open_cascading_menu(None, cx);
+            }
+        }
+
+        let desired = normalize_session_model_selection(selection);
+        let displayed = normalize_session_model_selection(
+            self.pending_session_model_selection
+                .clone()
+                .unwrap_or_else(|| self.session_model_selection.clone()),
+        );
+        if desired == displayed {
+            return;
+        }
+
+        self.session_model_action.start();
+        self.pending_session_model_selection = Some(desired.clone());
+        cx.notify();
+
+        let session_id = feed.session_id;
+        let view = cx.entity();
+        self.set_session_model_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let result = set_session_model(&client, session_id, desired.clone()).await;
+                let _ = cx.update(|cx| {
+                    view.update(cx, |this, cx| {
+                        this.on_set_session_model_completed(desired.clone(), result, cx);
+                    })
+                });
+            }
+        }));
+    }
+
+    fn on_set_session_model_completed(
+        &mut self,
+        requested: SessionModelSelection,
+        result: Result<SetSessionModelResponse, ErrorEnvelope>,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_session_model_task = None;
+
+        match result {
+            Ok(_resp) => {
+                self.session_model_action.succeed();
+                self.pending_session_model_selection = None;
+                self.session_model_selection = normalize_session_model_selection(requested.clone());
+                if let Some(feed) = self.feed.as_ref() {
+                    self.refresh_session_models(feed.session_id, cx);
+                }
+            }
+            Err(err) => {
+                self.session_model_action.fail(err.message);
+                self.pending_session_model_selection = None;
+            }
+        }
+
+        cx.notify();
+    }
+
+    fn displayed_session_model_selection(&self) -> SessionModelSelection {
+        normalize_session_model_selection(
+            self.pending_session_model_selection
+                .clone()
+                .unwrap_or_else(|| self.session_model_selection.clone()),
+        )
+    }
+
+    fn selected_model_option_for_selection<'a>(
+        &'a self,
+        selection: &SessionModelSelection,
+    ) -> Option<&'a SessionModelOption> {
+        selection
+            .model_id
+            .as_ref()
+            .and_then(|model_id| {
+                self.session_model_options
+                    .iter()
+                    .find(|option| option.model_id == *model_id)
+            })
+            .or_else(|| self.session_model_options.iter().find(|option| option.is_default))
+    }
+
+    fn reasoning_values_for_selection(
+        &self,
+        selection: &SessionModelSelection,
+    ) -> Vec<Option<ModelReasoningEffort>> {
+        let selected_model_option = self.selected_model_option_for_selection(selection);
+        let mut supported_reasoning_efforts = Vec::new();
+        if let Some(option) = selected_model_option {
+            supported_reasoning_efforts = option.supported_reasoning_efforts.clone();
+        } else {
+            for option in &self.session_model_options {
+                for effort in &option.supported_reasoning_efforts {
+                    if !supported_reasoning_efforts.contains(effort) {
+                        supported_reasoning_efforts.push(*effort);
+                    }
+                }
+            }
+        }
+
+        let preferred_order = [
+            ModelReasoningEffort::Minimal,
+            ModelReasoningEffort::Low,
+            ModelReasoningEffort::Medium,
+            ModelReasoningEffort::High,
+            ModelReasoningEffort::Xhigh,
+        ];
+        let mut values: Vec<Option<ModelReasoningEffort>> = vec![None];
+        if supported_reasoning_efforts.is_empty() {
+            values.extend(preferred_order.iter().copied().map(Some));
+        } else {
+            for effort in preferred_order {
+                if supported_reasoning_efforts.contains(&effort) {
+                    values.push(Some(effort));
+                }
+            }
+        }
+        values
+    }
+
+    fn set_session_model_menu_index_from_selection(&mut self) {
+        let selection = self.displayed_session_model_selection();
+        self.session_model_menu_index = selection
+            .model_id
+            .as_ref()
+            .and_then(|model_id| {
+                self.session_model_options
+                    .iter()
+                    .position(|option| option.model_id == *model_id)
+                    .map(|idx| idx + 1)
+            })
+            .unwrap_or(0);
+    }
+
+    fn set_session_reasoning_menu_index_from_selection(&mut self) {
+        let selection = self.displayed_session_model_selection();
+        let values = self.reasoning_values_for_selection(&selection);
+        self.session_reasoning_menu_index = values
+            .iter()
+            .position(|value| *value == selection.reasoning_effort)
+            .unwrap_or(0);
+    }
+
+    fn apply_session_model_index(&mut self, index: usize, cx: &mut Context<Self>) {
+        let selection = self.displayed_session_model_selection();
+        if index == 0 {
+            self.set_session_model_selection(
+                SessionModelSelection {
+                    model_id: None,
+                    reasoning_effort: selection.reasoning_effort,
+                },
+                true,
+                cx,
+            );
+            return;
+        }
+
+        let option_index = index.saturating_sub(1);
+        let Some(option) = self.session_model_options.get(option_index) else {
+            return;
+        };
+        let supported = &option.supported_reasoning_efforts;
+        let reasoning_effort = selection
+            .reasoning_effort
+            .and_then(|value| supported.contains(&value).then_some(value));
+        self.set_session_model_selection(
+            SessionModelSelection {
+                model_id: Some(option.model_id.clone()),
+                reasoning_effort,
+            },
+            true,
+            cx,
+        );
+    }
+
+    fn apply_session_reasoning_index(&mut self, index: usize, cx: &mut Context<Self>) {
+        let selection = self.displayed_session_model_selection();
+        let values = self.reasoning_values_for_selection(&selection);
+        let Some(reasoning_effort) = values.get(index).copied() else {
+            return;
+        };
+        self.set_session_model_selection(
+            SessionModelSelection {
+                model_id: selection.model_id,
+                reasoning_effort,
+            },
+            true,
+            cx,
+        );
+    }
+
+    fn handle_session_model_menu_key(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
+        let open_menu = cx
+            .try_global::<CascadingMenuState>()
+            .map(|state| state.open_menu())
+            .unwrap_or(None);
+        if open_menu != Some(CascadingMenuId::SessionModel) {
+            return false;
+        }
+
+        let len = self.session_model_options.len() + 1;
+        if len == 0 {
+            return false;
+        }
+
+        match key {
+            "escape" => {
+                set_open_cascading_menu(None, cx);
+                cx.notify();
+                true
+            }
+            "up" => {
+                if self.session_model_menu_index > 0 {
+                    self.session_model_menu_index -= 1;
+                    cx.notify();
+                }
+                true
+            }
+            "down" => {
+                let next = (self.session_model_menu_index + 1).min(len.saturating_sub(1));
+                if next != self.session_model_menu_index {
+                    self.session_model_menu_index = next;
+                    cx.notify();
+                }
+                true
+            }
+            "enter" => {
+                self.apply_session_model_index(self.session_model_menu_index, cx);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn handle_session_reasoning_menu_key(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
+        let open_menu = cx
+            .try_global::<CascadingMenuState>()
+            .map(|state| state.open_menu())
+            .unwrap_or(None);
+        if open_menu != Some(CascadingMenuId::SessionReasoning) {
+            return false;
+        }
+
+        let selection = self.displayed_session_model_selection();
+        let values = self.reasoning_values_for_selection(&selection);
+        let len = values.len();
+        if len == 0 {
+            return false;
+        }
+
+        match key {
+            "escape" => {
+                set_open_cascading_menu(None, cx);
+                cx.notify();
+                true
+            }
+            "up" => {
+                if self.session_reasoning_menu_index > 0 {
+                    self.session_reasoning_menu_index -= 1;
+                    cx.notify();
+                }
+                true
+            }
+            "down" => {
+                let next = (self.session_reasoning_menu_index + 1).min(len.saturating_sub(1));
+                if next != self.session_reasoning_menu_index {
+                    self.session_reasoning_menu_index = next;
+                    cx.notify();
+                }
+                true
+            }
+            "enter" => {
+                self.apply_session_reasoning_index(self.session_reasoning_menu_index, cx);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn handle_open_session_model_selector(
+        &mut self,
+        _: &OpenSessionModelSelector,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let available = self
+            .session_model_shortcut_availability
+            .is_action_available_or(window, cx, &OpenSessionModelSelector, false);
+        if !available {
+            return;
+        }
+        self.session_settings_open = false;
+        self.set_session_model_menu_index_from_selection();
+        set_open_cascading_menu(Some(CascadingMenuId::SessionModel), cx);
+        cx.notify();
+    }
+
+    fn handle_open_session_reasoning_selector(
+        &mut self,
+        _: &OpenSessionReasoningSelector,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let available = self
+            .session_reasoning_shortcut_availability
+            .is_action_available_or(window, cx, &OpenSessionReasoningSelector, false);
+        if !available {
+            return;
+        }
+        self.session_settings_open = false;
+        self.set_session_reasoning_menu_index_from_selection();
+        set_open_cascading_menu(Some(CascadingMenuId::SessionReasoning), cx);
         cx.notify();
     }
 
@@ -5969,7 +6534,25 @@ impl Render for SessionView {
             || self.client.is_none()
             || self.feed.is_none();
 
-        let policies_status = if let Some(error) = self.policies_fetch_error.clone() {
+        let policies_status = if let Some(error) = self.model_fetch_error.clone() {
+            Some(
+                div()
+                    .min_w_0()
+                    .text_color(theme.colors.danger)
+                    .text_size(theme.typography.caption.size)
+                    .truncate()
+                    .child(format!("Model: {error}")),
+            )
+        } else if let Some(error) = self.session_model_action.error.clone() {
+            Some(
+                div()
+                    .min_w_0()
+                    .text_color(theme.colors.danger)
+                    .text_size(theme.typography.caption.size)
+                    .truncate()
+                    .child(format!("Model: {error}")),
+            )
+        } else if let Some(error) = self.policies_fetch_error.clone() {
             Some(
                 div()
                     .min_w_0()
@@ -5996,7 +6579,9 @@ impl Render for SessionView {
                     .truncate()
                     .child(format!("Sandbox: {error}")),
             )
-        } else if self.codex_approval_policy_action.in_flight
+        } else if self.model_fetch_in_flight
+            || self.session_model_action.in_flight
+            || self.codex_approval_policy_action.in_flight
             || self.codex_sandbox_policy_action.in_flight
         {
             Some(
@@ -6027,13 +6612,13 @@ impl Render for SessionView {
             .flex()
             .flex_row()
             .items_center()
-            .gap(theme.spacing.xs)
-            .px(theme.spacing.sm)
-            .py(theme.spacing.xs)
+            .gap(px(6.0))
+            .px(px(8.0))
+            .py(px(3.0))
             .rounded(theme.radius.sm)
             .border_1()
             .border_color(theme.colors.border.opacity(0.0))
-            .text_size(theme.typography.caption.size)
+            .text_xs()
             .text_color(theme.colors.foreground_muted)
             .focusable()
             .focus(|mut style| {
@@ -6061,13 +6646,7 @@ impl Render for SessionView {
             .when(settings_disabled, |this| {
                 this.opacity(0.55).cursor_not_allowed()
             })
-            .child("Settings")
-            .child(
-                div()
-                    .text_size(theme.typography.caption.size)
-                    .text_color(theme.colors.foreground_muted)
-                    .child("▾"),
-            );
+            .child("Settings");
 
         if !settings_disabled {
             settings_button = settings_button.on_mouse_down(gpui::MouseButton::Left, {
@@ -6338,6 +6917,408 @@ impl Render for SessionView {
             .child(settings_button)
             .when_some(settings_menu, |this, menu| this.child(menu));
 
+        let displayed_model_selection = self.displayed_session_model_selection();
+        let selected_model_option =
+            self.selected_model_option_for_selection(&displayed_model_selection);
+
+        let resolved_reasoning_effort = displayed_model_selection
+            .reasoning_effort
+            .or_else(|| selected_model_option.map(|option| option.default_reasoning_effort));
+
+        let model_value: SharedString = if self.model_fetch_in_flight
+            && self.session_model_options.is_empty()
+        {
+            "Loading…".into()
+        } else if let Some(model_id) = displayed_model_selection.model_id.as_ref() {
+            selected_model_option
+                .map(|option| option.display_name.clone().into())
+                .unwrap_or_else(|| model_id.clone().into())
+        } else if let Some(option) = selected_model_option {
+            option.display_name.clone().into()
+        } else {
+            "Auto".into()
+        };
+        let reasoning_value: SharedString = model_reasoning_effort_label(resolved_reasoning_effort)
+            .into();
+
+        let reasoning_values = self.reasoning_values_for_selection(&displayed_model_selection);
+
+        let selector_keycap = |label: &'static str, enabled: bool| {
+            div()
+                .px(px(4.0))
+                .py(px(1.0))
+                .rounded(theme.radius.sm)
+                .bg(theme.colors.surface.opacity(0.92))
+                .border_1()
+                .border_color(theme.colors.border.opacity(0.35))
+                .text_xs()
+                .text_color(theme.colors.foreground_muted)
+                .opacity(if enabled { 0.55 } else { 1.0 })
+                .child(label)
+        };
+        let selector_shortcut_fallback = false;
+        let model_shortcut_enabled = self
+            .session_model_shortcut_availability
+            .is_action_available_or(window, cx, &OpenSessionModelSelector, selector_shortcut_fallback);
+        let reasoning_shortcut_enabled = self
+            .session_reasoning_shortcut_availability
+            .is_action_available_or(
+                window,
+                cx,
+                &OpenSessionReasoningSelector,
+                selector_shortcut_fallback,
+            );
+
+        let model_menu_open = open_menu == Some(CascadingMenuId::SessionModel);
+        let reasoning_menu_open = open_menu == Some(CascadingMenuId::SessionReasoning);
+        let model_selector_disabled = self.client.is_none()
+            || self.feed.is_none()
+            || self.session_model_action.in_flight
+            || (self.model_fetch_in_flight && self.session_model_options.is_empty());
+        let reasoning_selector_disabled = model_selector_disabled;
+
+        let selector_open_border = theme.colors.ring.opacity(0.5);
+        let selector_hover_bg = theme.colors.accent;
+        let selector_open_hover_bg = theme.colors.accent.opacity(0.65);
+        let selector_border_transparent = theme.colors.border.opacity(0.0);
+
+        let mut model_selector_button = div()
+            .id(("session_model_selector_button", entity_id))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6.0))
+            .px(px(8.0))
+            .py(px(3.0))
+            .rounded(theme.radius.sm)
+            .border_1()
+            .border_color(theme.colors.border.opacity(0.0))
+            .text_xs()
+            .text_color(theme.colors.foreground_muted)
+            .focusable()
+            .focus(|mut style| {
+                style.border_color = Some(theme.colors.ring);
+                style
+            })
+            .when(model_menu_open, |this| {
+                this.bg(theme.colors.accent.opacity(0.55))
+                    .border_color(selector_open_border)
+                    .text_color(theme.colors.foreground)
+            })
+            .when(!model_selector_disabled, move |this| {
+                this.cursor_pointer().hover(move |this| {
+                    if model_menu_open {
+                        this.bg(selector_open_hover_bg)
+                            .border_color(selector_open_border)
+                            .text_color(theme.colors.foreground)
+                    } else {
+                        this.bg(selector_hover_bg)
+                            .border_color(selector_border_transparent)
+                            .text_color(theme.colors.foreground)
+                    }
+                })
+            })
+            .when(model_selector_disabled, |this| {
+                this.opacity(0.55).cursor_not_allowed()
+            })
+            .child("◈")
+            .child(
+                div()
+                    .max_w(px(120.0))
+                    .truncate()
+                    .child(model_value.clone()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(theme.spacing.xs)
+                    .child(selector_keycap("⌥M", model_shortcut_enabled)),
+            );
+        if !model_selector_disabled {
+            model_selector_button = model_selector_button.on_mouse_down(gpui::MouseButton::Left, {
+                let view = view.clone();
+                move |_, _, app| {
+                    view.update(app, |this, cx| {
+                        this.session_settings_open = false;
+                        let current = cx
+                            .try_global::<CascadingMenuState>()
+                            .map(|state| state.open_menu())
+                            .unwrap_or(None);
+                        let next = if current == Some(CascadingMenuId::SessionModel) {
+                            None
+                        } else {
+                            this.set_session_model_menu_index_from_selection();
+                            Some(CascadingMenuId::SessionModel)
+                        };
+                        set_open_cascading_menu(next, cx);
+                        cx.notify();
+                    });
+                }
+            });
+        }
+
+        let model_menu = if model_menu_open && !model_selector_disabled {
+            let row_style = CascadingMenuRowStyle {
+                gap: theme.spacing.sm,
+                ..CascadingMenuRowStyle::compact(&theme)
+            };
+            let surface_style = CascadingMenuSurfaceStyle::compact(&theme);
+            let mut list = div().flex().flex_col().gap(theme.spacing.xs);
+
+            let model_selected = displayed_model_selection.model_id.is_none();
+            let default_model_label = self
+                .session_model_options
+                .iter()
+                .find(|option| option.is_default)
+                .map(|option| option.display_name.clone())
+                .unwrap_or_else(|| "Provider default".to_string());
+            let default_active = self.session_model_menu_index == 0;
+            let default_row = cascading_select_menu_item(
+                &theme,
+                row_style,
+                default_active,
+                0.0,
+                cascading_menu_radio_indicator(&theme, model_selected, default_active),
+                default_model_label,
+            )
+                .cursor_pointer()
+                .on_mouse_move(cx.listener(|this, _, _, cx| {
+                    if this.session_model_menu_index != 0 {
+                        this.session_model_menu_index = 0;
+                        cx.notify();
+                    }
+                }))
+                .on_mouse_down(gpui::MouseButton::Left, {
+                    let view = view.clone();
+                    let current_reasoning = displayed_model_selection.reasoning_effort;
+                    move |_, _, cx| {
+                        view.update(cx, |this, cx| {
+                            this.set_session_model_selection(
+                                SessionModelSelection {
+                                    model_id: None,
+                                    reasoning_effort: current_reasoning,
+                                },
+                                true,
+                                cx,
+                            );
+                        });
+                    }
+                });
+            list = list.child(default_row);
+
+            for (idx, option) in self.session_model_options.iter().enumerate() {
+                let option_model_id = option.model_id.clone();
+                let option_display = option.display_name.clone();
+                let selected = displayed_model_selection
+                    .model_id
+                    .as_ref()
+                    .is_some_and(|id| id == &option_model_id);
+                let supported = option.supported_reasoning_efforts.clone();
+                let current_reasoning = displayed_model_selection.reasoning_effort;
+                let row_index = idx + 1;
+                let active = self.session_model_menu_index == row_index;
+                let row = cascading_select_menu_item(
+                    &theme,
+                    row_style,
+                    active,
+                    0.0,
+                    cascading_menu_radio_indicator(&theme, selected, active),
+                    option_display,
+                )
+                    .cursor_pointer()
+                    .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                        if this.session_model_menu_index != row_index {
+                            this.session_model_menu_index = row_index;
+                            cx.notify();
+                        }
+                    }))
+                    .on_mouse_down(gpui::MouseButton::Left, {
+                        let view = view.clone();
+                        move |_, _, cx| {
+                            let reasoning_effort = current_reasoning
+                                .and_then(|value| supported.contains(&value).then_some(value));
+                            view.update(cx, |this, cx| {
+                                this.set_session_model_selection(
+                                    SessionModelSelection {
+                                        model_id: Some(option_model_id.clone()),
+                                        reasoning_effort,
+                                    },
+                                    true,
+                                    cx,
+                                );
+                            });
+                        }
+                    });
+                list = list.child(row);
+            }
+
+            Some(
+                div()
+                    .absolute()
+                    .bottom(px(36.0))
+                    .left(px(0.0))
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(
+                        cascading_menu_surface(&theme, surface_style)
+                            .w(px(280.0))
+                            .child(list),
+                    )
+                    .into_any_element(),
+            )
+        } else {
+            None
+        };
+
+        let model_selector_anchor = div()
+            .relative()
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(model_selector_button)
+            .when_some(model_menu, |this, menu| this.child(menu));
+
+        let mut reasoning_selector_button = div()
+            .id(("session_reasoning_selector_button", entity_id))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6.0))
+            .px(px(8.0))
+            .py(px(3.0))
+            .rounded(theme.radius.sm)
+            .border_1()
+            .border_color(theme.colors.border.opacity(0.0))
+            .text_xs()
+            .text_color(theme.colors.foreground_muted)
+            .focusable()
+            .focus(|mut style| {
+                style.border_color = Some(theme.colors.ring);
+                style
+            })
+            .when(reasoning_menu_open, |this| {
+                this.bg(theme.colors.accent.opacity(0.55))
+                    .border_color(selector_open_border)
+                    .text_color(theme.colors.foreground)
+            })
+            .when(!reasoning_selector_disabled, move |this| {
+                this.cursor_pointer().hover(move |this| {
+                    if reasoning_menu_open {
+                        this.bg(selector_open_hover_bg)
+                            .border_color(selector_open_border)
+                            .text_color(theme.colors.foreground)
+                    } else {
+                        this.bg(selector_hover_bg)
+                            .border_color(selector_border_transparent)
+                            .text_color(theme.colors.foreground)
+                    }
+                })
+            })
+            .when(reasoning_selector_disabled, |this| {
+                this.opacity(0.55).cursor_not_allowed()
+            })
+            .child("◎")
+            .child(reasoning_value.clone())
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(theme.spacing.xs)
+                    .child(selector_keycap("⌥R", reasoning_shortcut_enabled)),
+            );
+        if !reasoning_selector_disabled {
+            reasoning_selector_button =
+                reasoning_selector_button.on_mouse_down(gpui::MouseButton::Left, {
+                    let view = view.clone();
+                    move |_, _, app| {
+                        view.update(app, |this, cx| {
+                            this.session_settings_open = false;
+                            let current = cx
+                                .try_global::<CascadingMenuState>()
+                                .map(|state| state.open_menu())
+                                .unwrap_or(None);
+                            let next = if current == Some(CascadingMenuId::SessionReasoning) {
+                                None
+                            } else {
+                                this.set_session_reasoning_menu_index_from_selection();
+                                Some(CascadingMenuId::SessionReasoning)
+                            };
+                            set_open_cascading_menu(next, cx);
+                            cx.notify();
+                        });
+                    }
+                });
+        }
+
+        let reasoning_menu = if reasoning_menu_open && !reasoning_selector_disabled {
+            let row_style = CascadingMenuRowStyle {
+                gap: theme.spacing.sm,
+                ..CascadingMenuRowStyle::compact(&theme)
+            };
+            let surface_style = CascadingMenuSurfaceStyle::compact(&theme);
+            let mut list = div().flex().flex_col().gap(theme.spacing.xs);
+
+            for (idx, effort) in reasoning_values.iter().copied().enumerate() {
+                let selected = displayed_model_selection.reasoning_effort == effort;
+                let label = model_reasoning_effort_label(effort);
+                let model_id = displayed_model_selection.model_id.clone();
+                let active = self.session_reasoning_menu_index == idx;
+                let row = cascading_select_menu_item(
+                    &theme,
+                    row_style,
+                    active,
+                    0.0,
+                    cascading_menu_radio_indicator(&theme, selected, active),
+                    label,
+                )
+                    .cursor_pointer()
+                    .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                        if this.session_reasoning_menu_index != idx {
+                            this.session_reasoning_menu_index = idx;
+                            cx.notify();
+                        }
+                    }))
+                    .on_mouse_down(gpui::MouseButton::Left, {
+                        let view = view.clone();
+                        move |_, _, cx| {
+                            view.update(cx, |this, cx| {
+                                this.set_session_model_selection(
+                                    SessionModelSelection {
+                                        model_id: model_id.clone(),
+                                        reasoning_effort: effort,
+                                    },
+                                    true,
+                                    cx,
+                                );
+                            });
+                        }
+                    });
+                list = list.child(row);
+            }
+
+            Some(
+                div()
+                    .absolute()
+                    .bottom(px(36.0))
+                    .left(px(0.0))
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(
+                        cascading_menu_surface(&theme, surface_style)
+                            .w(px(220.0))
+                            .child(list),
+                    )
+                    .into_any_element(),
+            )
+        } else {
+            None
+        };
+
+        let reasoning_selector_anchor = div()
+            .relative()
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(reasoning_selector_button)
+            .when_some(reasoning_menu, |this, menu| this.child(menu));
+
         let composer_action_bar = div()
             .flex()
             .flex_row()
@@ -6351,6 +7332,8 @@ impl Render for SessionView {
                     .items_center()
                     .gap(theme.spacing.sm)
                     .min_w_0()
+                    .child(model_selector_anchor)
+                    .child(reasoning_selector_anchor)
                     .child(settings_anchor)
                     .when_some(policies_status, |this, status| this.child(status)),
             )
@@ -6359,6 +7342,7 @@ impl Render for SessionView {
         let composer = div()
             .relative()
             .w_full()
+            .key_context("SessionComposer")
             .child(self.composer_input.clone())
             .child(
                 div()
@@ -6389,20 +7373,44 @@ impl Render for SessionView {
             .gap(theme.spacing.sm)
             .size_full()
             .child(content)
+            .on_action(cx.listener(Self::handle_open_session_model_selector))
+            .on_action(cx.listener(Self::handle_open_session_reasoning_selector))
             .track_focus(&self.focus_handle(cx));
 
-        if self.session_settings_open {
+        let any_session_menu_open = matches!(
+            open_menu,
+            Some(
+                CascadingMenuId::SessionSettings
+                    | CascadingMenuId::SessionModel
+                    | CascadingMenuId::SessionReasoning
+            )
+        );
+
+        if any_session_menu_open {
             let view = cx.entity();
             root = root.on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
                 view.update(cx, |this, cx| {
                     this.close_session_settings_menu(cx);
+                    let open_menu = cx
+                        .try_global::<CascadingMenuState>()
+                        .map(|state| state.open_menu())
+                        .unwrap_or(None);
+                    if matches!(
+                        open_menu,
+                        Some(CascadingMenuId::SessionModel | CascadingMenuId::SessionReasoning)
+                    ) {
+                        set_open_cascading_menu(None, cx);
+                    }
                 });
             });
 
             let view = cx.entity();
             root = root.capture_key_down(move |event, _window, cx| {
+                let key = event.keystroke.key.as_str();
                 let handled = view.update(cx, |this, cx| {
-                    this.handle_session_settings_key(event.keystroke.key.as_str(), cx)
+                    this.handle_session_settings_key(key, cx)
+                        || this.handle_session_model_menu_key(key, cx)
+                        || this.handle_session_reasoning_menu_key(key, cx)
                 });
 
                 if handled {

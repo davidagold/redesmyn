@@ -5,11 +5,11 @@ use gpui::{
     AnyElement, Context, Entity, FocusHandle, FontWeight, MouseButton, ScrollHandle, SharedString,
     WeakEntity, Window, div, prelude::*, px,
 };
+use redesmyn_protocol::client::SessionModelOption;
 
 use redesmyn_ui::UiContext;
 use redesmyn_ui::components::{
-    ButtonKind, Callout, CalloutKind, IconButton, ScrollArea, TextArea, TextButton, TextInput,
-    TextInputEvent,
+    ButtonKind, Callout, CalloutKind, IconButton, ScrollArea, TextArea, TextButton, TextInputEvent,
 };
 use redesmyn_ui::settings::ThemePreference;
 use redesmyn_ui::utils::{
@@ -17,9 +17,10 @@ use redesmyn_ui::utils::{
 };
 
 use crate::orchestration_config::{
-    AgentKindSelection, CodexApprovalPolicyDefault, CodexModelName, CodexSandboxPolicyDefault,
-    OrchestrationConfigError, OrchestrationDefaults, SandboxNetworkMode, SandboxType,
-    load_effective_defaults, repo_config_path, repo_root_from_cwd, write_repo_defaults,
+    AgentKindSelection, CodexApprovalPolicyDefault, CodexModelName, CodexReasoningEffortDefault,
+    CodexSandboxPolicyDefault, OrchestrationConfigError, OrchestrationDefaults,
+    SandboxNetworkMode, SandboxType, load_effective_defaults, repo_config_path, repo_root_from_cwd,
+    write_repo_defaults,
 };
 
 use super::RootView;
@@ -61,12 +62,6 @@ enum SettingsSection {
     Agents,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CodexModelMode {
-    Default,
-    Custom,
-}
-
 pub struct SettingsDialog {
     root_focus_handle: FocusHandle,
     visible: bool,
@@ -77,11 +72,10 @@ pub struct SettingsDialog {
     repo_config_path: Option<PathBuf>,
     baseline: OrchestrationDefaults,
     draft: OrchestrationDefaults,
+    codex_model_options: Vec<SessionModelOption>,
+    codex_model_options_loading: bool,
     default_prelude_open: bool,
     prelude_input: Entity<TextArea>,
-    codex_model_input: Entity<TextInput>,
-    codex_model_mode: CodexModelMode,
-    codex_model_value: String,
     save: UserActionState,
     notice: Option<SharedString>,
 }
@@ -94,7 +88,6 @@ impl SettingsDialog {
                 .min_rows(4)
                 .max_rows(12)
         });
-        let codex_model_input = cx.new(|cx| TextInput::new(cx).placeholder("Model name…").small());
 
         Self {
             root_focus_handle,
@@ -106,11 +99,10 @@ impl SettingsDialog {
             repo_config_path: None,
             baseline: OrchestrationDefaults::default(),
             draft: OrchestrationDefaults::default(),
+            codex_model_options: Vec::new(),
+            codex_model_options_loading: false,
             default_prelude_open: false,
             prelude_input,
-            codex_model_input,
-            codex_model_mode: CodexModelMode::Default,
-            codex_model_value: String::new(),
             save: UserActionState::default(),
             notice: None,
         }
@@ -120,8 +112,21 @@ impl SettingsDialog {
         self.prelude_input.clone()
     }
 
-    pub fn codex_model_input_entity(&self) -> Entity<TextInput> {
-        self.codex_model_input.clone()
+    pub fn set_codex_model_options(&mut self, mut options: Vec<SessionModelOption>) {
+        options.sort_by(|left, right| {
+            left.display_name
+                .to_ascii_lowercase()
+                .cmp(&right.display_name.to_ascii_lowercase())
+        });
+        self.codex_model_options = options;
+    }
+
+    pub fn codex_model_options(&self) -> &[SessionModelOption] {
+        &self.codex_model_options
+    }
+
+    pub fn set_codex_model_options_loading(&mut self, loading: bool) {
+        self.codex_model_options_loading = loading;
     }
 
     pub fn dismiss_default_prelude_overlay(&mut self) -> bool {
@@ -177,24 +182,6 @@ impl SettingsDialog {
         };
 
         self.draft.harness.prelude = (!value.trim().is_empty()).then(|| value.to_string());
-        self.notice = None;
-        self.save.clear_error();
-        cx.notify();
-    }
-
-    pub fn handle_codex_model_input_event(
-        &mut self,
-        event: TextInputEvent,
-        cx: &mut Context<RootView>,
-    ) {
-        let TextInputEvent::Changed(value) = event else {
-            return;
-        };
-
-        self.codex_model_value = value.to_string();
-        if self.codex_model_mode == CodexModelMode::Custom {
-            self.draft.session_defaults.codex.model = CodexModelName::parse(&self.codex_model_value);
-        }
         self.notice = None;
         self.save.clear_error();
         cx.notify();
@@ -282,31 +269,9 @@ impl SettingsDialog {
         let prelude = self.draft.harness.prelude.clone().unwrap_or_default();
         self.prelude_input
             .update(cx, move |input, cx| input.set_text(prelude, cx));
-        self.sync_codex_model_input(cx);
 
         window.focus(&self.root_focus_handle);
         cx.notify();
-    }
-
-    fn sync_codex_model_input(&mut self, cx: &mut Context<RootView>) {
-        let value = self
-            .draft
-            .session_defaults
-            .codex
-            .model
-            .as_ref()
-            .map(CodexModelName::as_str)
-            .unwrap_or("")
-            .to_string();
-        self.codex_model_value = value.clone();
-        self.codex_model_mode = if self.draft.session_defaults.codex.model.is_some() {
-            CodexModelMode::Custom
-        } else {
-            CodexModelMode::Default
-        };
-
-        self.codex_model_input
-            .update(cx, move |input, cx| input.set_text(value, cx));
     }
 
     fn load_defaults(
@@ -998,6 +963,7 @@ impl SettingsDialog {
                 cx,
             ))
             .child(self.codex_model_setting(root, window, cx))
+            .child(self.codex_reasoning_setting(root, window, cx))
             .child(
                 div()
                     .text_xs()
@@ -1015,45 +981,34 @@ impl SettingsDialog {
     ) -> AnyElement {
         let theme = theme_for_window(window, cx);
 
-        let choices = [
-            ("default", "Default", CodexModelMode::Default),
-            ("custom", "Custom", CodexModelMode::Custom),
-        ];
-
-        let mut group = div()
-            .flex()
-            .flex_row()
-            .rounded(theme.radius.md)
-            .border_1()
-            .border_color(theme.colors.border.opacity(0.6))
-            .overflow_hidden();
-
-        for (idx, (suffix, segment_label, mode)) in choices.into_iter().enumerate() {
-            let selected = self.codex_model_mode == mode;
-            let mut cell = div()
-                .id((gpui::ElementId::from(("codex_model_default", cx.entity_id())), suffix))
-                .px(theme.spacing.sm)
-                .py(theme.spacing.xs)
-                .text_xs()
-                .text_color(theme.colors.foreground)
-                .when(selected, |this| this.bg(theme.colors.accent))
-                .when(!selected, |this| {
-                    this.hover(|this| this.bg(theme.colors.surface_elevated.opacity(0.35)))
-                })
-                .cursor_pointer()
-                .child(segment_label);
-
-            cell = cell.on_click({
+        let selected_model_id = self
+            .draft
+            .session_defaults
+            .codex
+            .model
+            .as_ref()
+            .map(CodexModelName::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let selected_model_label = self
+            .codex_model_options
+            .iter()
+            .find(|option| option.model_id == selected_model_id)
+            .map(|option| option.display_name.clone());
+        let clear_button_label = if selected_model_id.is_empty() {
+            "Using repo default"
+        } else {
+            "Use repo default"
+        };
+        let clear_button = TextButton::new(("codex_model_clear", cx.entity_id()), clear_button_label)
+            .kind(ButtonKind::Ghost)
+            .small()
+            .disabled(selected_model_id.is_empty())
+            .on_click({
                 let root = root.clone();
                 move |_, _, cx| {
                     root.update(cx, |this, cx| {
-                        this.settings_dialog.codex_model_mode = mode;
-                        this.settings_dialog.draft.session_defaults.codex.model = match mode {
-                            CodexModelMode::Default => None,
-                            CodexModelMode::Custom => CodexModelName::parse(
-                                &this.settings_dialog.codex_model_value,
-                            ),
-                        };
+                        this.settings_dialog.draft.session_defaults.codex.model = None;
                         this.settings_dialog.notice = None;
                         this.settings_dialog.save.clear_error();
                         cx.notify();
@@ -1061,17 +1016,148 @@ impl SettingsDialog {
                 }
             });
 
-            if idx > 0 {
-                group = group.child(
+        let mut model_choices = div().flex().flex_col().gap(px(2.0));
+        for option in &self.codex_model_options {
+            let model_id = option.model_id.clone();
+            let selected = selected_model_id == model_id;
+            let show_secondary = option.display_name != option.model_id;
+            let mut row = div()
+                .id((
+                    gpui::ElementId::from(("settings_codex_model_option", cx.entity_id())),
+                    model_id.clone(),
+                ))
+                .px(theme.spacing.sm)
+                .py(px(6.0))
+                .rounded(theme.radius.sm)
+                .border_1()
+                .border_color(theme.colors.border.opacity(if selected { 0.55 } else { 0.22 }))
+                .bg(theme.colors.surface.opacity(if selected { 0.22 } else { 0.06 }))
+                .when(selected, |this| this.bg(theme.colors.accent.opacity(0.24)))
+                .when(!selected, |this| {
+                    this.hover(|this| this.bg(theme.colors.surface_elevated.opacity(0.28)))
+                })
+                .cursor_pointer()
+                .child(
                     div()
-                        .border_l_1()
-                        .border_color(theme.colors.border.opacity(0.6)),
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_between()
+                        .gap(theme.spacing.sm)
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(7.0))
+                                .min_w_0()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(if selected {
+                                            theme.colors.accent_foreground
+                                        } else {
+                                            theme.colors.foreground_muted
+                                        })
+                                        .child(if selected { "●" } else { "○" }),
+                                )
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(if selected {
+                                            FontWeight::SEMIBOLD
+                                        } else {
+                                            FontWeight::NORMAL
+                                        })
+                                        .text_color(theme.colors.foreground)
+                                        .truncate()
+                                        .child(option.display_name.clone()),
+                                ),
+                        )
+                        .when(show_secondary, |this| {
+                            this.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme.colors.foreground_muted.opacity(0.82))
+                                    .truncate()
+                                    .max_w(px(210.0))
+                                    .child(option.model_id.clone()),
+                            )
+                        }),
                 );
-            }
-            group = group.child(cell);
+
+            row = row.on_click({
+                let root = root.clone();
+                move |_, _, cx| {
+                    root.update(cx, |this, cx| {
+                        this.settings_dialog.draft.session_defaults.codex.model =
+                            CodexModelName::parse(&model_id);
+                        this.settings_dialog.notice = None;
+                        this.settings_dialog.save.clear_error();
+                        cx.notify();
+                    });
+                }
+            });
+            model_choices = model_choices.child(row);
         }
 
-        let mut body = div()
+        let model_choices = if self.codex_model_options.is_empty() {
+            let configured_value = selected_model_label
+                .map(SharedString::from)
+                .unwrap_or_else(|| "Repo default (Auto)".into());
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(6.0))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.colors.foreground_muted)
+                        .child(if self.codex_model_options_loading {
+                            "Loading available Codex models from app server…"
+                        } else {
+                            "Model catalog is unavailable for this scope."
+                        }),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.colors.foreground_muted.opacity(0.9))
+                        .child(format!("Current default: {configured_value}")),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.colors.foreground_muted.opacity(0.82))
+                        .child("Catalog is fetched from the Codex app server when settings open."),
+                )
+                .into_any_element()
+        } else {
+            let list = div()
+                .rounded(theme.radius.md)
+                .bg(theme.colors.surface.opacity(0.08))
+                .border_1()
+                .border_color(theme.colors.border.opacity(0.28))
+                .p(px(5.0))
+                .child(model_choices);
+
+            if self.codex_model_options.len() > 5 {
+                div()
+                    .h(px(168.0))
+                    .child(
+                        ScrollArea::new(
+                            ("settings_codex_model_scroll", cx.entity_id()),
+                            ScrollHandle::new(),
+                        )
+                        .child(list),
+                    )
+                    .into_any_element()
+            } else {
+                list.into_any_element()
+            }
+        };
+
+        div()
             .flex()
             .flex_col()
             .gap(theme.spacing.xs)
@@ -1088,38 +1174,42 @@ impl SettingsDialog {
                             .text_color(theme.colors.foreground_muted)
                             .child("Model"),
                     )
-                    .child(group),
+                    .child(clear_button),
             )
+            .child(model_choices)
             .child(
                 div()
                     .text_xs()
                     .text_color(theme.colors.foreground_muted)
-                    .child("Default Codex model for new sessions."),
-            );
+                    .child("Select the default Codex model for new sessions."),
+            )
+            .into_any_element()
+    }
 
-        if self.codex_model_mode == CodexModelMode::Custom {
-            body = body.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(theme.spacing.xs)
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.colors.foreground_muted)
-                            .child("Model name"),
-                    )
-                    .child(self.codex_model_input.clone())
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.colors.foreground_muted)
-                            .child("Leave blank to use the default model."),
-                    ),
-            );
-        }
-
-        body.into_any_element()
+    fn codex_reasoning_setting(
+        &mut self,
+        root: &Entity<RootView>,
+        window: &mut Window,
+        cx: &mut Context<RootView>,
+    ) -> AnyElement {
+        self.segmented_choice_setting(
+            root,
+            "codex_reasoning_effort_default",
+            "Reasoning effort",
+            &[
+                ("default", "Default", CodexReasoningEffortDefault::Default),
+                ("minimal", "Minimal", CodexReasoningEffortDefault::Minimal),
+                ("low", "Low", CodexReasoningEffortDefault::Low),
+                ("medium", "Medium", CodexReasoningEffortDefault::Medium),
+                ("high", "High", CodexReasoningEffortDefault::High),
+                ("xhigh", "XHigh", CodexReasoningEffortDefault::Xhigh),
+            ],
+            self.draft.session_defaults.codex.reasoning_effort,
+            |draft, next| draft.session_defaults.codex.reasoning_effort = next,
+            "Default Codex reasoning effort for new sessions.",
+            window,
+            cx,
+        )
     }
 
     fn agent_section_prelude(
@@ -1512,7 +1602,6 @@ impl SettingsDialog {
         let prelude = self.draft.harness.prelude.clone().unwrap_or_default();
         self.prelude_input
             .update(cx, move |input, cx| input.set_text(prelude, cx));
-        self.sync_codex_model_input(cx);
 
         cx.notify();
     }

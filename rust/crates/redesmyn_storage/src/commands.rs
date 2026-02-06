@@ -352,6 +352,73 @@ where
     .transpose()
 }
 
+pub async fn get_command_last_update_for_state<'e, E>(
+    executor: E,
+    command_id: CommandId,
+    state: CommandState,
+) -> Result<Option<CommandUpdateRecord>, StorageError>
+where
+    E: Executor<'e, Database = Sqlite>,
+{
+    #[allow(clippy::type_complexity)]
+    let row: Option<(
+        CommandUpdateId,
+        CommandId,
+        i64,
+        String,
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+        Option<Vec<u8>>,
+    )> = sqlx::query_as(
+        r#"
+        SELECT
+            id,
+            command_id,
+            created_at_ms,
+            state,
+            message,
+            progress_current,
+            progress_total,
+            detail
+        FROM command_updates
+        WHERE command_id = ?1
+          AND state = ?2
+        ORDER BY created_at_ms DESC, id DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(command_id)
+    .bind(state.as_str())
+    .fetch_optional(executor)
+    .await?;
+
+    row.map(
+        |(
+            update_id,
+            command_id,
+            created_at_ms,
+            state,
+            message,
+            progress_current,
+            progress_total,
+            detail,
+        )| {
+            Ok::<CommandUpdateRecord, StorageError>(CommandUpdateRecord {
+                update_id,
+                command_id,
+                created_at_ms,
+                state: decode_command_state(&state)?,
+                message,
+                progress_current,
+                progress_total,
+                detail,
+            })
+        },
+    )
+    .transpose()
+}
+
 pub async fn find_command_by_idempotency_key<'e, E>(
     executor: E,
     scope: CommandScope,

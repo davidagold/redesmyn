@@ -13,12 +13,14 @@ use crate::session_events::{
 use redesmyn_ids::{RepoId, SessionEventId, SessionId, WorkspaceId};
 use redesmyn_logging::tracing;
 use redesmyn_protocol::agent_commands::{
-    ResumeByIdTaskAgentTurnCommand, SendTaskAgentMessageCommand, StartAgentSessionCommand,
-    RespondPermissionRequestCommand, SetSessionCodexApprovalPolicyCommand,
-    SetSessionCodexSandboxPolicyCommand, SetSessionPermissionsModeCommand,
-    SESSION_AGENT_RESUME_BY_ID_TURN, SESSION_AGENT_RESPOND_PERMISSION_REQUEST,
-    SESSION_AGENT_SEND_MESSAGE, SESSION_AGENT_SET_CODEX_APPROVAL_POLICY,
-    SESSION_AGENT_SET_CODEX_SANDBOX_POLICY, SESSION_AGENT_SET_PERMISSIONS_MODE, SESSION_AGENT_START,
+    AGENT_LIST_MODELS, ListAgentModelsCommand, ListSessionModelsCommand,
+    RespondPermissionRequestCommand, ResumeByIdTaskAgentTurnCommand, SendTaskAgentMessageCommand,
+    SetSessionCodexApprovalPolicyCommand,
+    SetSessionCodexSandboxPolicyCommand, SetSessionModelCommand, SetSessionPermissionsModeCommand,
+    StartAgentSessionCommand, SESSION_AGENT_LIST_MODELS, SESSION_AGENT_RESUME_BY_ID_TURN,
+    SESSION_AGENT_RESPOND_PERMISSION_REQUEST, SESSION_AGENT_SEND_MESSAGE,
+    SESSION_AGENT_SET_CODEX_APPROVAL_POLICY, SESSION_AGENT_SET_CODEX_SANDBOX_POLICY,
+    SESSION_AGENT_SET_MODEL, SESSION_AGENT_SET_PERMISSIONS_MODE, SESSION_AGENT_START,
 };
 use redesmyn_protocol::client::{
     AgentInterfaceMode, AgentKind, AgentMessageConflictAction, AgentSessionScopeKind,
@@ -27,11 +29,13 @@ use redesmyn_protocol::client::{
     CreateCommandResponse, DaemonPresenceSummary, EpicGraph, EpicSummary, Event, EventLogEvent,
     EventWaitFilter, GetCommandResponse, GetEpicGraphResponse, GetEpicPinnedChatSessionResponse,
     GetLatestTaskSessionResponse, GetSessionEventsResponse, HealthResponse,
-    ListChatSessionsResponse, ListEpicsResponse, ListTaskSessionsResponse, MergeReadiness,
-    PinChatSessionToEpicResponse, Response, ResponseResult, SendSessionMessageResponse,
-    RespondPermissionRequestResponse, SessionSummary, SetSessionCodexApprovalPolicyResponse,
-    SetSessionCodexSandboxPolicyResponse, SetSessionPermissionsModeResponse,
-    StatusResponse, Subscribed, SubscriptionEvent, TaskState,
+    ListAgentModelsResponse, ListChatSessionsResponse, ListEpicsResponse, ListSessionModelsResponse,
+    ListTaskSessionsResponse, MergeReadiness, PinChatSessionToEpicResponse,
+    RespondPermissionRequestResponse, Response,
+    ResponseResult, SendSessionMessageResponse, SessionSummary,
+    SetSessionCodexApprovalPolicyResponse, SetSessionCodexSandboxPolicyResponse,
+    SetSessionModelResponse, SetSessionPermissionsModeResponse, StatusResponse, Subscribed,
+    SubscriptionEvent, TaskState,
     UnpinChatSessionFromEpicResponse, WaitForCommandResponse, WaitForEventResponse,
     WaitForIdleResponse,
 };
@@ -47,7 +51,7 @@ use redesmyn_transport::client::{ClientConnection, ClientTransportError};
 use redesmyn_storage::schema::{
     AgentInterfaceMode as StorageAgentInterfaceMode, AgentKind as StorageAgentKind,
     AgentSessionScopeKind as StorageAgentSessionScopeKind,
-    AgentSessionStatus as StorageAgentSessionStatus,
+    AgentSessionStatus as StorageAgentSessionStatus, CommandState as StorageCommandState,
 };
 use redesmyn_storage::sessions::AgentSessionRecord;
 
@@ -1378,6 +1382,380 @@ async fn handle_request_result(
                 },
             ))
         }
+        redesmyn_protocol::client::RequestPayload::ListAgentModels(req) => {
+            let span = tracing::info_span!(
+                "control_plane.client_api.list_agent_models",
+                agent_kind = ?req.agent_kind,
+            );
+            let _guard = span.enter();
+
+            let (workspace_id, repo_id) = match envelope.scope {
+                Some(Scope::Repo { repo }) => (repo.workspace_id, repo.repo_id),
+                Some(Scope::Unknown) => {
+                    return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::InvalidRequest,
+                        "Unknown scope kind.",
+                    )));
+                }
+                Some(_) => {
+                    return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::InvalidRequest,
+                        "Unsupported scope kind.",
+                    )));
+                }
+                None => {
+                    return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::InvalidRequest,
+                        "Repo scope is required to list agent models.",
+                    )));
+                }
+            };
+
+            let json_payload = match encode_agent_command_payload(&ListAgentModelsCommand {
+                agent_kind: req.agent_kind,
+            }) {
+                Ok(payload) => payload,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+
+            let command = control_plane
+                .issue_command(
+                    redesmyn_storage::commands::CommandScope::Repo {
+                        workspace_id,
+                        repo_id,
+                    },
+                    AGENT_LIST_MODELS.to_string(),
+                    None,
+                    None,
+                    None,
+                    json_payload,
+                )
+                .await?;
+
+            let command = match control_plane
+                .commands()
+                .wait_for_command(
+                    command.command_id,
+                    &[CommandState::Succeeded, CommandState::Failed, CommandState::Canceled],
+                    default_timeout(),
+                )
+                .await
+            {
+                Ok(command) => command,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+
+            if command.state != CommandState::Succeeded {
+                let message = command
+                    .last_update
+                    .as_ref()
+                    .and_then(|update| update.message.clone())
+                    .unwrap_or_else(|| "Failed to list agent models.".to_string());
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    message,
+                )));
+            }
+
+            let last_update = redesmyn_storage::commands::get_command_last_update_for_state(
+                control_plane.pool(),
+                command.command_id,
+                StorageCommandState::Succeeded,
+            )
+            .await?
+            .or(
+                redesmyn_storage::commands::get_command_last_update(
+                    control_plane.pool(),
+                    command.command_id,
+                )
+                .await?,
+            );
+
+            let Some(last_update) = last_update else {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    "Missing command update payload for model list.",
+                )));
+            };
+
+            let Some(detail_bytes) = last_update.detail else {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    "Missing model list payload.",
+                )));
+            };
+
+            match decode_list_session_models_from_command_detail(&detail_bytes) {
+                Ok(resp) => Ok(ResponseResult::ListAgentModels(ListAgentModelsResponse {
+                    options: resp.options,
+                })),
+                Err(err) => Ok(ResponseResult::Error(err)),
+            }
+        }
+        redesmyn_protocol::client::RequestPayload::ListSessionModels(req) => {
+            let span = tracing::info_span!(
+                "control_plane.client_api.list_session_models",
+                session_id = %req.session_id,
+            );
+            let _guard = span.enter();
+
+            let session =
+                redesmyn_storage::sessions::get_agent_session(control_plane.pool(), req.session_id)
+                    .await?;
+            let Some(session) = session else {
+                let detail =
+                    ErrorDetail::from([("session_id".to_string(), req.session_id.to_string())]);
+                return Ok(ResponseResult::Error(
+                    ErrorEnvelope::new(ErrorCategory::NotFound, "Session not found.")
+                        .with_detail(detail),
+                ));
+            };
+
+            match envelope.scope {
+                Some(Scope::Repo { repo }) => {
+                    if session.scope_workspace_id != repo.workspace_id
+                        || session.scope_repo_id != repo.repo_id
+                    {
+                        return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                            ErrorCategory::NotFound,
+                            "Session not found in repo scope.",
+                        )));
+                    }
+                }
+                Some(Scope::Unknown) => {
+                    return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::InvalidRequest,
+                        "Unknown scope kind.",
+                    )));
+                }
+                Some(_) => {
+                    return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::InvalidRequest,
+                        "Unsupported scope kind.",
+                    )));
+                }
+                None => {}
+            }
+
+            let interface_mode = protocol_interface_mode_from_storage(session.interface_mode);
+            if !matches!(
+                interface_mode,
+                AgentInterfaceMode::StructuredExec | AgentInterfaceMode::AppServer
+            ) {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "Session model selection is only supported for structured sessions.",
+                )));
+            }
+
+            let json_payload = match encode_agent_command_payload(&ListSessionModelsCommand {
+                session_id: req.session_id,
+                task_id: session.task_id,
+            }) {
+                Ok(payload) => payload,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+
+            let command = control_plane
+                .issue_command(
+                    redesmyn_storage::commands::CommandScope::Repo {
+                        workspace_id: session.scope_workspace_id,
+                        repo_id: session.scope_repo_id,
+                    },
+                    SESSION_AGENT_LIST_MODELS.to_string(),
+                    session.task_id,
+                    None,
+                    None,
+                    json_payload,
+                )
+                .await?;
+
+            let command = match control_plane
+                .commands()
+                .wait_for_command(
+                    command.command_id,
+                    &[CommandState::Succeeded, CommandState::Failed, CommandState::Canceled],
+                    default_timeout(),
+                )
+                .await
+            {
+                Ok(command) => command,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+
+            if command.state != CommandState::Succeeded {
+                let message = command
+                    .last_update
+                    .as_ref()
+                    .and_then(|update| update.message.clone())
+                    .unwrap_or_else(|| "Failed to list session models.".to_string());
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    message,
+                )));
+            }
+
+            let last_update = redesmyn_storage::commands::get_command_last_update_for_state(
+                control_plane.pool(),
+                command.command_id,
+                StorageCommandState::Succeeded,
+            )
+            .await?
+            .or(
+                redesmyn_storage::commands::get_command_last_update(
+                    control_plane.pool(),
+                    command.command_id,
+                )
+                .await?,
+            );
+
+            let Some(last_update) = last_update else {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    "Missing command update payload for model list.",
+                )));
+            };
+
+            let Some(detail_bytes) = last_update.detail else {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    "Missing model list payload.",
+                )));
+            };
+
+            match decode_list_session_models_from_command_detail(&detail_bytes) {
+                Ok(resp) => Ok(ResponseResult::ListSessionModels(resp)),
+                Err(err) => Ok(ResponseResult::Error(err)),
+            }
+        }
+        redesmyn_protocol::client::RequestPayload::SetSessionModel(req) => {
+            let span = tracing::info_span!(
+                "control_plane.client_api.set_session_model",
+                session_id = %req.session_id,
+                model_id = ?req.selection.model_id,
+                reasoning_effort = ?req.selection.reasoning_effort,
+            );
+            let _guard = span.enter();
+
+            if matches!(
+                req.selection.reasoning_effort,
+                Some(redesmyn_protocol::client::ModelReasoningEffort::Unknown)
+            ) {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "Unknown model reasoning effort.",
+                )));
+            }
+
+            let session =
+                redesmyn_storage::sessions::get_agent_session(control_plane.pool(), req.session_id)
+                    .await?;
+            let Some(session) = session else {
+                let detail =
+                    ErrorDetail::from([("session_id".to_string(), req.session_id.to_string())]);
+                return Ok(ResponseResult::Error(
+                    ErrorEnvelope::new(ErrorCategory::NotFound, "Session not found.")
+                        .with_detail(detail),
+                ));
+            };
+
+            match envelope.scope {
+                Some(Scope::Repo { repo }) => {
+                    if session.scope_workspace_id != repo.workspace_id
+                        || session.scope_repo_id != repo.repo_id
+                    {
+                        return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                            ErrorCategory::NotFound,
+                            "Session not found in repo scope.",
+                        )));
+                    }
+                }
+                Some(Scope::Unknown) => {
+                    return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::InvalidRequest,
+                        "Unknown scope kind.",
+                    )));
+                }
+                Some(_) => {
+                    return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::InvalidRequest,
+                        "Unsupported scope kind.",
+                    )));
+                }
+                None => {}
+            }
+
+            let interface_mode = protocol_interface_mode_from_storage(session.interface_mode);
+            if !matches!(
+                interface_mode,
+                AgentInterfaceMode::StructuredExec | AgentInterfaceMode::AppServer
+            ) {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "Session model selection is only supported for structured sessions.",
+                )));
+            }
+
+            let model_id = req
+                .selection
+                .model_id
+                .as_ref()
+                .and_then(|value| {
+                    let trimmed = value.trim();
+                    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+                });
+
+            let json_payload = match encode_agent_command_payload(&SetSessionModelCommand {
+                session_id: req.session_id,
+                task_id: session.task_id,
+                model_id,
+                reasoning_effort: req.selection.reasoning_effort,
+            }) {
+                Ok(payload) => payload,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+
+            let command = control_plane
+                .issue_command(
+                    redesmyn_storage::commands::CommandScope::Repo {
+                        workspace_id: session.scope_workspace_id,
+                        repo_id: session.scope_repo_id,
+                    },
+                    SESSION_AGENT_SET_MODEL.to_string(),
+                    session.task_id,
+                    None,
+                    None,
+                    json_payload,
+                )
+                .await?;
+
+            let command = match control_plane
+                .commands()
+                .wait_for_command(
+                    command.command_id,
+                    &[CommandState::Succeeded, CommandState::Failed, CommandState::Canceled],
+                    default_timeout(),
+                )
+                .await
+            {
+                Ok(command) => command,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+
+            if command.state != CommandState::Succeeded {
+                let message = command
+                    .last_update
+                    .as_ref()
+                    .and_then(|update| update.message.clone())
+                    .unwrap_or_else(|| "Failed to update session model.".to_string());
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::Unavailable,
+                    message,
+                )));
+            }
+
+            Ok(ResponseResult::SetSessionModel(SetSessionModelResponse { command: Some(command) }))
+        }
         redesmyn_protocol::client::RequestPayload::RespondPermissionRequest(req) => {
             let span = tracing::info_span!(
                 "control_plane.client_api.respond_permission_request",
@@ -2018,6 +2396,47 @@ fn encode_agent_command_payload<T: serde::Serialize>(payload: &T) -> Result<Vec<
         ErrorEnvelope::new(
             ErrorCategory::Internal,
             "Failed to encode agent command payload.",
+        )
+        .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
+    })
+}
+
+fn decode_list_session_models_from_command_detail(
+    detail_bytes: &[u8],
+) -> Result<ListSessionModelsResponse, ErrorEnvelope> {
+    #[derive(serde::Deserialize)]
+    struct UpdateDetailEnvelope {
+        detail: Option<ErrorDetail>,
+        error: Option<ErrorEnvelope>,
+    }
+
+    let detail_envelope: UpdateDetailEnvelope =
+        serde_json::from_slice(detail_bytes).map_err(|err| {
+            ErrorEnvelope::new(
+                ErrorCategory::Internal,
+                "Failed to decode model-list command detail envelope.",
+            )
+            .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
+        })?;
+
+    if let Some(error) = detail_envelope.error {
+        return Err(error);
+    }
+
+    let models_json = detail_envelope
+        .detail
+        .and_then(|mut detail| detail.remove("models_json"))
+        .ok_or_else(|| {
+            ErrorEnvelope::new(
+                ErrorCategory::Unavailable,
+                "Model list response did not include models_json payload.",
+            )
+        })?;
+
+    serde_json::from_str::<ListSessionModelsResponse>(&models_json).map_err(|err| {
+        ErrorEnvelope::new(
+            ErrorCategory::Internal,
+            "Failed to decode model list payload.",
         )
         .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
     })

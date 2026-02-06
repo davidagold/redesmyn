@@ -43,6 +43,9 @@ pub enum ClientMethod {
     SetSessionPermissionsMode,
     SetSessionCodexApprovalPolicy,
     SetSessionCodexSandboxPolicy,
+    ListAgentModels,
+    ListSessionModels,
+    SetSessionModel,
     RespondPermissionRequest,
     StartAgent,
     StopAgent,
@@ -90,6 +93,9 @@ pub enum RequestPayload {
     SetSessionPermissionsMode(SetSessionPermissionsModeRequest),
     SetSessionCodexApprovalPolicy(SetSessionCodexApprovalPolicyRequest),
     SetSessionCodexSandboxPolicy(SetSessionCodexSandboxPolicyRequest),
+    ListAgentModels(ListAgentModelsRequest),
+    ListSessionModels(ListSessionModelsRequest),
+    SetSessionModel(SetSessionModelRequest),
     RespondPermissionRequest(RespondPermissionRequestRequest),
     StartAgent(StartAgentRequest),
     StopAgent(StopAgentRequest),
@@ -124,6 +130,9 @@ impl RequestPayload {
             Self::SetSessionPermissionsMode(_) => ClientMethod::SetSessionPermissionsMode,
             Self::SetSessionCodexApprovalPolicy(_) => ClientMethod::SetSessionCodexApprovalPolicy,
             Self::SetSessionCodexSandboxPolicy(_) => ClientMethod::SetSessionCodexSandboxPolicy,
+            Self::ListAgentModels(_) => ClientMethod::ListAgentModels,
+            Self::ListSessionModels(_) => ClientMethod::ListSessionModels,
+            Self::SetSessionModel(_) => ClientMethod::SetSessionModel,
             Self::RespondPermissionRequest(_) => ClientMethod::RespondPermissionRequest,
             Self::StartAgent(_) => ClientMethod::StartAgent,
             Self::StopAgent(_) => ClientMethod::StopAgent,
@@ -183,6 +192,9 @@ pub enum ResponseResult {
     SetSessionPermissionsMode(SetSessionPermissionsModeResponse),
     SetSessionCodexApprovalPolicy(SetSessionCodexApprovalPolicyResponse),
     SetSessionCodexSandboxPolicy(SetSessionCodexSandboxPolicyResponse),
+    ListAgentModels(ListAgentModelsResponse),
+    ListSessionModels(ListSessionModelsResponse),
+    SetSessionModel(SetSessionModelResponse),
     RespondPermissionRequest(RespondPermissionRequestResponse),
     StartAgent(StartAgentResponse),
     StopAgent(StopAgentResponse),
@@ -435,6 +447,7 @@ pub enum SessionEventKindFilter {
     PermissionDecided,
     CodexApprovalPolicyChanged,
     CodexSandboxPolicyChanged,
+    SessionModelChanged,
     /// A kind not understood by this binary (forward compatible).
     #[serde(other)]
     Unknown,
@@ -544,6 +557,73 @@ pub struct SetSessionCodexSandboxPolicyRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SetSessionCodexSandboxPolicyResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<CommandSummary>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelReasoningEffort {
+    Minimal,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionModelOption {
+    pub model_id: String,
+    pub display_name: String,
+    pub description: String,
+    pub is_default: bool,
+    pub provider_model: String,
+    pub default_reasoning_effort: ModelReasoningEffort,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supported_reasoning_efforts: Vec<ModelReasoningEffort>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SessionModelSelection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ModelReasoningEffort>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ListSessionModelsRequest {
+    pub session_id: SessionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ListAgentModelsRequest {
+    pub agent_kind: AgentKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ListAgentModelsResponse {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<SessionModelOption>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ListSessionModelsResponse {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<SessionModelOption>,
+    pub selection: SessionModelSelection,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SetSessionModelRequest {
+    pub session_id: SessionId,
+    pub selection: SessionModelSelection,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SetSessionModelResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<CommandSummary>,
 }

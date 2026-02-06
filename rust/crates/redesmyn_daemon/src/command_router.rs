@@ -3,18 +3,23 @@ use std::sync::Arc;
 
 use redesmyn_config::DaemonConfig;
 use redesmyn_domain::agent::{AppServerTurnIntent, ExternalSessionRef as DomainExternalSessionRef};
-use redesmyn_exec::app_server::{AppServerSessionSpec, AppServerSupervisor, AppServerSupervisorConfig};
+use redesmyn_exec::app_server::{
+    AppServerProcess, AppServerRequest, AppServerResponse, AppServerSessionSpec, AppServerSupervisor,
+    AppServerSupervisorConfig,
+};
 use redesmyn_exec::artifact_store::LocalArtifactStore;
 use redesmyn_exec::codex_app_server::{CodexAppServerProcess, CodexAppServerProcessConfig};
 use redesmyn_logging::tracing;
 use redesmyn_protocol::agent_commands::{
-    InterruptTaskAgentTurnCommand, RespondPermissionRequestCommand, ResumeByIdTaskAgentTurnCommand,
-    SetSessionCodexApprovalPolicyCommand, SetSessionCodexSandboxPolicyCommand,
-    SetSessionPermissionsModeCommand, StartAgentSessionCommand, StartTaskAgentSessionCommand,
-    SESSION_AGENT_INTERRUPT_TURN, SESSION_AGENT_RESPOND_PERMISSION_REQUEST,
+    AGENT_LIST_MODELS, InterruptTaskAgentTurnCommand, ListAgentModelsCommand,
+    ListSessionModelsCommand, RespondPermissionRequestCommand,
+    ResumeByIdTaskAgentTurnCommand, SetSessionCodexApprovalPolicyCommand,
+    SetSessionCodexSandboxPolicyCommand, SetSessionModelCommand, SetSessionPermissionsModeCommand,
+    StartAgentSessionCommand, StartTaskAgentSessionCommand, SESSION_AGENT_INTERRUPT_TURN,
+    SESSION_AGENT_LIST_MODELS, SESSION_AGENT_RESPOND_PERMISSION_REQUEST,
     SESSION_AGENT_RESUME_BY_ID_TURN, SESSION_AGENT_SEND_MESSAGE, SESSION_AGENT_SET_PERMISSIONS_MODE,
     SESSION_AGENT_SET_CODEX_APPROVAL_POLICY, SESSION_AGENT_SET_CODEX_SANDBOX_POLICY,
-    SESSION_AGENT_START, TASK_AGENT_START,
+    SESSION_AGENT_SET_MODEL, SESSION_AGENT_START, TASK_AGENT_START,
 };
 use redesmyn_protocol::client::{AgentInterfaceMode, AgentKind};
 use redesmyn_protocol::daemon::{
@@ -121,6 +126,13 @@ async fn handle_dispatch(router: CommandRouter, frames_tx: mpsc::Sender<DaemonFr
         SESSION_AGENT_SET_CODEX_SANDBOX_POLICY => {
             handle_session_agent_set_codex_sandbox_policy(router, &frames_tx, dispatch).await
         }
+        SESSION_AGENT_SET_MODEL => {
+            handle_session_agent_set_model(router, &frames_tx, dispatch).await
+        }
+        SESSION_AGENT_LIST_MODELS => {
+            handle_session_agent_list_models(router, &frames_tx, dispatch).await
+        }
+        AGENT_LIST_MODELS => handle_agent_list_models(router, &frames_tx, dispatch).await,
         SESSION_AGENT_RESPOND_PERMISSION_REQUEST => {
             handle_session_agent_respond_permission_request(router, &frames_tx, dispatch).await
         }
@@ -642,6 +654,269 @@ async fn handle_session_agent_set_codex_sandbox_policy(
             .await;
         }
     }
+}
+
+async fn handle_session_agent_set_model(
+    router: CommandRouter,
+    frames_tx: &mpsc::Sender<DaemonFrame>,
+    dispatch: CommandDispatch,
+) {
+    let cmd: SetSessionModelCommand = match decode_payload(&dispatch) {
+        Ok(cmd) => cmd,
+        Err(err) => {
+            reject_command(frames_tx, dispatch, err).await;
+            return;
+        }
+    };
+
+    if let Err(err) = send_command_update(
+        frames_tx,
+        &dispatch,
+        CommandState::Accepted,
+        Some("accepted".to_owned()),
+        None,
+        None,
+        None,
+    )
+    .await
+    {
+        tracing::warn!(error = ?err, "failed to send accepted command update");
+    }
+
+    if let Err(err) = ensure_app_server_session_started(
+        &router,
+        dispatch.scope,
+        cmd.session_id,
+        cmd.task_id,
+    )
+    .await
+    {
+        fail_command(frames_tx, dispatch, err).await;
+        return;
+    }
+
+    match router
+        .app_server
+        .set_model(
+            cmd.session_id,
+            redesmyn_protocol::client::SessionModelSelection {
+                model_id: cmd.model_id,
+                reasoning_effort: cmd.reasoning_effort,
+            },
+        )
+        .await
+    {
+        Ok(()) => {
+            let _ = send_command_update(
+                frames_tx,
+                &dispatch,
+                CommandState::Succeeded,
+                Some("updated".to_owned()),
+                None,
+                None,
+                None,
+            )
+            .await;
+        }
+        Err(err) => {
+            fail_command(
+                frames_tx,
+                dispatch,
+                ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()),
+            )
+            .await;
+        }
+    }
+}
+
+async fn handle_session_agent_list_models(
+    router: CommandRouter,
+    frames_tx: &mpsc::Sender<DaemonFrame>,
+    dispatch: CommandDispatch,
+) {
+    let cmd: ListSessionModelsCommand = match decode_payload(&dispatch) {
+        Ok(cmd) => cmd,
+        Err(err) => {
+            reject_command(frames_tx, dispatch, err).await;
+            return;
+        }
+    };
+
+    if let Err(err) = send_command_update(
+        frames_tx,
+        &dispatch,
+        CommandState::Accepted,
+        Some("accepted".to_owned()),
+        None,
+        None,
+        None,
+    )
+    .await
+    {
+        tracing::warn!(error = ?err, "failed to send accepted command update");
+    }
+
+    if let Err(err) = ensure_app_server_session_started(
+        &router,
+        dispatch.scope,
+        cmd.session_id,
+        cmd.task_id,
+    )
+    .await
+    {
+        fail_command(frames_tx, dispatch, err).await;
+        return;
+    }
+
+    match router.app_server.list_models(cmd.session_id).await {
+        Ok((options, selection)) => {
+            let detail = match serde_json::to_string(
+                &redesmyn_protocol::client::ListSessionModelsResponse { options, selection },
+            ) {
+                Ok(models_json) => Some(ErrorDetail::from([("models_json".to_string(), models_json)])),
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed to encode list-models detail payload");
+                    None
+                }
+            };
+
+            let _ = send_command_update(
+                frames_tx,
+                &dispatch,
+                CommandState::Succeeded,
+                Some("listed".to_owned()),
+                None,
+                detail,
+                None,
+            )
+            .await;
+        }
+        Err(err) => {
+            fail_command(
+                frames_tx,
+                dispatch,
+                ErrorEnvelope::new(ErrorCategory::Internal, err.to_string()),
+            )
+            .await;
+        }
+    }
+}
+
+async fn handle_agent_list_models(
+    router: CommandRouter,
+    frames_tx: &mpsc::Sender<DaemonFrame>,
+    dispatch: CommandDispatch,
+) {
+    let cmd: ListAgentModelsCommand = match decode_payload(&dispatch) {
+        Ok(cmd) => cmd,
+        Err(err) => {
+            reject_command(frames_tx, dispatch, err).await;
+            return;
+        }
+    };
+
+    if let Err(err) = send_command_update(
+        frames_tx,
+        &dispatch,
+        CommandState::Accepted,
+        Some("accepted".to_owned()),
+        None,
+        None,
+        None,
+    )
+    .await
+    {
+        tracing::warn!(error = ?err, "failed to send accepted command update");
+    }
+
+    let repo_root = match resolve_repo_root(&router.repo_registry, dispatch.scope) {
+        Ok(path) => path,
+        Err(err) => {
+            fail_command(frames_tx, dispatch, err).await;
+            return;
+        }
+    };
+
+    let list_result = match cmd.agent_kind {
+        AgentKind::Codex => list_codex_models_from_app_server(repo_root).await,
+        AgentKind::ClaudeCode | AgentKind::Shell => Err(ErrorEnvelope::new(
+            ErrorCategory::InvalidRequest,
+            format!("Unsupported agent kind for model listing: {:?}", cmd.agent_kind),
+        )),
+    };
+
+    match list_result {
+        Ok((options, selection)) => {
+            let detail = match serde_json::to_string(
+                &redesmyn_protocol::client::ListSessionModelsResponse { options, selection },
+            ) {
+                Ok(models_json) => Some(ErrorDetail::from([("models_json".to_string(), models_json)])),
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed to encode list-models detail payload");
+                    None
+                }
+            };
+
+            let _ = send_command_update(
+                frames_tx,
+                &dispatch,
+                CommandState::Succeeded,
+                Some("listed".to_owned()),
+                None,
+                detail,
+                None,
+            )
+            .await;
+        }
+        Err(err) => {
+            fail_command(frames_tx, dispatch, err).await;
+        }
+    }
+}
+
+async fn list_codex_models_from_app_server(
+    repo_root: PathBuf,
+) -> Result<
+    (
+        Vec<redesmyn_protocol::client::SessionModelOption>,
+        redesmyn_protocol::client::SessionModelSelection,
+    ),
+    ErrorEnvelope,
+> {
+    let process = CodexAppServerProcess::new(CodexAppServerProcessConfig::codex_default(repo_root));
+    process
+        .start()
+        .await
+        .map_err(|err| ErrorEnvelope::new(ErrorCategory::Unavailable, err.to_string()))?;
+
+    let connection = process
+        .connect()
+        .await
+        .map_err(|err| ErrorEnvelope::new(ErrorCategory::Unavailable, err.to_string()));
+
+    let result = match connection {
+        Ok(connection) => {
+            let response = connection
+                .client
+                .request(AppServerRequest::ListModels)
+                .await
+                .map_err(|err| ErrorEnvelope::new(ErrorCategory::Unavailable, err.to_string()))?;
+            match response {
+                AppServerResponse::ModelsListed { options, selection } => Ok((options, selection)),
+                other => Err(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    format!("unexpected response for model catalog request: {other:?}"),
+                )),
+            }
+        }
+        Err(err) => Err(err),
+    };
+
+    if let Err(err) = process.shutdown().await {
+        tracing::warn!(error = %err, "failed to shutdown codex app-server after list models");
+    }
+
+    result
 }
 
 async fn handle_session_agent_respond_permission_request(

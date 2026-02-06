@@ -7,6 +7,7 @@ use redesmyn_domain::agent::AppServerTurnIntent;
 use redesmyn_ids::{SessionEventId, SessionId, TaskId};
 use redesmyn_logging::tracing;
 use redesmyn_protocol::agent_commands::SessionPolicySnapshot;
+use redesmyn_protocol::client::{ModelReasoningEffort, SessionModelOption, SessionModelSelection};
 use redesmyn_protocol::artifacts::{ArtifactKind, ArtifactRef};
 use redesmyn_protocol::daemon::{
     DaemonFrame, DaemonMessage, SessionEventBatch, SessionLiveEventBatch,
@@ -15,10 +16,10 @@ use redesmyn_protocol::session::{
     ArtifactEmitted, AssistantMessage, AssistantReasoning, AssistantReasoningText,
     CodexApprovalPolicy, CodexApprovalPolicyChanged, CodexSandboxPolicy,
     CodexSandboxPolicyChanged, ExternalSessionRef, InterfaceMode, SessionEnded, SessionEvent,
-    SessionEventKind, SessionScope, SessionStarted, StatusUpdate, ToolInvocation, ToolResult,
-    TurnCompleted, TurnStarted, TurnState, PermissionDecided, PermissionDecision,
-    PermissionDecisionBy, PermissionRequest, PermissionRequested, PermissionsMode,
-    PermissionsModeChanged,
+    SessionEventKind, SessionModelChanged, SessionModelReasoningEffort, SessionScope,
+    SessionStarted, StatusUpdate, ToolInvocation, ToolResult, TurnCompleted, TurnStarted,
+    TurnState, PermissionDecided, PermissionDecision, PermissionDecisionBy, PermissionRequest,
+    PermissionRequested, PermissionsMode, PermissionsModeChanged,
 };
 use redesmyn_protocol::session_live::{
     AssistantMessageDelta, AssistantReasoningRawDelta, AssistantReasoningSummaryDelta,
@@ -73,6 +74,10 @@ impl std::fmt::Debug for AppServerSessionSpec {
 pub enum AppServerRequest {
     SendMessage { intent: AppServerTurnIntent },
     Interrupt,
+    ListModels,
+    SetModel {
+        selection: SessionModelSelection,
+    },
     SetPermissionsMode { mode: PermissionsMode },
     SetCodexApprovalPolicy {
         approval_policy: Option<CodexApprovalPolicy>,
@@ -90,6 +95,11 @@ pub enum AppServerRequest {
 pub enum AppServerResponse {
     MessageAccepted,
     Interrupted,
+    ModelsListed {
+        options: Vec<SessionModelOption>,
+        selection: SessionModelSelection,
+    },
+    ModelSet,
     PermissionsModeSet,
     CodexApprovalPolicySet,
     CodexSandboxPolicySet,
@@ -283,6 +293,13 @@ enum SessionCommand {
     Interrupt {
         reply: oneshot::Sender<Result<AppServerResponse, AppServerRequestError>>,
     },
+    ListModels {
+        reply: oneshot::Sender<Result<AppServerResponse, AppServerRequestError>>,
+    },
+    SetModel {
+        selection: SessionModelSelection,
+        reply: oneshot::Sender<Result<AppServerResponse, AppServerRequestError>>,
+    },
     SetPermissionsMode {
         mode: PermissionsMode,
         reply: oneshot::Sender<Result<AppServerResponse, AppServerRequestError>>,
@@ -466,6 +483,42 @@ impl AppServerSupervisor {
         rx.await
             .map_err(|_| SessionControlError::SessionClosed { session_id })?
             .map_err(AppServerCallError::Request)
+    }
+
+    pub async fn list_models(
+        &self,
+        session_id: SessionId,
+    ) -> Result<(Vec<SessionModelOption>, SessionModelSelection), AppServerCallError> {
+        let (reply, rx) = oneshot::channel::<Result<AppServerResponse, AppServerRequestError>>();
+        self.send_command(session_id, SessionCommand::ListModels { reply })
+            .await?;
+        match rx
+            .await
+            .map_err(|_| SessionControlError::SessionClosed { session_id })?
+            .map_err(AppServerCallError::Request)?
+        {
+            AppServerResponse::ModelsListed { options, selection } => Ok((options, selection)),
+            other => Err(AppServerCallError::Request(AppServerRequestError::Failed {
+                reason: format!("unexpected list models response: {other:?}"),
+            })),
+        }
+    }
+
+    pub async fn set_model(
+        &self,
+        session_id: SessionId,
+        selection: SessionModelSelection,
+    ) -> Result<(), AppServerCallError> {
+        let (reply, rx) = oneshot::channel::<Result<AppServerResponse, AppServerRequestError>>();
+        self.send_command(
+            session_id,
+            SessionCommand::SetModel { selection, reply },
+        )
+        .await?;
+        rx.await
+            .map_err(|_| SessionControlError::SessionClosed { session_id })?
+            .map_err(AppServerCallError::Request)?;
+        Ok(())
     }
 
     pub async fn set_permissions_mode(
@@ -743,6 +796,62 @@ async fn run_session(
                 let response = client.request(AppServerRequest::Interrupt).await;
                 let _ = reply.send(response);
             }
+            SessionCommand::ListModels { reply } => {
+                let response = client.request(AppServerRequest::ListModels).await;
+                if let Err(err) = &response {
+                    try_emit_status_update(
+                        &frames_tx,
+                        session_id,
+                        scope,
+                        format!("list_models_failed: {err}"),
+                    );
+                }
+                let _ = reply.send(response);
+            }
+            SessionCommand::SetModel { selection, reply } => {
+                let response = client
+                    .request(AppServerRequest::SetModel { selection: selection.clone() })
+                    .await;
+                if let Err(err) = &response {
+                    try_emit_status_update(
+                        &frames_tx,
+                        session_id,
+                        scope,
+                        format!("set_model_failed: {err}"),
+                    );
+                } else {
+                    let _ = emit_event(
+                        &frames_tx,
+                        session_id,
+                        scope,
+                        None,
+                        SessionEventKind::SessionModelChanged(SessionModelChanged {
+                            model_id: selection.model_id.clone(),
+                            reasoning_effort: selection
+                                .reasoning_effort
+                                .map(session_reasoning_effort_from_client),
+                        }),
+                    )
+                    .await;
+                    let model = selection.model_id.as_deref().unwrap_or("default");
+                    let effort = match selection.reasoning_effort {
+                        Some(ModelReasoningEffort::Minimal) => "minimal",
+                        Some(ModelReasoningEffort::Low) => "low",
+                        Some(ModelReasoningEffort::Medium) => "medium",
+                        Some(ModelReasoningEffort::High) => "high",
+                        Some(ModelReasoningEffort::Xhigh) => "xhigh",
+                        Some(ModelReasoningEffort::Unknown) => "unknown",
+                        None => "default",
+                    };
+                    try_emit_status_update(
+                        &frames_tx,
+                        session_id,
+                        scope,
+                        format!("model_configured:{model}:{effort}"),
+                    );
+                }
+                let _ = reply.send(response);
+            }
             SessionCommand::SetPermissionsMode { mode, reply } => {
                 let response = client
                     .request(AppServerRequest::SetPermissionsMode { mode })
@@ -858,6 +967,14 @@ async fn run_session(
                     let _ = client
                         .request(AppServerRequest::SetCodexSandboxPolicy {
                             sandbox_policy: snapshot.codex_sandbox_policy.clone(),
+                        })
+                        .await?;
+                    let _ = client
+                        .request(AppServerRequest::SetModel {
+                            selection: SessionModelSelection {
+                                model_id: snapshot.model_id.clone(),
+                                reasoning_effort: snapshot.model_reasoning_effort,
+                            },
                         })
                         .await?;
                     Ok(())
@@ -1561,6 +1678,19 @@ fn try_emit_status_update(
         }),
     );
     let _ = frames_tx.try_send(frame);
+}
+
+fn session_reasoning_effort_from_client(
+    effort: ModelReasoningEffort,
+) -> SessionModelReasoningEffort {
+    match effort {
+        ModelReasoningEffort::Minimal => SessionModelReasoningEffort::Minimal,
+        ModelReasoningEffort::Low => SessionModelReasoningEffort::Low,
+        ModelReasoningEffort::Medium => SessionModelReasoningEffort::Medium,
+        ModelReasoningEffort::High => SessionModelReasoningEffort::High,
+        ModelReasoningEffort::Xhigh => SessionModelReasoningEffort::Xhigh,
+        ModelReasoningEffort::Unknown => SessionModelReasoningEffort::Unknown,
+    }
 }
 
 async fn emit_event(

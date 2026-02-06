@@ -7,7 +7,7 @@
 
 use redesmyn_ids::{SessionId, TaskId};
 
-use crate::client::{AgentInterfaceMode, AgentKind};
+use crate::client::{AgentInterfaceMode, AgentKind, ModelReasoningEffort};
 use crate::session::{
     CodexApprovalPolicy, CodexSandboxPolicy, ExternalSessionRef, PermissionDecision, PermissionsMode,
 };
@@ -28,6 +28,10 @@ pub struct SessionPolicySnapshot {
     pub codex_approval_policy: Option<CodexApprovalPolicy>,
     #[serde(default)]
     pub codex_sandbox_policy: Option<CodexSandboxPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_reasoning_effort: Option<ModelReasoningEffort>,
 }
 
 pub const SESSION_AGENT_START: &str = "session.agent.start";
@@ -40,6 +44,9 @@ pub const SESSION_AGENT_SET_PERMISSIONS_MODE: &str = "session.agent.set_permissi
 pub const SESSION_AGENT_RESPOND_PERMISSION_REQUEST: &str = "session.agent.respond_permission_request";
 pub const SESSION_AGENT_SET_CODEX_APPROVAL_POLICY: &str = "session.agent.set_codex_approval_policy";
 pub const SESSION_AGENT_SET_CODEX_SANDBOX_POLICY: &str = "session.agent.set_codex_sandbox_policy";
+pub const SESSION_AGENT_SET_MODEL: &str = "session.agent.set_model";
+pub const SESSION_AGENT_LIST_MODELS: &str = "session.agent.list_models";
+pub const AGENT_LIST_MODELS: &str = "agent.list_models";
 
 pub const TASK_AGENT_START: &str = "task.agent.start";
 pub const TASK_AGENT_STOP: &str = "task.agent.stop";
@@ -143,6 +150,29 @@ pub struct SetSessionCodexSandboxPolicyCommand {
     pub task_id: Option<TaskId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox_policy: Option<CodexSandboxPolicy>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SetSessionModelCommand {
+    pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<TaskId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ModelReasoningEffort>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ListSessionModelsCommand {
+    pub session_id: SessionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<TaskId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ListAgentModelsCommand {
+    pub agent_kind: AgentKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

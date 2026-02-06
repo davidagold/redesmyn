@@ -69,6 +69,7 @@ impl SessionEventKindTag {
             SessionEventKind::PermissionRequested(_) => Self::PermissionRequested,
             SessionEventKind::PermissionDecided(_) => Self::PermissionDecided,
             SessionEventKind::ArtifactEmitted(_) => Self::ArtifactEmitted,
+            SessionEventKind::SessionModelChanged(_) => Self::Unknown,
             SessionEventKind::Unknown(_) => Self::Unknown,
         }
     }
@@ -1009,6 +1010,7 @@ impl SessionEventItem {
                     label: ev.label.clone(),
                 })
             }
+            SessionEventKind::SessionModelChanged(_) => SessionEventItemContent::Unknown,
             SessionEventKind::Unknown(_) => SessionEventItemContent::Unknown,
         };
 
@@ -1139,6 +1141,23 @@ fn preview_from_event_kind(kind: &SessionEventKind) -> Option<String> {
             }
             .to_owned(),
         ),
+        SessionEventKind::SessionModelChanged(ev) => Some(format!(
+            "{}:{}",
+            ev.model_id.as_deref().unwrap_or("default"),
+            match ev.reasoning_effort {
+                None => "default",
+                Some(redesmyn_protocol::session::SessionModelReasoningEffort::Minimal) => {
+                    "minimal"
+                }
+                Some(redesmyn_protocol::session::SessionModelReasoningEffort::Low) => "low",
+                Some(redesmyn_protocol::session::SessionModelReasoningEffort::Medium) => "medium",
+                Some(redesmyn_protocol::session::SessionModelReasoningEffort::High) => "high",
+                Some(redesmyn_protocol::session::SessionModelReasoningEffort::Xhigh) => "xhigh",
+                Some(redesmyn_protocol::session::SessionModelReasoningEffort::Unknown) => {
+                    "unknown"
+                }
+            }
+        )),
         SessionEventKind::ArtifactEmitted(ArtifactEmitted { label, .. }) => label.clone(),
         SessionEventKind::TurnStarted(TurnStarted {
             idempotency_key, ..

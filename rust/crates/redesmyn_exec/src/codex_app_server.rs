@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use redesmyn_domain::agent::{AppServerTurnIntent, ExternalSessionRef as DomainExternalSessionRef};
 use redesmyn_logging::tracing;
+use redesmyn_protocol::client::{ModelReasoningEffort, SessionModelOption, SessionModelSelection};
 use redesmyn_protocol::session::{
     CodexApprovalPolicy, CodexSandboxPolicy, CommandExecutionPermissionRequest, ExternalSessionRef,
     FileChangePermissionRequest, PermissionDecision, PermissionDecisionBy, PermissionRequest,
@@ -80,6 +81,49 @@ struct ThreadResumeParams {
     thread_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     cwd: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelListParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelListResponse {
+    data: Vec<ModelRecord>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelRecord {
+    id: String,
+    model: String,
+    display_name: String,
+    description: String,
+    is_default: bool,
+    default_reasoning_effort: ModelReasoningEffort,
+    #[serde(default)]
+    supported_reasoning_efforts: Vec<ReasoningEffortOption>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReasoningEffortOption {
+    reasoning_effort: ModelReasoningEffort,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SetDefaultModelParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<ModelReasoningEffort>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -279,6 +323,7 @@ struct CodexAppServerStateInner {
     permissions_mode: PermissionsMode,
     approval_policy: Option<CodexApprovalPolicy>,
     sandbox_policy: Option<CodexSandboxPolicy>,
+    model_selection: SessionModelSelection,
     pending_permission_requests: HashMap<String, oneshot::Sender<PermissionDecision>>,
 }
 
@@ -294,6 +339,10 @@ impl Default for CodexAppServerStateInner {
             permissions_mode: PermissionsMode::Ask,
             approval_policy: None,
             sandbox_policy: None,
+            model_selection: SessionModelSelection {
+                model_id: None,
+                reasoning_effort: None,
+            },
             pending_permission_requests: HashMap::new(),
         }
     }
@@ -361,6 +410,14 @@ impl CodexAppServerState {
 
     async fn set_sandbox_policy(&self, sandbox_policy: Option<CodexSandboxPolicy>) {
         self.inner.lock().await.sandbox_policy = sandbox_policy;
+    }
+
+    async fn model_selection(&self) -> SessionModelSelection {
+        self.inner.lock().await.model_selection.clone()
+    }
+
+    async fn set_model_selection(&self, selection: SessionModelSelection) {
+        self.inner.lock().await.model_selection = selection;
     }
 
     async fn register_permission_request(
@@ -606,6 +663,81 @@ impl CodexAppServerClient {
             })?;
         Ok(())
     }
+
+    async fn list_models(
+        &self,
+    ) -> Result<(Vec<SessionModelOption>, SessionModelSelection), AppServerRequestError> {
+        let span = redesmyn_logging::redesmyn_info_span!("codex_app_server.model_list");
+        let _guard = span.enter();
+
+        let params = serde_json::to_value(ModelListParams {
+            cursor: None,
+            limit: Some(200),
+        })
+        .map_err(|err| AppServerRequestError::Failed {
+            reason: format!("model/list params serialization failed: {err}"),
+        })?;
+
+        let result = self
+            .conn
+            .request("model/list", Some(params))
+            .await
+            .map_err(|err| AppServerRequestError::Failed {
+                reason: format!("model/list failed: {err}"),
+            })?;
+
+        let parsed: ModelListResponse =
+            serde_json::from_value(result).map_err(|err| AppServerRequestError::Failed {
+                reason: format!("model/list parse failed: {err}"),
+            })?;
+
+        let options = parsed
+            .data
+            .into_iter()
+            .map(|record| SessionModelOption {
+                model_id: record.id,
+                display_name: record.display_name,
+                description: record.description,
+                is_default: record.is_default,
+                provider_model: record.model,
+                default_reasoning_effort: record.default_reasoning_effort,
+                supported_reasoning_efforts: record
+                    .supported_reasoning_efforts
+                    .into_iter()
+                    .map(|value| value.reasoning_effort)
+                    .collect(),
+            })
+            .collect();
+
+        Ok((options, self.state.model_selection().await))
+    }
+
+    async fn set_default_model(
+        &self,
+        selection: SessionModelSelection,
+    ) -> Result<(), AppServerRequestError> {
+        let span = redesmyn_logging::redesmyn_info_span!("codex_app_server.set_default_model");
+        let _guard = span.enter();
+
+        let params = serde_json::to_value(SetDefaultModelParams {
+            model: selection.model_id.clone(),
+            reasoning_effort: selection.reasoning_effort,
+        })
+        .map_err(|err| AppServerRequestError::Failed {
+            reason: format!("setDefaultModel params serialization failed: {err}"),
+        })?;
+
+        let _ = self
+            .conn
+            .request("setDefaultModel", Some(params))
+            .await
+            .map_err(|err| AppServerRequestError::Failed {
+                reason: format!("setDefaultModel failed: {err}"),
+            })?;
+
+        self.state.set_model_selection(selection).await;
+        Ok(())
+    }
 }
 
 impl AppServerClient for CodexAppServerClient {
@@ -663,6 +795,14 @@ impl AppServerClient for CodexAppServerClient {
                 AppServerRequest::Interrupt => {
                     self.cancel_active_turn().await?;
                     Ok(AppServerResponse::Interrupted)
+                }
+                AppServerRequest::ListModels => {
+                    let (options, selection) = self.list_models().await?;
+                    Ok(AppServerResponse::ModelsListed { options, selection })
+                }
+                AppServerRequest::SetModel { selection } => {
+                    self.set_default_model(selection).await?;
+                    Ok(AppServerResponse::ModelSet)
                 }
                 AppServerRequest::SetPermissionsMode { mode } => {
                     self.state.set_permissions_mode(mode).await;

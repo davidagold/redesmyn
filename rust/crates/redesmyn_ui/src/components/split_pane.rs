@@ -352,33 +352,61 @@ impl Render for SplitPane {
             px(self.state.primary_size_px)
         };
 
+        let divider_offset = primary_size;
+
         let primary = div()
+            .absolute()
             .when(axis == SplitPaneAxis::Horizontal, |this| {
-                this.w(primary_size)
+                this.left(px(0.0))
+                    .top(px(0.0))
+                    .bottom(px(0.0))
+                    .w(primary_size)
             })
-            .when(axis == SplitPaneAxis::Vertical, |this| this.h(primary_size))
-            .overflow_hidden()
+            .when(axis == SplitPaneAxis::Vertical, |this| {
+                this.left(px(0.0))
+                    .right(px(0.0))
+                    .top(px(0.0))
+                    .h(primary_size)
+            })
             .child(self.primary.clone());
 
         let secondary = div()
-            .flex_1()
+            .absolute()
             .overflow_hidden()
+            .when(axis == SplitPaneAxis::Horizontal, |this| {
+                this.left(divider_offset + divider_line_thickness)
+                    .right(px(0.0))
+                    .top(px(0.0))
+                    .bottom(px(0.0))
+            })
+            .when(axis == SplitPaneAxis::Vertical, |this| {
+                this.left(px(0.0))
+                    .right(px(0.0))
+                    .top(divider_offset + divider_line_thickness)
+                    .bottom(px(0.0))
+            })
             .child(self.secondary.clone());
+
+        let divider = divider
+            .absolute()
+            .when(axis == SplitPaneAxis::Horizontal, |this| {
+                this.left(divider_offset).top(px(0.0)).bottom(px(0.0))
+            })
+            .when(axis == SplitPaneAxis::Vertical, |this| {
+                this.top(divider_offset).left(px(0.0)).right(px(0.0))
+            });
 
         let mut root = div()
             .id(("split_pane_root", cx.entity_id()))
             .relative()
-            .flex()
             .size_full()
-            .when(axis == SplitPaneAxis::Horizontal, |this| this.flex_row())
-            .when(axis == SplitPaneAxis::Vertical, |this| this.flex_col())
             .on_drag_move(cx.listener(Self::on_drag_move))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
-            .child(primary)
+            .child(secondary)
             .child(divider)
-            .child(secondary);
+            .child(primary);
 
         if let Some(ghost) = drag_ghost {
             root = root.child(ghost);

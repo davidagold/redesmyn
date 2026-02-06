@@ -61,6 +61,9 @@ enum ClientMethod {
   CLIENT_METHOD_RESPOND_PERMISSION_REQUEST = 26;
   CLIENT_METHOD_SET_SESSION_CODEX_APPROVAL_POLICY = 27;
   CLIENT_METHOD_SET_SESSION_CODEX_SANDBOX_POLICY = 28;
+  CLIENT_METHOD_LIST_SESSION_MODELS = 29;
+  CLIENT_METHOD_SET_SESSION_MODEL = 30;
+  CLIENT_METHOD_LIST_AGENT_MODELS = 31;
 }
 
 // Request for a control-plane method.
@@ -98,6 +101,9 @@ message Request {
     RespondPermissionRequestRequest respond_permission_request = 38;
     SetSessionCodexApprovalPolicyRequest set_session_codex_approval_policy = 39;
     SetSessionCodexSandboxPolicyRequest set_session_codex_sandbox_policy = 40;
+    ListSessionModelsRequest list_session_models = 41;
+    SetSessionModelRequest set_session_model = 42;
+    ListAgentModelsRequest list_agent_models = 43;
   }
 }
 
@@ -142,6 +148,9 @@ message Response {
     RespondPermissionRequestResponse respond_permission_request = 38;
     SetSessionCodexApprovalPolicyResponse set_session_codex_approval_policy = 39;
     SetSessionCodexSandboxPolicyResponse set_session_codex_sandbox_policy = 40;
+    ListSessionModelsResponse list_session_models = 41;
+    SetSessionModelResponse set_session_model = 42;
+    ListAgentModelsResponse list_agent_models = 43;
     ErrorEnvelope error = 100;
   }
 }
@@ -200,6 +209,70 @@ message SetSessionCodexSandboxPolicyRequest {
 }
 
 message SetSessionCodexSandboxPolicyResponse {
+  // Optional command lifecycle for this update.
+  CommandSummary command = 1;
+}
+
+enum ModelReasoningEffort {
+  MODEL_REASONING_EFFORT_UNSPECIFIED = 0;
+  MODEL_REASONING_EFFORT_MINIMAL = 1;
+  MODEL_REASONING_EFFORT_LOW = 2;
+  MODEL_REASONING_EFFORT_MEDIUM = 3;
+  MODEL_REASONING_EFFORT_HIGH = 4;
+  MODEL_REASONING_EFFORT_XHIGH = 5;
+}
+
+message SessionModelOption {
+  // Stable model id from agent runtime.
+  string model_id = 1;
+  // Human-friendly model name for menus.
+  string display_name = 2;
+  // Compact model description for hints/tooltips.
+  string description = 3;
+  // Runtime-reported default model for this session/agent.
+  bool is_default = 4;
+  // Runtime-native model key (best-effort).
+  string provider_model = 5;
+  // Default reasoning effort for this model, if known.
+  ModelReasoningEffort default_reasoning_effort = 6;
+  // Reasoning effort options supported by this model.
+  repeated ModelReasoningEffort supported_reasoning_efforts = 7;
+}
+
+message SessionModelSelection {
+  // Empty means "use runtime default model".
+  string model_id = 1;
+  // Unspecified means "use model default reasoning effort".
+  ModelReasoningEffort reasoning_effort = 2;
+}
+
+message ListSessionModelsRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+}
+
+message ListAgentModelsRequest {
+  AgentKind agent_kind = 1;
+}
+
+message ListAgentModelsResponse {
+  repeated SessionModelOption options = 1;
+}
+
+message ListSessionModelsResponse {
+  repeated SessionModelOption options = 1;
+  // Current effective selection for this session.
+  SessionModelSelection selection = 2;
+}
+
+message SetSessionModelRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+  // Empty model_id uses runtime default model; unspecified reasoning uses model default effort.
+  SessionModelSelection selection = 2;
+}
+
+message SetSessionModelResponse {
   // Optional command lifecycle for this update.
   CommandSummary command = 1;
 }
@@ -392,6 +465,7 @@ enum SessionEventKindFilter {
   SESSION_EVENT_KIND_FILTER_PERMISSION_DECIDED = 14;
   SESSION_EVENT_KIND_FILTER_CODEX_APPROVAL_POLICY_CHANGED = 15;
   SESSION_EVENT_KIND_FILTER_CODEX_SANDBOX_POLICY_CHANGED = 16;
+  SESSION_EVENT_KIND_FILTER_SESSION_MODEL_CHANGED = 17;
 }
 
 message GetSessionEventsRequest {

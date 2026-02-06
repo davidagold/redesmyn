@@ -144,6 +144,7 @@ message SessionEvent {
   PermissionDecided permission_decided = 23;
   CodexApprovalPolicyChanged codex_approval_policy_changed = 24;
   CodexSandboxPolicyChanged codex_sandbox_policy_changed = 25;
+  SessionModelChanged session_model_changed = 26;
   UnknownSessionEvent unknown = 100;
 }
 }
@@ -345,6 +346,22 @@ message CodexSandboxPolicy {
 message CodexSandboxPolicyChanged {
   // Unset means "use the provider default".
   CodexSandboxPolicy sandbox_policy = 1;
+}
+
+enum SessionModelReasoningEffort {
+  SESSION_MODEL_REASONING_EFFORT_UNSPECIFIED = 0;
+  SESSION_MODEL_REASONING_EFFORT_MINIMAL = 1;
+  SESSION_MODEL_REASONING_EFFORT_LOW = 2;
+  SESSION_MODEL_REASONING_EFFORT_MEDIUM = 3;
+  SESSION_MODEL_REASONING_EFFORT_HIGH = 4;
+  SESSION_MODEL_REASONING_EFFORT_XHIGH = 5;
+}
+
+message SessionModelChanged {
+  // Unset means "use runtime/provider default model".
+  optional string model_id = 1;
+  // Unspecified means "use selected model default reasoning effort".
+  SessionModelReasoningEffort reasoning_effort = 2;
 }
 
 message CommandExecutionPermissionRequest {
