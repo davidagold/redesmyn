@@ -2,7 +2,7 @@
 rn:
   node:
     branch: rn/director-v0/T-3-gating-policy
-  parent: T-2
+  parent: T-1
 ---
 
 # T-3 Gate policy + caching (as commands)

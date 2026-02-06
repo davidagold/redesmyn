@@ -85,3 +85,12 @@ Remote parity should assume private networking first (VPN). AuthN/AuthZ still ma
 ## 5) Tasks
 
 See `epics/director-v0/tasks/` for the task breakdown.
+
+## 6) Sequencing intent (parallelizable)
+
+- Land `T-1` first to pin run semantics (cursor/high-water/idempotency).
+- After `T-1`, execute in parallel:
+  - `T-2` merge queue model + conductor actions.
+  - `T-3` gate policy + caching as commands.
+  - `T-5` AuthN/AuthZ v0 for remote daemons + executors.
+- Then land `T-4` after `T-3`, with an explicit alignment pass against `T-2` for queue ref semantics before/after bundle import.
