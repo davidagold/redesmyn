@@ -40,8 +40,8 @@ use crate::scene::{AgentStatus, GraphEdgeId, GraphNodeId, GraphScene, TrunkMarkK
 
 use redesmyn_markdown::{MarkdownParseOptions, parse_markdown};
 use redesmyn_protocol::client::{
-    AgentKind, AgentMessageConflictAction, CommandState, MergeReadiness, RequestPayload,
-    ResponseResult, RestartAgentRequest, StartAgentRequest, StopAgentRequest, TaskState,
+    AgentKind, AgentMessageConflictAction, MergeReadiness, RequestPayload, ResponseResult,
+    RestartAgentRequest, StartAgentRequest, StopAgentRequest, TaskState,
 };
 use redesmyn_protocol::ui_driver::{
     UiGraphCameraState, UiGraphEdgeId as UiDriverGraphEdgeId, UiGraphLoadState,
@@ -252,17 +252,12 @@ struct CollapsedTitleCacheEntry {
 #[derive(Debug, Clone)]
 enum TaskDescriptionState {
     Idle,
-    Loading {
-        path: gpui::SharedString,
-    },
+    Loading,
     Loaded {
         doc: Arc<redesmyn_markdown::MarkdownDoc>,
     },
-    Missing {
-        path: gpui::SharedString,
-    },
+    Missing,
     Error {
-        path: gpui::SharedString,
         message: gpui::SharedString,
     },
 }
@@ -818,16 +813,12 @@ impl GraphView {
         self.selected_task_description_task = None;
 
         let path = self.task_readme_path_for(epic_slug.as_ref(), task_slug.as_ref());
-        let path_label = gpui::SharedString::new(path.to_string_lossy().to_string());
-
         if let Some(doc) = self.task_description_cache.get(&key).cloned() {
             self.selected_task_description = TaskDescriptionState::Loaded { doc };
             return;
         }
 
-        self.selected_task_description = TaskDescriptionState::Loading {
-            path: path_label.clone(),
-        };
+        self.selected_task_description = TaskDescriptionState::Loading;
 
         let view = cx.entity();
         self.selected_task_description_task = Some(cx.spawn(
@@ -842,7 +833,7 @@ impl GraphView {
 
                     let _ = cx.update(|cx| {
                         view.update(cx, |this, cx| {
-                            this.on_task_description_loaded(key, path_label, result, cx);
+                            this.on_task_description_loaded(key, result, cx);
                         })
                     });
                 }
@@ -855,7 +846,6 @@ impl GraphView {
     fn on_task_description_loaded(
         &mut self,
         key: (gpui::SharedString, gpui::SharedString),
-        path: gpui::SharedString,
         result: Result<Option<String>, String>,
         cx: &mut Context<Self>,
     ) {
@@ -871,11 +861,10 @@ impl GraphView {
                 self.selected_task_description = TaskDescriptionState::Loaded { doc };
             }
             Ok(_) => {
-                self.selected_task_description = TaskDescriptionState::Missing { path };
+                self.selected_task_description = TaskDescriptionState::Missing;
             }
             Err(message) => {
                 self.selected_task_description = TaskDescriptionState::Error {
-                    path,
                     message: gpui::SharedString::new(message),
                 };
             }
@@ -2850,7 +2839,7 @@ impl Render for GraphView {
                                     .flex_row()
                                     .items_center()
                                     .justify_between()
-                                    .bg(theme.colors.surface)
+                                    .bg(theme.colors.background.opacity(0.78))
                                     .border_b_1()
                                     .border_color(theme.colors.border.opacity(0.5))
                                     .child(
@@ -2881,7 +2870,7 @@ impl Render for GraphView {
                                             .flex()
                                             .flex_row()
                                             .items_center()
-                                            .gap(theme.spacing.sm)
+                                            .gap(theme.spacing.md)
                                             .child(task_status_chips(
                                                 state,
                                                 merge_readiness,
@@ -2913,44 +2902,11 @@ impl Render for GraphView {
                                             .border_color(theme.colors.border.opacity(0.5))
                                             .child(
                                                 div()
-                                                    .h(px(34.0))
-                                                    .px(theme.spacing.md)
-                                                    .flex()
-                                                    .flex_row()
-                                                    .items_center()
-                                                    .text_sm()
-                                                    .text_color(theme.colors.foreground)
-                                                    .justify_between()
-                                                    .child("Session")
-                                                    .when(is_primary_selected, |this| {
-                                                        let label = if task_session_state.in_flight
-                                                        {
-                                                            "Loading…".to_string()
-                                                        } else if let Some(session_id) =
-                                                            task_session_state.session_id
-                                                        {
-                                                            session_id.to_string()
-                                                        } else {
-                                                            "No session".to_string()
-                                                        };
-
-                                                        this.child(
-                                                            div()
-                                                                .min_w_0()
-                                                                .text_xs()
-                                                                .text_color(
-                                                                    theme.colors.foreground_muted,
-                                                                )
-                                                                .truncate()
-                                                                .child(label),
-                                                        )
-                                                    }),
-                                            )
-                                            .child(
-                                                div()
                                                     .flex_1()
                                                     .min_h(px(0.0))
-                                                    .p(theme.spacing.md)
+                                                    .px(theme.spacing.md)
+                                                    .pt(theme.spacing.md)
+                                                    .pb(theme.spacing.md)
                                                     .flex()
                                                     .flex_col()
                                                     .gap(theme.spacing.sm)
@@ -3127,11 +3083,8 @@ impl Render for GraphView {
 	                                                            &theme,
 	                                                        ))
 	                                                        .child(task_details_overview_section(
-	                                                            state,
-	                                                            merge_readiness,
 	                                                            agent_status,
 	                                                            branch_name.clone(),
-	                                                            latest_session.clone(),
 	                                                            latest_command.clone(),
 	                                                            &theme,
 	                                                        ))
@@ -3155,25 +3108,154 @@ impl Render for GraphView {
 	                                                                        )
 	                                                                    },
 	                                                                )
-	                                                                .child(
-	                                                                    self.task_quick_actions_row(
-	                                                                        node_key.clone(),
-	                                                                        task_id,
+	                                                                .child({
+	                                                                    let graph = graph.clone();
+	                                                                    let has_session = task_session_state
+	                                                                        .session_id
+	                                                                        .is_some()
+	                                                                        || latest_session
+	                                                                            .as_ref()
+	                                                                            .is_some();
+	                                                                    let action_state =
+	                                                                        self.quick_actions
+	                                                                            .get(&task_id);
+	                                                                    let start_disabled = action_state
+	                                                                        .is_some_and(|state| {
+	                                                                            state.start.in_flight
+	                                                                        });
+	                                                                    let restart_disabled = action_state
+	                                                                        .is_some_and(|state| {
+	                                                                            state.restart.in_flight
+	                                                                        });
+	                                                                    let stop_disabled = action_state
+	                                                                        .is_some_and(|state| {
+	                                                                            state.stop.in_flight
+	                                                                        });
+	                                                                    let show_stop = matches!(
 	                                                                        agent_status,
-	                                                                        task_session_state
-	                                                                            .session_id
-	                                                                            .is_some()
-	                                                                            || latest_session
-	                                                                                .as_ref()
-	                                                                                .is_some(),
-	                                                                        1.0,
-	                                                                        is_primary_selected,
-	                                                                        &theme,
-	                                                                        1.0,
-	                                                                        rem_size,
-	                                                                        cx,
-	                                                                    ),
-	                                                                )
+	                                                                        AgentStatus::Running
+	                                                                            | AgentStatus::Blocked
+	                                                                    );
+	                                                                    let show_restart =
+	                                                                        has_session || show_stop;
+	                                                                    let show_start = !show_restart;
+
+	                                                                    let mut row = div()
+	                                                                        .flex()
+	                                                                        .flex_row()
+	                                                                        .flex_wrap()
+	                                                                        .items_center()
+	                                                                        .gap(theme.spacing.sm);
+
+	                                                                    if show_start {
+	                                                                        let button_id = (
+	                                                                            gpui::ElementId::from((
+	                                                                                "task_card_action_start",
+	                                                                                entity_id,
+	                                                                            )),
+	                                                                            node_key.clone(),
+	                                                                        );
+	                                                                        let graph = graph.clone();
+	                                                                        row = row.child(
+	                                                                            TextButton::new(
+	                                                                                button_id,
+	                                                                                "Start agent",
+	                                                                            )
+	                                                                            .kind(
+	                                                                                ButtonKind::Secondary,
+	                                                                            )
+	                                                                            .small()
+	                                                                            .disabled(start_disabled)
+	                                                                            .disabled_reason(
+	                                                                                "Starting…",
+	                                                                            )
+	                                                                            .on_click(move |event, _window, cx| {
+	                                                                                if event.standard_click() {
+	                                                                                    graph.update(cx, |this, cx| {
+	                                                                                        this.trigger_task_quick_action(
+	                                                                                            task_id,
+	                                                                                            TaskQuickActionKind::Start,
+	                                                                                            cx,
+	                                                                                        );
+	                                                                                    });
+	                                                                                }
+	                                                                                cx.stop_propagation();
+	                                                                            }),
+	                                                                        );
+	                                                                    }
+
+	                                                                    if show_restart {
+	                                                                        let button_id = (
+	                                                                            gpui::ElementId::from((
+	                                                                                "task_card_action_restart",
+	                                                                                entity_id,
+	                                                                            )),
+	                                                                            node_key.clone(),
+	                                                                        );
+	                                                                        let graph = graph.clone();
+	                                                                        row = row.child(
+	                                                                            TextButton::new(
+	                                                                                button_id,
+	                                                                                "Restart",
+	                                                                            )
+	                                                                            .kind(ButtonKind::Ghost)
+	                                                                            .small()
+	                                                                            .disabled(restart_disabled)
+	                                                                            .disabled_reason(
+	                                                                                "Restarting…",
+	                                                                            )
+	                                                                            .on_click(move |event, _window, cx| {
+	                                                                                if event.standard_click() {
+	                                                                                    graph.update(cx, |this, cx| {
+	                                                                                        this.trigger_task_quick_action(
+	                                                                                            task_id,
+	                                                                                            TaskQuickActionKind::Restart,
+	                                                                                            cx,
+	                                                                                        );
+	                                                                                    });
+	                                                                                }
+	                                                                                cx.stop_propagation();
+	                                                                            }),
+	                                                                        );
+	                                                                    }
+
+	                                                                    if show_stop {
+	                                                                        let button_id = (
+	                                                                            gpui::ElementId::from((
+	                                                                                "task_card_action_stop",
+	                                                                                entity_id,
+	                                                                            )),
+	                                                                            node_key.clone(),
+	                                                                        );
+	                                                                        let graph = graph.clone();
+	                                                                        row = row.child(
+	                                                                            TextButton::new(
+	                                                                                button_id,
+	                                                                                "Stop",
+	                                                                            )
+	                                                                            .kind(ButtonKind::Ghost)
+	                                                                            .small()
+	                                                                            .disabled(stop_disabled)
+	                                                                            .disabled_reason(
+	                                                                                "Stopping…",
+	                                                                            )
+	                                                                            .on_click(move |event, _window, cx| {
+	                                                                                if event.standard_click() {
+	                                                                                    graph.update(cx, |this, cx| {
+	                                                                                        this.trigger_task_quick_action(
+	                                                                                            task_id,
+	                                                                                            TaskQuickActionKind::Stop,
+	                                                                                            cx,
+	                                                                                        );
+	                                                                                    });
+	                                                                                }
+	                                                                                cx.stop_propagation();
+	                                                                            }),
+	                                                                        );
+	                                                                    }
+
+	                                                                    row
+	                                                                })
 	                                                                .child(
 	                                                                    TextButton::new(
 	                                                                        refresh_session_button_id,
@@ -3814,7 +3896,7 @@ fn task_status_chips(
     div()
         .flex()
         .flex_row()
-        .gap(theme.spacing.xs)
+        .gap(theme.spacing.md)
         .items_center()
         .child(task_state_badge(state))
         .child(merge_readiness_badge(merge_readiness))
@@ -3873,10 +3955,10 @@ fn details_section(
     theme: &redesmyn_ui::styles::UiTheme,
 ) -> impl IntoElement {
     div()
-        .pt(theme.spacing.sm)
+        .pt(theme.spacing.md)
         .child(
             div()
-                .pb(theme.spacing.xs)
+                .pb(theme.spacing.sm)
                 .text_xs()
                 .text_color(theme.colors.foreground_muted)
                 .child(title),
@@ -3884,24 +3966,10 @@ fn details_section(
         .child(body)
         .child(
             div()
-                .pt(theme.spacing.sm)
+                .my(theme.spacing.md)
                 .border_b_1()
                 .border_color(theme.colors.border.opacity(0.35)),
         )
-}
-
-fn command_state_label(state: CommandState) -> &'static str {
-    match state {
-        CommandState::Unknown => "Unknown",
-        CommandState::Queued => "Queued",
-        CommandState::Accepted => "Accepted",
-        CommandState::Running => "Running",
-        CommandState::Blocked => "Blocked",
-        CommandState::Resumable => "Resumable",
-        CommandState::Succeeded => "Succeeded",
-        CommandState::Failed => "Failed",
-        CommandState::Canceled => "Canceled",
-    }
 }
 
 fn task_details_description_section(
@@ -3925,25 +3993,18 @@ fn task_details_description_section(
                     .text_color(theme.colors.foreground),
             )
             .into_any_element(),
-        TaskDescriptionState::Loading { path } => div()
+        TaskDescriptionState::Loading => div()
             .flex()
             .flex_col()
-            .gap(theme.spacing.xs)
+            .gap(theme.spacing.sm)
             .child(
                 div()
                     .text_sm()
                     .text_color(theme.colors.foreground_muted)
                     .child("Loading task description…"),
             )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.colors.foreground_muted)
-                    .truncate()
-                    .child(path),
-            )
             .into_any_element(),
-        TaskDescriptionState::Missing { path } => div()
+        TaskDescriptionState::Missing => div()
             .flex()
             .flex_col()
             .gap(theme.spacing.sm)
@@ -3952,15 +4013,8 @@ fn task_details_description_section(
                     .kind(CalloutKind::Info)
                     .title("Description unavailable"),
             )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.colors.foreground_muted)
-                    .truncate()
-                    .child(path),
-            )
             .into_any_element(),
-        TaskDescriptionState::Error { path, message } => div()
+        TaskDescriptionState::Error { message } => div()
             .flex()
             .flex_col()
             .gap(theme.spacing.sm)
@@ -3968,13 +4022,6 @@ fn task_details_description_section(
                 Callout::new(message)
                     .kind(CalloutKind::Danger)
                     .title("Failed to load task description"),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.colors.foreground_muted)
-                    .truncate()
-                    .child(path),
             )
             .into_any_element(),
         TaskDescriptionState::Idle => {
@@ -4001,11 +4048,8 @@ fn task_details_description_section(
 }
 
 fn task_details_overview_section(
-    state: TaskState,
-    merge_readiness: MergeReadiness,
     agent_status: AgentStatus,
     branch_name: Option<gpui::SharedString>,
-    latest_session: Option<crate::scene::TaskSessionSummary>,
     latest_command: Option<crate::scene::TaskCommandSummary>,
     theme: &redesmyn_ui::styles::UiTheme,
 ) -> impl IntoElement {
@@ -4016,52 +4060,30 @@ fn task_details_overview_section(
             .flex_col()
             .gap(theme.spacing.xs)
             .child(details_kv_row(
-                "State",
-                div().child(task_state_label(state)),
-                theme,
-            ))
-            .child(details_kv_row(
-                "Merge",
-                div().child(merge_readiness_label(merge_readiness)),
-                theme,
-            ))
-            .child(details_kv_row(
                 "Agent",
                 div().child(agent_status_value_label(agent_status)),
                 theme,
             ))
             .when_some(branch_name, |this, name| {
-                this.child(details_kv_row("Branch", div().child(name), theme))
+                this.child(details_kv_row(
+                    "Branch",
+                    div()
+                        .items_center()
+                        .rounded(theme.radius.sm)
+                        .px(theme.spacing.xs)
+                        .py(px(2.0))
+                        .bg(theme.colors.surface_elevated.opacity(0.28))
+                        .font(theme.typography.mono.font.clone())
+                        .text_size(theme.typography.mono.size)
+                        .child(name),
+                    theme,
+                ))
             })
-            .child(details_kv_row(
-                "Session",
-                div().child(
-                    latest_session
-                        .as_ref()
-                        .map(|session| session.session_id.to_string())
-                        .unwrap_or_else(|| "No session yet".to_string()),
-                ),
-                theme,
-            ))
-            .when_some(
-                latest_session.and_then(|session| session.message_preview),
-                |this, preview| this.child(details_kv_row("Preview", div().child(preview), theme)),
-            )
-            .child(details_kv_row(
-                "Command",
-                div().child(
-                    latest_command
-                        .as_ref()
-                        .map(|command| {
-                            format!("{} · {}", command_state_label(command.state), command.kind)
-                        })
-                        .unwrap_or_else(|| "No command yet".to_string()),
-                ),
-                theme,
-            ))
             .when_some(
                 latest_command.and_then(|command| command.last_message),
-                |this, message| this.child(details_kv_row("Update", div().child(message), theme)),
+                |this, message| {
+                    this.child(details_kv_row("Latest update", div().child(message), theme))
+                },
             ),
         theme,
     )
