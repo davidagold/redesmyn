@@ -23,9 +23,9 @@ use redesmyn_client_api::Client;
 use redesmyn_ids::{ArtifactId, SessionEventId, SessionId, SubscriptionId, TaskId};
 use redesmyn_markdown::{MarkdownDoc, MarkdownParseOptions, parse_markdown};
 use redesmyn_protocol::client::{
-    AgentKind, AgentMessageConflictAction, GetLatestTaskSessionRequest,
-    GetSessionEventsRequest, GetSessionEventsResponse, ListSessionModelsRequest,
-    ListSessionModelsResponse, ModelReasoningEffort, RequestPayload, RespondPermissionRequestRequest,
+    AgentKind, AgentMessageConflictAction, GetLatestTaskSessionRequest, GetSessionEventsRequest,
+    GetSessionEventsResponse, ListSessionModelsRequest, ListSessionModelsResponse,
+    ModelReasoningEffort, RequestPayload, RespondPermissionRequestRequest,
     RespondPermissionRequestResponse, ResponseResult, SendSessionMessageRequest,
     SendSessionMessageResponse, SessionEventCursor, SessionEventKindFilter, SessionModelOption,
     SessionModelSelection, SetSessionCodexApprovalPolicyRequest,
@@ -46,8 +46,8 @@ use redesmyn_ui::components::{
     ButtonKind, Callout, CalloutKind, CascadingMenu, CascadingMenuId, CascadingMenuMetrics,
     CascadingMenuRowStyle, CascadingMenuState, CascadingMenuSurfaceStyle, Expandable, IconButton,
     MarkdownView, ScrollFade, ScrollbarStyle, StyledScrollbar, TextArea, TextButton, TextInput,
-    TextInputEvent, cascading_menu_row, cascading_menu_row_value, cascading_menu_surface,
-    cascading_menu_radio_indicator, cascading_select_menu_item, set_open_cascading_menu,
+    TextInputEvent, cascading_menu_radio_indicator, cascading_menu_row, cascading_menu_row_value,
+    cascading_menu_surface, cascading_select_menu_item, set_open_cascading_menu,
 };
 use redesmyn_ui::styles::ThemeMode;
 use redesmyn_ui::utils::{
@@ -65,7 +65,11 @@ gpui::actions!(
 pub fn bind_session_shortcut_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("alt-m", OpenSessionModelSelector, Some("SessionComposer")),
-        KeyBinding::new("alt-m", OpenSessionModelSelector, Some("SessionComposer > TextArea")),
+        KeyBinding::new(
+            "alt-m",
+            OpenSessionModelSelector,
+            Some("SessionComposer > TextArea"),
+        ),
         KeyBinding::new(
             "alt-r",
             OpenSessionReasoningSelector,
@@ -213,9 +217,9 @@ fn normalize_model_id(value: Option<String>) -> Option<String> {
 }
 
 fn normalize_session_model_selection(selection: SessionModelSelection) -> SessionModelSelection {
-    let reasoning_effort = selection.reasoning_effort.and_then(|effort| {
-        (!matches!(effort, ModelReasoningEffort::Unknown)).then_some(effort)
-    });
+    let reasoning_effort = selection
+        .reasoning_effort
+        .and_then(|effort| (!matches!(effort, ModelReasoningEffort::Unknown)).then_some(effort));
     SessionModelSelection {
         model_id: normalize_model_id(selection.model_id),
         reasoning_effort,
@@ -791,9 +795,9 @@ async fn list_session_models(
     session_id: SessionId,
 ) -> Result<ListSessionModelsResponse, ErrorEnvelope> {
     let response = client
-        .request(RequestPayload::ListSessionModels(ListSessionModelsRequest {
-            session_id,
-        }))
+        .request(RequestPayload::ListSessionModels(
+            ListSessionModelsRequest { session_id },
+        ))
         .await?;
 
     match response {
@@ -2225,7 +2229,8 @@ impl SessionView {
                     .is_some_and(|feed| feed.session_id == session_id)
                 {
                     self.session_model_options = resp.options;
-                    self.session_model_selection = normalize_session_model_selection(resp.selection);
+                    self.session_model_selection =
+                        normalize_session_model_selection(resp.selection);
                     self.model_fetch_error = None;
                     self.session_model_action.clear_error();
                 }
@@ -2316,17 +2321,18 @@ impl SessionView {
 
         let session_id = feed.session_id;
         let view = cx.entity();
-        self.set_session_model_task = Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let cx = cx.clone();
-            async move {
-                let result = set_session_model(&client, session_id, desired.clone()).await;
-                let _ = cx.update(|cx| {
-                    view.update(cx, |this, cx| {
-                        this.on_set_session_model_completed(desired.clone(), result, cx);
-                    })
-                });
-            }
-        }));
+        self.set_session_model_task =
+            Some(cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+                let cx = cx.clone();
+                async move {
+                    let result = set_session_model(&client, session_id, desired.clone()).await;
+                    let _ = cx.update(|cx| {
+                        view.update(cx, |this, cx| {
+                            this.on_set_session_model_completed(desired.clone(), result, cx);
+                        })
+                    });
+                }
+            }));
     }
 
     fn on_set_session_model_completed(
@@ -2375,7 +2381,11 @@ impl SessionView {
                     .iter()
                     .find(|option| option.model_id == *model_id)
             })
-            .or_else(|| self.session_model_options.iter().find(|option| option.is_default))
+            .or_else(|| {
+                self.session_model_options
+                    .iter()
+                    .find(|option| option.is_default)
+            })
     }
 
     fn reasoning_values_for_selection(
@@ -3340,30 +3350,32 @@ impl SessionView {
         self.timeline_list_reset_generation = self.timeline_list_reset_generation.wrapping_add(1);
         let generation = self.timeline_list_reset_generation;
         let debounce = ui_test_mode_animation_duration(Duration::from_millis(50));
-        self.timeline_list_reset_task = Some(cx.spawn(move |weak: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let cx = cx.clone();
-            async move {
-                gpui::Timer::after(debounce).await;
-                let Some(view) = weak.upgrade() else { return };
-                let _ = cx.update(|cx| {
-                    view.update(cx, |this, cx| {
-                        if this.timeline_list_reset_generation != generation {
-                            return;
-                        }
-                        this.timeline_list_reset_task = None;
-                        let Some(scroll_top) = this.timeline_list_reset_pending_scroll_top.take()
-                        else {
-                            return;
-                        };
-                        this.timeline_scrollbar_hidden = false;
-                        this.timeline_list_state
-                            .reset(this.timeline_items.len() + 1);
-                        this.timeline_list_state.scroll_to(scroll_top);
-                        cx.notify();
-                    })
-                });
-            }
-        }));
+        self.timeline_list_reset_task =
+            Some(cx.spawn(move |weak: WeakEntity<Self>, cx: &mut AsyncApp| {
+                let cx = cx.clone();
+                async move {
+                    gpui::Timer::after(debounce).await;
+                    let Some(view) = weak.upgrade() else { return };
+                    let _ = cx.update(|cx| {
+                        view.update(cx, |this, cx| {
+                            if this.timeline_list_reset_generation != generation {
+                                return;
+                            }
+                            this.timeline_list_reset_task = None;
+                            let Some(scroll_top) =
+                                this.timeline_list_reset_pending_scroll_top.take()
+                            else {
+                                return;
+                            };
+                            this.timeline_scrollbar_hidden = false;
+                            this.timeline_list_state
+                                .reset(this.timeline_items.len() + 1);
+                            this.timeline_list_state.scroll_to(scroll_top);
+                            cx.notify();
+                        })
+                    });
+                }
+            }));
     }
 
     fn on_timeline_scrolled(
@@ -3836,6 +3848,7 @@ impl SessionView {
                 self.full_text_message_states
                     .borrow_mut()
                     .insert(session_event_id, FullTextMessageLoadState::Failed);
+                self.schedule_timeline_item_invalidation(session_event_id, cx);
                 return;
             }
         };
@@ -3844,6 +3857,7 @@ impl SessionView {
             self.full_text_message_states
                 .borrow_mut()
                 .insert(session_event_id, FullTextMessageLoadState::Failed);
+            self.schedule_timeline_item_invalidation(session_event_id, cx);
             return;
         }
 
@@ -3860,6 +3874,10 @@ impl SessionView {
             }
         };
 
+        if should_start {
+            self.schedule_timeline_item_invalidation(session_event_id, cx);
+        }
+
         if !should_start {
             return;
         }
@@ -3870,37 +3888,43 @@ impl SessionView {
             let cx = cx.clone();
             async move {
                 let task = gpui::background_executor().spawn(async move {
-                    let text = std::fs::read_to_string(&path).map_err(|err| err.to_string())?;
+                    let text = std::fs::read_to_string(&path)?;
                     let doc = Arc::new(parse_markdown(&text, MarkdownParseOptions::default()));
-                    Ok::<Arc<MarkdownDoc>, String>(doc)
+                    Ok::<Arc<MarkdownDoc>, std::io::Error>(doc)
                 });
 
                 let result = task.await;
                 let _ = cx.update(|cx| {
-                    view.update(cx, |this, cx| {
-                        match result {
-                            Ok(doc) => {
-                                this.markdown_cache
-                                    .borrow_mut()
-                                    .insert(session_event_id, doc);
-                                this.full_text_message_states
-                                    .borrow_mut()
-                                    .insert(session_event_id, FullTextMessageLoadState::Loaded);
-                            }
-                            Err(err) => {
+                    view.update(cx, |this, cx| match result {
+                        Ok(doc) => {
+                            this.markdown_cache
+                                .borrow_mut()
+                                .insert(session_event_id, doc);
+                            this.full_text_message_states
+                                .borrow_mut()
+                                .insert(session_event_id, FullTextMessageLoadState::Loaded);
+                            this.schedule_timeline_item_invalidation(session_event_id, cx);
+                        }
+                        Err(err) => {
+                            if err.kind() == std::io::ErrorKind::NotFound {
+                                redesmyn_logging::tracing::debug!(
+                                    session_event_id = %session_event_id,
+                                    path = %path_for_log.display(),
+                                    "full-text message artifact not found"
+                                );
+                            } else {
                                 redesmyn_logging::tracing::warn!(
                                     session_event_id = %session_event_id,
                                     path = %path_for_log.display(),
                                     error = %err,
                                     "failed to load full-text message artifact"
                                 );
-                                this.full_text_message_states
-                                    .borrow_mut()
-                                    .insert(session_event_id, FullTextMessageLoadState::Failed);
                             }
+                            this.full_text_message_states
+                                .borrow_mut()
+                                .insert(session_event_id, FullTextMessageLoadState::Failed);
+                            this.schedule_timeline_item_invalidation(session_event_id, cx);
                         }
-
-                        cx.notify();
                     })
                 });
             }
@@ -3971,6 +3995,26 @@ impl SessionView {
         }) {
             self.timeline_list_state.splice(ix..ix + 1, 1);
         }
+    }
+
+    fn schedule_timeline_item_invalidation(
+        &self,
+        session_event_id: SessionEventId,
+        cx: &mut Context<Self>,
+    ) {
+        let view = cx.entity();
+        cx.spawn(move |_: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let _ = cx.update(|cx| {
+                    view.update(cx, |this, cx| {
+                        this.invalidate_timeline_item(session_event_id);
+                        cx.notify();
+                    })
+                });
+            }
+        })
+        .detach();
     }
 
     fn invalidate_reasoning_item(&mut self, key: &str) {
@@ -4248,17 +4292,6 @@ impl Render for SessionView {
         }
 
         let items = Rc::clone(&self.timeline_items);
-        let first_message_ix = items.iter().position(|item| {
-            matches!(
-                item,
-                SessionTimelineItem::Event(event)
-                    if matches!(
-                        event.content,
-                        SessionEventItemContent::UserMessage(_)
-                            | SessionEventItemContent::AssistantMessage(_)
-                    )
-            )
-        });
         let markdown_cache = Rc::clone(&self.markdown_cache);
         let full_text_message_states = Rc::clone(&self.full_text_message_states);
         let expanded_tool_events = self.expanded_tool_events.clone();
@@ -5085,105 +5118,7 @@ impl Render for SessionView {
                                 row = row.justify_start();
                             }
 
-                            let mut row_pad_top = timeline_item_gap_y;
-                            let mut row_pad_bottom = timeline_item_gap_y;
-
-                            if first_message_ix == Some(ix) {
-                                row_pad_top += theme.spacing.sm;
-                            }
-
-                            if matches!(
-                                role,
-                                redesmyn_session_view_model::SessionMessageRole::User
-                            ) {
-                                let tool_event_hidden_in_collapsed_group =
-                                    |session_event_id: SessionEventId| {
-                                        let Some(member) =
-                                            tool_event_group_membership.get(&session_event_id)
-                                        else {
-                                            return false;
-                                        };
-
-                                        let group_id = member.group_id;
-                                        let is_expanded = expanded_tool_groups.contains(&group_id);
-                                        let progress = tool_group_transitions
-                                            .get(&group_id)
-                                            .map(|transition| transition.value())
-                                            .unwrap_or_else(|| {
-                                                if is_expanded {
-                                                    1.0
-                                                } else {
-                                                    0.0
-                                                }
-                                            });
-                                        !is_expanded && progress <= 1e-3 && !member.is_first
-                                    };
-
-                                let visible_neighbor_is_tool_call = |neighbor_ix: isize,
-                                                                     step: isize| {
-                                    let mut cursor = neighbor_ix;
-                                    let len = items.len() as isize;
-                                    while cursor >= 0 && cursor < len {
-                                        let candidate_ix = cursor as usize;
-                                        let Some(item) = items.get(candidate_ix) else {
-                                            break;
-                                        };
-
-                                        let visible_kind = match item {
-                                            SessionTimelineItem::Event(event) => {
-                                                let session_event_id = event.session_event_id;
-                                                match &event.content {
-                                                    SessionEventItemContent::ToolInvocation(_tool)
-                                                        if tool_event_hidden_in_collapsed_group(
-                                                            session_event_id,
-                                                        ) =>
-                                                    {
-                                                        None
-                                                    }
-                                                    SessionEventItemContent::ToolResult(_tool)
-                                                        if grouped_exec_command_result_ids
-                                                            .contains(&session_event_id)
-                                                            || tool_event_hidden_in_collapsed_group(
-                                                                session_event_id,
-                                                            ) =>
-                                                    {
-                                                        None
-                                                    }
-                                                    SessionEventItemContent::ToolInvocation(_)
-                                                    | SessionEventItemContent::ToolResult(_) => {
-                                                        Some(true)
-                                                    }
-                                                    SessionEventItemContent::UserMessage(_)
-                                                    | SessionEventItemContent::AssistantMessage(_)
-                                                    | SessionEventItemContent::ArtifactEmitted(
-                                                        _,
-                                                    ) => Some(false),
-                                                    _ => None,
-                                                }
-                                            }
-                                            _ => Some(false),
-                                        };
-
-                                        if let Some(is_tool_call) = visible_kind {
-                                            return is_tool_call;
-                                        }
-
-                                        cursor += step;
-                                    }
-
-                                    false
-                                };
-
-                                let extra_gap = theme.spacing.sm;
-                                if visible_neighbor_is_tool_call(ix as isize - 1, -1) {
-                                    row_pad_top += extra_gap;
-                                }
-                                if visible_neighbor_is_tool_call(ix as isize + 1, 1) {
-                                    row_pad_bottom += extra_gap;
-                                }
-                            }
-
-                            row = row.pt(row_pad_top).pb(row_pad_bottom);
+                            row = row.py(timeline_item_gap_y);
 
                             list.child(row.child(bubble))
                         }
@@ -6598,8 +6533,8 @@ impl Render for SessionView {
             .try_global::<CascadingMenuState>()
             .map(|state| state.open_menu())
             .unwrap_or(None);
-        let settings_open = self.session_settings_open
-            && open_menu == Some(CascadingMenuId::SessionSettings);
+        let settings_open =
+            self.session_settings_open && open_menu == Some(CascadingMenuId::SessionSettings);
         let settings_hover_bg = theme.colors.accent;
         let settings_open_hover_bg = theme.colors.accent.opacity(0.65);
         let settings_open_border = theme.colors.ring.opacity(0.5);
@@ -6718,11 +6653,7 @@ impl Render for SessionView {
                                 .gap(theme.spacing.xs)
                                 .min_w_0()
                                 .child(cascading_menu_row_value(&theme, current_label))
-                                .child(
-                                    div()
-                                        .flex_shrink_0()
-                                        .child("›"),
-                                ),
+                                .child(div().flex_shrink_0().child("›")),
                         );
 
                 primary_list = primary_list.child(row);
@@ -6768,8 +6699,7 @@ impl Render for SessionView {
                             == SessionSettingsMenuFocus::Secondary
                             && self.session_settings_submenu_index == idx;
 
-                        let indicator =
-                            cascading_menu_radio_indicator(&theme, selected, active);
+                        let indicator = cascading_menu_radio_indicator(&theme, selected, active);
 
                         let mut row = cascading_menu_row(&theme, primary_row_style, active, 0.0)
                             .child(indicator)
@@ -6830,8 +6760,7 @@ impl Render for SessionView {
                             == SessionSettingsMenuFocus::Secondary
                             && self.session_settings_submenu_index == idx;
 
-                        let indicator =
-                            cascading_menu_radio_indicator(&theme, selected, active);
+                        let indicator = cascading_menu_radio_indicator(&theme, selected, active);
 
                         let label_color = match option {
                             SessionSettingsSandboxOption::DangerFullAccess => theme.colors.danger,
@@ -6924,21 +6853,20 @@ impl Render for SessionView {
             .reasoning_effort
             .or_else(|| selected_model_option.map(|option| option.default_reasoning_effort));
 
-        let model_value: SharedString = if self.model_fetch_in_flight
-            && self.session_model_options.is_empty()
-        {
-            "Loading…".into()
-        } else if let Some(model_id) = displayed_model_selection.model_id.as_ref() {
-            selected_model_option
-                .map(|option| option.display_name.clone().into())
-                .unwrap_or_else(|| model_id.clone().into())
-        } else if let Some(option) = selected_model_option {
-            option.display_name.clone().into()
-        } else {
-            "Auto".into()
-        };
-        let reasoning_value: SharedString = model_reasoning_effort_label(resolved_reasoning_effort)
-            .into();
+        let model_value: SharedString =
+            if self.model_fetch_in_flight && self.session_model_options.is_empty() {
+                "Loading…".into()
+            } else if let Some(model_id) = displayed_model_selection.model_id.as_ref() {
+                selected_model_option
+                    .map(|option| option.display_name.clone().into())
+                    .unwrap_or_else(|| model_id.clone().into())
+            } else if let Some(option) = selected_model_option {
+                option.display_name.clone().into()
+            } else {
+                "Auto".into()
+            };
+        let reasoning_value: SharedString =
+            model_reasoning_effort_label(resolved_reasoning_effort).into();
 
         let reasoning_values = self.reasoning_values_for_selection(&displayed_model_selection);
 
@@ -6958,7 +6886,12 @@ impl Render for SessionView {
         let selector_shortcut_fallback = false;
         let model_shortcut_enabled = self
             .session_model_shortcut_availability
-            .is_action_available_or(window, cx, &OpenSessionModelSelector, selector_shortcut_fallback);
+            .is_action_available_or(
+                window,
+                cx,
+                &OpenSessionModelSelector,
+                selector_shortcut_fallback,
+            );
         let reasoning_shortcut_enabled = self
             .session_reasoning_shortcut_availability
             .is_action_available_or(
@@ -7021,12 +6954,7 @@ impl Render for SessionView {
                 this.opacity(0.55).cursor_not_allowed()
             })
             .child("◈")
-            .child(
-                div()
-                    .max_w(px(120.0))
-                    .truncate()
-                    .child(model_value.clone()),
-            )
+            .child(div().max_w(px(120.0)).truncate().child(model_value.clone()))
             .child(
                 div()
                     .flex()
@@ -7082,29 +7010,29 @@ impl Render for SessionView {
                 cascading_menu_radio_indicator(&theme, model_selected, default_active),
                 default_model_label,
             )
-                .cursor_pointer()
-                .on_mouse_move(cx.listener(|this, _, _, cx| {
-                    if this.session_model_menu_index != 0 {
-                        this.session_model_menu_index = 0;
-                        cx.notify();
-                    }
-                }))
-                .on_mouse_down(gpui::MouseButton::Left, {
-                    let view = view.clone();
-                    let current_reasoning = displayed_model_selection.reasoning_effort;
-                    move |_, _, cx| {
-                        view.update(cx, |this, cx| {
-                            this.set_session_model_selection(
-                                SessionModelSelection {
-                                    model_id: None,
-                                    reasoning_effort: current_reasoning,
-                                },
-                                true,
-                                cx,
-                            );
-                        });
-                    }
-                });
+            .cursor_pointer()
+            .on_mouse_move(cx.listener(|this, _, _, cx| {
+                if this.session_model_menu_index != 0 {
+                    this.session_model_menu_index = 0;
+                    cx.notify();
+                }
+            }))
+            .on_mouse_down(gpui::MouseButton::Left, {
+                let view = view.clone();
+                let current_reasoning = displayed_model_selection.reasoning_effort;
+                move |_, _, cx| {
+                    view.update(cx, |this, cx| {
+                        this.set_session_model_selection(
+                            SessionModelSelection {
+                                model_id: None,
+                                reasoning_effort: current_reasoning,
+                            },
+                            true,
+                            cx,
+                        );
+                    });
+                }
+            });
             list = list.child(default_row);
 
             for (idx, option) in self.session_model_options.iter().enumerate() {
@@ -7126,30 +7054,30 @@ impl Render for SessionView {
                     cascading_menu_radio_indicator(&theme, selected, active),
                     option_display,
                 )
-                    .cursor_pointer()
-                    .on_mouse_move(cx.listener(move |this, _, _, cx| {
-                        if this.session_model_menu_index != row_index {
-                            this.session_model_menu_index = row_index;
-                            cx.notify();
-                        }
-                    }))
-                    .on_mouse_down(gpui::MouseButton::Left, {
-                        let view = view.clone();
-                        move |_, _, cx| {
-                            let reasoning_effort = current_reasoning
-                                .and_then(|value| supported.contains(&value).then_some(value));
-                            view.update(cx, |this, cx| {
-                                this.set_session_model_selection(
-                                    SessionModelSelection {
-                                        model_id: Some(option_model_id.clone()),
-                                        reasoning_effort,
-                                    },
-                                    true,
-                                    cx,
-                                );
-                            });
-                        }
-                    });
+                .cursor_pointer()
+                .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                    if this.session_model_menu_index != row_index {
+                        this.session_model_menu_index = row_index;
+                        cx.notify();
+                    }
+                }))
+                .on_mouse_down(gpui::MouseButton::Left, {
+                    let view = view.clone();
+                    move |_, _, cx| {
+                        let reasoning_effort = current_reasoning
+                            .and_then(|value| supported.contains(&value).then_some(value));
+                        view.update(cx, |this, cx| {
+                            this.set_session_model_selection(
+                                SessionModelSelection {
+                                    model_id: Some(option_model_id.clone()),
+                                    reasoning_effort,
+                                },
+                                true,
+                                cx,
+                            );
+                        });
+                    }
+                });
                 list = list.child(row);
             }
 
@@ -7270,28 +7198,28 @@ impl Render for SessionView {
                     cascading_menu_radio_indicator(&theme, selected, active),
                     label,
                 )
-                    .cursor_pointer()
-                    .on_mouse_move(cx.listener(move |this, _, _, cx| {
-                        if this.session_reasoning_menu_index != idx {
-                            this.session_reasoning_menu_index = idx;
-                            cx.notify();
-                        }
-                    }))
-                    .on_mouse_down(gpui::MouseButton::Left, {
-                        let view = view.clone();
-                        move |_, _, cx| {
-                            view.update(cx, |this, cx| {
-                                this.set_session_model_selection(
-                                    SessionModelSelection {
-                                        model_id: model_id.clone(),
-                                        reasoning_effort: effort,
-                                    },
-                                    true,
-                                    cx,
-                                );
-                            });
-                        }
-                    });
+                .cursor_pointer()
+                .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                    if this.session_reasoning_menu_index != idx {
+                        this.session_reasoning_menu_index = idx;
+                        cx.notify();
+                    }
+                }))
+                .on_mouse_down(gpui::MouseButton::Left, {
+                    let view = view.clone();
+                    move |_, _, cx| {
+                        view.update(cx, |this, cx| {
+                            this.set_session_model_selection(
+                                SessionModelSelection {
+                                    model_id: model_id.clone(),
+                                    reasoning_effort: effort,
+                                },
+                                true,
+                                cx,
+                            );
+                        });
+                    }
+                });
                 list = list.child(row);
             }
 

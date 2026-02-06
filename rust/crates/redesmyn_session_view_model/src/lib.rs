@@ -73,6 +73,21 @@ impl SessionEventKindTag {
             SessionEventKind::Unknown(_) => Self::Unknown,
         }
     }
+
+    #[must_use]
+    pub fn shows_in_timeline(self) -> bool {
+        matches!(
+            self,
+            Self::UserMessage
+                | Self::AssistantMessage
+                | Self::AssistantReasoning
+                | Self::ToolInvocation
+                | Self::ToolResult
+                | Self::PermissionRequested
+                | Self::PermissionDecided
+                | Self::ArtifactEmitted
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -320,6 +335,10 @@ impl SessionFeedState {
 
         let mut assistant_message_ix_by_turn: HashMap<String, usize> = HashMap::new();
         for event in event_items {
+            if !event.kind.shows_in_timeline() {
+                continue;
+            }
+
             let ix = items.len();
             if event.kind == SessionEventKindTag::AssistantMessage
                 && let Some(turn_id) = event.turn_id.as_ref()
