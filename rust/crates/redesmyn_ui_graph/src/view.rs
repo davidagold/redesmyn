@@ -1622,6 +1622,8 @@ impl GraphView {
             return;
         }
 
+        // Keep keyboard shortcut focus on the dedicated graph-shortcuts target.
+        // The canvas itself is intentionally not focusable to avoid stealing focus from this.
         window.focus(&self.focus_handle);
         self.cancel_camera_animation();
         self.pending_pan_to_selection = None;
@@ -3454,7 +3456,6 @@ impl Render for GraphView {
                     } else {
                         CursorStyle::Arrow
                     })
-                    .focusable()
                     .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
                     .on_mouse_move(cx.listener(Self::on_mouse_move))
                     .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
