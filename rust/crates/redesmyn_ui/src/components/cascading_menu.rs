@@ -1,4 +1,4 @@
-use gpui::{AnyElement, Div, Global, Pixels, RenderOnce, Window, div, prelude::*, px};
+use gpui::{AnyElement, Div, EntityId, Global, Pixels, RenderOnce, Window, div, prelude::*, px};
 
 use super::overlay_surface::{OverlaySurfaceKind, overlay_surface};
 use crate::styles::UiTheme;
@@ -14,6 +14,8 @@ pub enum CascadingMenuId {
 #[derive(Debug, Default)]
 pub struct CascadingMenuState {
     open_menu: Option<CascadingMenuId>,
+    // When set, the menu is considered open only for this entity.
+    owner: Option<EntityId>,
 }
 
 impl Global for CascadingMenuState {}
@@ -23,14 +25,54 @@ impl CascadingMenuState {
         self.open_menu
     }
 
+    pub fn open_menu_for(&self, owner: EntityId) -> Option<CascadingMenuId> {
+        (self.owner == Some(owner))
+            .then_some(self.open_menu)
+            .flatten()
+    }
+
     pub fn set_open_menu(&mut self, menu: Option<CascadingMenuId>) {
         self.open_menu = menu;
+        self.owner = None;
+    }
+
+    pub fn set_open_menu_for(&mut self, owner: EntityId, menu: Option<CascadingMenuId>) {
+        if menu.is_none() {
+            self.clear_open_menu_for(owner);
+            return;
+        }
+
+        self.open_menu = menu;
+        self.owner = Some(owner);
+    }
+
+    pub fn clear_open_menu_for(&mut self, owner: EntityId) {
+        if self.owner == Some(owner) {
+            self.open_menu = None;
+            self.owner = None;
+        }
     }
 }
 
 pub fn set_open_cascading_menu(menu: Option<CascadingMenuId>, cx: &mut impl BorrowAppContext) {
     cx.update_default_global::<CascadingMenuState, _>(|state, _cx| {
         state.set_open_menu(menu);
+    });
+}
+
+pub fn set_open_cascading_menu_for(
+    owner: EntityId,
+    menu: Option<CascadingMenuId>,
+    cx: &mut impl BorrowAppContext,
+) {
+    cx.update_default_global::<CascadingMenuState, _>(|state, _cx| {
+        state.set_open_menu_for(owner, menu);
+    });
+}
+
+pub fn clear_open_cascading_menu_for(owner: EntityId, cx: &mut impl BorrowAppContext) {
+    cx.update_default_global::<CascadingMenuState, _>(|state, _cx| {
+        state.clear_open_menu_for(owner);
     });
 }
 

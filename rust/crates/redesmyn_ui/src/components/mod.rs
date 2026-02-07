@@ -25,7 +25,8 @@ pub use cascading_menu::{
     CascadingMenuSecondarySide, CascadingMenuState, CascadingMenuSurfaceStyle,
     cascading_menu_checkbox_indicator, cascading_menu_move_left_to_primary,
     cascading_menu_radio_indicator, cascading_menu_row, cascading_menu_row_value,
-    cascading_menu_surface, cascading_select_menu_item, set_open_cascading_menu,
+    cascading_menu_surface, cascading_select_menu_item, clear_open_cascading_menu_for,
+    set_open_cascading_menu, set_open_cascading_menu_for,
 };
 pub use expandable::Expandable;
 pub use markdown::{MarkdownInlineSingleLineContent, MarkdownInlineSingleLineView, MarkdownView};

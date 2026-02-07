@@ -54,8 +54,8 @@ use redesmyn_ui::components::{
     MarkdownView, OverlaySurfaceKind, ScrollFade, ScrollbarStyle, StyledScrollbar, TextArea,
     TextButton, TextInput, TextInputEvent, TextInputPastedImage, Tooltip,
     cascading_menu_move_left_to_primary, cascading_menu_radio_indicator, cascading_menu_row,
-    cascading_menu_row_value, cascading_menu_surface, cascading_select_menu_item, overlay_surface,
-    set_open_cascading_menu,
+    cascading_menu_row_value, cascading_menu_surface, cascading_select_menu_item,
+    clear_open_cascading_menu_for, overlay_surface, set_open_cascading_menu_for,
 };
 use redesmyn_ui::styles::ThemeMode;
 use redesmyn_ui::utils::{
@@ -1254,7 +1254,6 @@ pub struct SessionView {
     model_fetch_error: Option<SharedString>,
     model_fetch_task: Option<Task<()>>,
     repo_scope: Option<RepoScope>,
-    session_settings_open: bool,
     session_settings_hovered: Option<SessionSettingsCategory>,
     session_settings_focus: SessionSettingsMenuFocus,
     session_settings_submenu_index: usize,
@@ -1440,7 +1439,6 @@ impl SessionView {
             model_fetch_error: None,
             model_fetch_task: None,
             repo_scope: None,
-            session_settings_open: false,
             session_settings_hovered: None,
             session_settings_focus: SessionSettingsMenuFocus::default(),
             session_settings_submenu_index: 0,
@@ -1885,7 +1883,6 @@ impl SessionView {
             self.codex_sandbox_policy_action = UserActionState::default();
             self.set_codex_sandbox_policy_task = None;
             self.codex_sandbox_policy_timeout_task = None;
-            self.session_settings_open = false;
             self.session_settings_hovered = None;
             self.session_settings_focus = SessionSettingsMenuFocus::Primary;
             self.session_settings_submenu_index = 0;
@@ -1969,6 +1966,23 @@ impl SessionView {
         self.composer_input.focus_handle(cx).is_focused(window)
     }
 
+    fn open_cascading_menu_for_self(&self, cx: &Context<Self>) -> Option<CascadingMenuId> {
+        cx.try_global::<CascadingMenuState>()
+            .and_then(|state| state.open_menu_for(cx.entity_id()))
+    }
+
+    fn set_open_cascading_menu_for_self(
+        &self,
+        menu: Option<CascadingMenuId>,
+        cx: &mut Context<Self>,
+    ) {
+        set_open_cascading_menu_for(cx.entity_id(), menu, cx);
+    }
+
+    fn clear_open_cascading_menu_for_self(&self, cx: &mut Context<Self>) {
+        clear_open_cascading_menu_for(cx.entity_id(), cx);
+    }
+
     pub fn set_settings_menu_open(&mut self, open: bool, cx: &mut Context<Self>) {
         if open {
             self.open_session_settings_menu(cx);
@@ -1978,19 +1992,11 @@ impl SessionView {
     }
 
     fn open_session_settings_menu(&mut self, cx: &mut Context<Self>) {
-        if self.session_settings_open {
+        if self.open_cascading_menu_for_self(cx) == Some(CascadingMenuId::SessionSettings) {
             return;
         }
 
-        let already_open = cx
-            .try_global::<CascadingMenuState>()
-            .map(|state| state.open_menu() == Some(CascadingMenuId::SessionSettings))
-            .unwrap_or(false);
-        if !already_open {
-            set_open_cascading_menu(Some(CascadingMenuId::SessionSettings), cx);
-        }
-
-        self.session_settings_open = true;
+        self.set_open_cascading_menu_for_self(Some(CascadingMenuId::SessionSettings), cx);
         self.session_settings_hovered = None;
         self.session_settings_focus = SessionSettingsMenuFocus::Primary;
         self.session_settings_submenu_index = 0;
@@ -1998,7 +2004,7 @@ impl SessionView {
     }
 
     fn toggle_session_settings_menu(&mut self, cx: &mut Context<Self>) {
-        if self.session_settings_open {
+        if self.open_cascading_menu_for_self(cx) == Some(CascadingMenuId::SessionSettings) {
             self.close_session_settings_menu(cx);
         } else {
             self.open_session_settings_menu(cx);
@@ -2073,7 +2079,6 @@ impl SessionView {
         self.session_model_controls_unavailable_reason = None;
         self.model_fetch_error = None;
         self.model_fetch_task = None;
-        self.session_settings_open = false;
         self.session_settings_hovered = None;
         self.session_settings_focus = SessionSettingsMenuFocus::Primary;
         self.session_settings_submenu_index = 0;
@@ -2414,21 +2419,22 @@ impl SessionView {
             return;
         };
 
-        let Some(feed) = self.feed.as_mut() else {
-            return;
-        };
-
         if self.codex_approval_policy_action.in_flight {
             return;
         }
 
-        let closed_menu = self.session_settings_open;
-        self.session_settings_open = false;
+        let closed_menu =
+            self.open_cascading_menu_for_self(cx) == Some(CascadingMenuId::SessionSettings);
+        if closed_menu {
+            self.clear_open_cascading_menu_for_self(cx);
+        }
         self.session_settings_hovered = None;
         self.session_settings_focus = SessionSettingsMenuFocus::Primary;
         self.session_settings_submenu_index = 0;
-        self.session_settings_focus = SessionSettingsMenuFocus::Primary;
-        self.session_settings_submenu_index = 0;
+
+        let Some(feed) = self.feed.as_ref() else {
+            return;
+        };
 
         let displayed = self
             .pending_codex_approval_policy
@@ -2534,17 +2540,20 @@ impl SessionView {
             return;
         };
 
-        let Some(feed) = self.feed.as_mut() else {
-            return;
-        };
-
         if self.codex_sandbox_policy_action.in_flight {
             return;
         }
 
-        let closed_menu = self.session_settings_open;
-        self.session_settings_open = false;
+        let closed_menu =
+            self.open_cascading_menu_for_self(cx) == Some(CascadingMenuId::SessionSettings);
+        if closed_menu {
+            self.clear_open_cascading_menu_for_self(cx);
+        }
         self.session_settings_hovered = None;
+
+        let Some(feed) = self.feed.as_ref() else {
+            return;
+        };
 
         let displayed = self
             .pending_codex_sandbox_policy
@@ -2743,15 +2752,12 @@ impl SessionView {
         }
 
         if close_menu {
-            let open_menu = cx
-                .try_global::<CascadingMenuState>()
-                .map(|state| state.open_menu())
-                .unwrap_or(None);
+            let open_menu = self.open_cascading_menu_for_self(cx);
             if matches!(
                 open_menu,
                 Some(CascadingMenuId::SessionModel | CascadingMenuId::SessionReasoning)
             ) {
-                set_open_cascading_menu(None, cx);
+                self.clear_open_cascading_menu_for_self(cx);
             }
         }
 
@@ -2956,10 +2962,7 @@ impl SessionView {
     }
 
     fn handle_session_model_menu_key(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
-        let open_menu = cx
-            .try_global::<CascadingMenuState>()
-            .map(|state| state.open_menu())
-            .unwrap_or(None);
+        let open_menu = self.open_cascading_menu_for_self(cx);
         if open_menu != Some(CascadingMenuId::SessionModel) {
             return false;
         }
@@ -2971,7 +2974,7 @@ impl SessionView {
 
         match key {
             "escape" => {
-                set_open_cascading_menu(None, cx);
+                self.clear_open_cascading_menu_for_self(cx);
                 cx.notify();
                 true
             }
@@ -2999,10 +3002,7 @@ impl SessionView {
     }
 
     fn handle_session_reasoning_menu_key(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
-        let open_menu = cx
-            .try_global::<CascadingMenuState>()
-            .map(|state| state.open_menu())
-            .unwrap_or(None);
+        let open_menu = self.open_cascading_menu_for_self(cx);
         if open_menu != Some(CascadingMenuId::SessionReasoning) {
             return false;
         }
@@ -3016,7 +3016,7 @@ impl SessionView {
 
         match key {
             "escape" => {
-                set_open_cascading_menu(None, cx);
+                self.clear_open_cascading_menu_for_self(cx);
                 cx.notify();
                 true
             }
@@ -3055,9 +3055,8 @@ impl SessionView {
         if !available || self.session_model_selectors_disabled() {
             return;
         }
-        self.session_settings_open = false;
         self.set_session_model_menu_index_from_selection();
-        set_open_cascading_menu(Some(CascadingMenuId::SessionModel), cx);
+        self.set_open_cascading_menu_for_self(Some(CascadingMenuId::SessionModel), cx);
         window.focus(&self.focus_handle);
         cx.notify();
     }
@@ -3074,27 +3073,18 @@ impl SessionView {
         if !available || self.session_model_selectors_disabled() {
             return;
         }
-        self.session_settings_open = false;
         self.set_session_reasoning_menu_index_from_selection();
-        set_open_cascading_menu(Some(CascadingMenuId::SessionReasoning), cx);
+        self.set_open_cascading_menu_for_self(Some(CascadingMenuId::SessionReasoning), cx);
         window.focus(&self.focus_handle);
         cx.notify();
     }
 
     fn close_session_settings_menu(&mut self, cx: &mut Context<Self>) {
-        if !self.session_settings_open {
+        if self.open_cascading_menu_for_self(cx) != Some(CascadingMenuId::SessionSettings) {
             return;
         }
 
-        let should_clear = cx
-            .try_global::<CascadingMenuState>()
-            .map(|state| state.open_menu() == Some(CascadingMenuId::SessionSettings))
-            .unwrap_or(false);
-        if should_clear {
-            set_open_cascading_menu(None, cx);
-        }
-
-        self.session_settings_open = false;
+        self.clear_open_cascading_menu_for_self(cx);
         self.session_settings_hovered = None;
         self.session_settings_focus = SessionSettingsMenuFocus::Primary;
         self.session_settings_submenu_index = 0;
@@ -3224,7 +3214,7 @@ impl SessionView {
     }
 
     fn handle_session_settings_key(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
-        if !self.session_settings_open {
+        if self.open_cascading_menu_for_self(cx) != Some(CascadingMenuId::SessionSettings) {
             return false;
         }
 
@@ -7132,10 +7122,7 @@ impl Render for SessionView {
             None
         };
         let settings_disabled = self.client.is_none() || self.feed.is_none();
-        let open_menu = cx
-            .try_global::<CascadingMenuState>()
-            .map(|state| state.open_menu())
-            .unwrap_or(None);
+        let open_menu = self.open_cascading_menu_for_self(cx);
         let composer_viewport_width =
             f32::from(self.timeline_list_state.viewport_bounds().size.width);
         let action_density = if composer_viewport_width < 620.0 {
@@ -7145,7 +7132,7 @@ impl Render for SessionView {
         } else {
             0
         };
-        let show_selector_keycaps = action_density == 0;
+        let show_selector_keycaps = true;
         let show_policies_status = action_density == 0;
         let show_settings_label = action_density <= 1;
         let selector_button_gap = if action_density == 2 {
@@ -7175,8 +7162,7 @@ impl Render for SessionView {
         } else {
             theme.spacing.sm
         };
-        let settings_open =
-            self.session_settings_open && open_menu == Some(CascadingMenuId::SessionSettings);
+        let settings_open = open_menu == Some(CascadingMenuId::SessionSettings);
         let settings_hover_bg = theme.colors.accent;
         let settings_open_hover_bg = theme.colors.accent.opacity(0.65);
         let settings_open_border = theme.colors.ring.opacity(0.5);
@@ -7518,9 +7504,9 @@ impl Render for SessionView {
                 .px(px(4.0))
                 .py(px(1.0))
                 .rounded(theme.radius.sm)
-                .bg(theme.colors.surface.opacity(0.92))
+                .bg(theme.colors.surface_elevated.opacity(0.42))
                 .border_1()
-                .border_color(theme.colors.border.opacity(0.35))
+                .border_color(theme.colors.border.opacity(0.24))
                 .text_xs()
                 .text_color(theme.colors.foreground_muted)
                 .opacity(if enabled { 1.0 } else { 0.4 })
@@ -7632,18 +7618,14 @@ impl Render for SessionView {
                 let view = view.clone();
                 move |_, _, app| {
                     view.update(app, |this, cx| {
-                        this.session_settings_open = false;
-                        let current = cx
-                            .try_global::<CascadingMenuState>()
-                            .map(|state| state.open_menu())
-                            .unwrap_or(None);
+                        let current = this.open_cascading_menu_for_self(cx);
                         let next = if current == Some(CascadingMenuId::SessionModel) {
                             None
                         } else {
                             this.set_session_model_menu_index_from_selection();
                             Some(CascadingMenuId::SessionModel)
                         };
-                        set_open_cascading_menu(next, cx);
+                        this.set_open_cascading_menu_for_self(next, cx);
                         cx.notify();
                     });
                 }
@@ -7833,18 +7815,14 @@ impl Render for SessionView {
                     let view = view.clone();
                     move |_, _, app| {
                         view.update(app, |this, cx| {
-                            this.session_settings_open = false;
-                            let current = cx
-                                .try_global::<CascadingMenuState>()
-                                .map(|state| state.open_menu())
-                                .unwrap_or(None);
+                            let current = this.open_cascading_menu_for_self(cx);
                             let next = if current == Some(CascadingMenuId::SessionReasoning) {
                                 None
                             } else {
                                 this.set_session_reasoning_menu_index_from_selection();
                                 Some(CascadingMenuId::SessionReasoning)
                             };
-                            set_open_cascading_menu(next, cx);
+                            this.set_open_cascading_menu_for_self(next, cx);
                             cx.notify();
                         });
                     }
@@ -8158,15 +8136,12 @@ impl Render for SessionView {
             root = root.on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
                 view.update(cx, |this, cx| {
                     this.close_session_settings_menu(cx);
-                    let open_menu = cx
-                        .try_global::<CascadingMenuState>()
-                        .map(|state| state.open_menu())
-                        .unwrap_or(None);
+                    let open_menu = this.open_cascading_menu_for_self(cx);
                     if matches!(
                         open_menu,
                         Some(CascadingMenuId::SessionModel | CascadingMenuId::SessionReasoning)
                     ) {
-                        set_open_cascading_menu(None, cx);
+                        this.clear_open_cascading_menu_for_self(cx);
                     }
                 });
             });
