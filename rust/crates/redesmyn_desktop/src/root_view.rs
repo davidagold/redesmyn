@@ -1,4 +1,5 @@
 mod command_palette_overlay;
+mod live_updates;
 mod settings_dialog;
 
 use std::sync::Arc;
@@ -13,8 +14,6 @@ use tokio::sync::{mpsc, oneshot, watch};
 use redesmyn_ids::EventId;
 use redesmyn_protocol::client::{ModelReasoningEffort, SessionModelSelection, SubscriptionEvent};
 use redesmyn_protocol::prelude::BUILT_IN_PRELUDE_TEMPLATE;
-use redesmyn_protocol::sync_commands::{LOCAL_SYNC_EVENT_APPLIED, LOCAL_SYNC_EVENT_FAILED};
-use redesmyn_protocol::task_events::TASK_STATE_CHANGED_EVENT;
 use redesmyn_protocol::ui_driver::{
     CaptureScreenshotResponse, ClearGraphSelectionResponse, CreateChatSessionResponse,
     MultiSelectAddNodeResponse, MultiSelectRemoveNodeResponse, SelectGraphNodeResponse,
@@ -67,6 +66,7 @@ use crate::task_filters::{
 };
 
 use self::command_palette_overlay::CommandPaletteOverlay;
+use self::live_updates::{LiveUpdateAction, LiveUpdateRouter};
 use self::settings_dialog::SettingsDialog;
 
 #[derive(Debug)]
@@ -4401,6 +4401,7 @@ struct WorkspacePaneHost {
     graph_task: Option<Task<()>>,
     graph_refresh_pending: bool,
     repo_event_subscription: Option<RepoEventLogSubscription>,
+    live_update_router: LiveUpdateRouter,
     selection_generation: u64,
     _subscriptions: Vec<Subscription>,
 }
@@ -4609,6 +4610,7 @@ impl WorkspacePaneHost {
             graph_task: None,
             graph_refresh_pending: false,
             repo_event_subscription: None,
+            live_update_router: LiveUpdateRouter::new(),
             selection_generation: 0,
             _subscriptions: subscriptions,
         }
@@ -5266,6 +5268,44 @@ impl WorkspacePaneHost {
         cx.notify();
     }
 
+    fn on_repo_subscription_event(&mut self, event: SubscriptionEvent, cx: &mut Context<Self>) {
+        for action in self.live_update_router.route_subscription_event(&event) {
+            self.apply_live_update_action(action, cx);
+        }
+    }
+
+    fn apply_live_update_action(&mut self, action: LiveUpdateAction, cx: &mut Context<Self>) {
+        match action {
+            LiveUpdateAction::RefreshGraph(_) => self.refresh_graph(cx),
+            LiveUpdateAction::TaskStateChanged(update) => {
+                let changed = self.graph_view.update(cx, |view, cx| {
+                    view.apply_task_state_update(update.task_id, update.state, cx)
+                });
+                if changed {
+                    self.ui_updates.bump();
+                    cx.notify();
+                }
+            }
+            LiveUpdateAction::CommandStateChanged(update) => {
+                let changed = self.graph_view.update(cx, |view, cx| {
+                    view.apply_command_state_update(
+                        update.command_id,
+                        update.target_task_id,
+                        update.kind.as_deref(),
+                        update.state,
+                        update.message.as_deref(),
+                        update.updated_at,
+                        cx,
+                    )
+                });
+                if changed {
+                    self.ui_updates.bump();
+                    cx.notify();
+                }
+            }
+        }
+    }
+
     fn ensure_repo_event_subscription(
         &mut self,
         scope: RepoScope,
@@ -5317,38 +5357,15 @@ impl WorkspacePaneHost {
                             let Some(event) = maybe_event else {
                                 break;
                             };
-                            match event {
-                                SubscriptionEvent::EventLog(event) => {
-                                    if event.event_type != LOCAL_SYNC_EVENT_APPLIED
-                                        && event.event_type != LOCAL_SYNC_EVENT_FAILED
-                                        && event.event_type != TASK_STATE_CHANGED_EVENT
-                                    {
-                                        continue;
-                                    }
-
-                                    let _ = cx.update(|cx| {
-                                        if let Some(entity) = weak.upgrade() {
-                                            entity.update(cx, |this, cx| {
-                                                if this.selection_generation == subscription_generation {
-                                                    this.refresh_graph(cx);
-                                                }
-                                            });
+                            let _ = cx.update(|cx| {
+                                if let Some(entity) = weak.upgrade() {
+                                    entity.update(cx, |this, cx| {
+                                        if this.selection_generation == subscription_generation {
+                                            this.on_repo_subscription_event(event, cx);
                                         }
                                     });
                                 }
-                                SubscriptionEvent::Error(_) => {
-                                    let _ = cx.update(|cx| {
-                                        if let Some(entity) = weak.upgrade() {
-                                            entity.update(cx, |this, cx| {
-                                                if this.selection_generation == subscription_generation {
-                                                    this.refresh_graph(cx);
-                                                }
-                                            });
-                                        }
-                                    });
-                                }
-                                _ => {}
-                            }
+                            });
                         }
                     }
                 }

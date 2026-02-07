@@ -480,6 +480,87 @@ impl GraphScene {
         self.nodes.get(&id)
     }
 
+    pub fn apply_task_state_update(&mut self, task_id: TaskId, state: TaskState) -> bool {
+        let Some(node) = self.nodes.get_mut(&GraphNodeId::Task(task_id)) else {
+            return false;
+        };
+        if node.state == state {
+            return false;
+        }
+        node.state = state;
+        true
+    }
+
+    pub fn apply_command_state_update(
+        &mut self,
+        command_id: CommandId,
+        target_task_id: Option<TaskId>,
+        kind: Option<&str>,
+        state: CommandState,
+        message: Option<&str>,
+        updated_at: Timestamp,
+    ) -> bool {
+        let node_id = target_task_id.map(GraphNodeId::Task).or_else(|| {
+            self.nodes.iter().find_map(|(node_id, node)| {
+                matches!(node_id, GraphNodeId::Task(_))
+                    .then_some(node.latest_command.as_ref())
+                    .flatten()
+                    .and_then(|latest| (latest.command_id == command_id).then_some(*node_id))
+            })
+        });
+        let Some(node_id) = node_id else {
+            return false;
+        };
+        let Some(node) = self.nodes.get_mut(&node_id) else {
+            return false;
+        };
+
+        let should_apply_to_latest = match node.latest_command.as_ref() {
+            Some(latest) if latest.command_id != command_id => updated_at >= latest.updated_at,
+            _ => true,
+        };
+
+        let mut changed = false;
+        if should_apply_to_latest {
+            let message = message
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| SharedString::new(value.to_string()));
+            let kind = kind
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| SharedString::new(value.to_string()))
+                .or_else(|| {
+                    node.latest_command
+                        .as_ref()
+                        .filter(|latest| latest.command_id == command_id)
+                        .map(|latest| latest.kind.clone())
+                })
+                .unwrap_or_else(|| SharedString::new("command".to_string()));
+            let next = TaskCommandSummary {
+                command_id,
+                kind,
+                state,
+                updated_at,
+                last_message: message,
+            };
+            if node.latest_command.as_ref() != Some(&next) {
+                node.latest_command = Some(next);
+                changed = true;
+            }
+        }
+
+        if should_apply_to_latest {
+            let next_status = agent_status_from_command_state(state);
+            if node.agent_status != next_status {
+                node.agent_status = next_status;
+                changed = true;
+            }
+        }
+
+        changed
+    }
+
     #[must_use]
     pub fn selection(&self) -> &GraphSelection {
         &self.selection
@@ -1151,24 +1232,12 @@ fn agent_status_by_task_id(
         }
     }
 
-    fn from_command_state(state: CommandState) -> AgentStatus {
-        match state {
-            CommandState::Queued | CommandState::Running | CommandState::Accepted => {
-                AgentStatus::Running
-            }
-            CommandState::Blocked | CommandState::Resumable => AgentStatus::Blocked,
-            CommandState::Failed => AgentStatus::Error,
-            CommandState::Succeeded | CommandState::Canceled => AgentStatus::Stopped,
-            CommandState::Unknown => AgentStatus::Unknown,
-        }
-    }
-
     let mut out: BTreeMap<TaskId, AgentStatus> = BTreeMap::new();
     for summary in &graph.command_summaries {
         let Some(task_id) = summary.target_task_id else {
             continue;
         };
-        let status = from_command_state(summary.state);
+        let status = agent_status_from_command_state(summary.state);
         out.entry(task_id)
             .and_modify(|existing| {
                 if priority(status) > priority(*existing) {
@@ -1178,6 +1247,18 @@ fn agent_status_by_task_id(
             .or_insert(status);
     }
     out
+}
+
+fn agent_status_from_command_state(state: CommandState) -> AgentStatus {
+    match state {
+        CommandState::Queued | CommandState::Running | CommandState::Accepted => {
+            AgentStatus::Running
+        }
+        CommandState::Blocked | CommandState::Resumable => AgentStatus::Blocked,
+        CommandState::Failed => AgentStatus::Error,
+        CommandState::Succeeded | CommandState::Canceled => AgentStatus::Stopped,
+        CommandState::Unknown => AgentStatus::Unknown,
+    }
 }
 
 fn latest_session_by_task_id(
@@ -1606,5 +1687,51 @@ mod tests {
         let bounds = scene.layout_bounds();
         assert!(bounds.size.width > 0);
         assert!(bounds.size.height > 0);
+    }
+
+    #[test]
+    fn apply_task_state_update_mutates_target_node() {
+        let task_id = TaskId::from_bytes([9; 16]);
+        let mut scene = GraphScene::empty_demo();
+        scene.insert_demo_node(GraphNodeId::Task(task_id));
+
+        assert!(scene.apply_task_state_update(task_id, TaskState::InProgress));
+        assert_eq!(
+            scene
+                .node(GraphNodeId::Task(task_id))
+                .map(|node| node.state),
+            Some(TaskState::InProgress)
+        );
+        assert!(!scene.apply_task_state_update(task_id, TaskState::InProgress));
+    }
+
+    #[test]
+    fn apply_command_state_update_sets_agent_status_and_latest_command() {
+        let task_id = TaskId::from_bytes([10; 16]);
+        let command_id = CommandId::from_bytes([11; 16]);
+        let mut scene = GraphScene::empty_demo();
+        scene.insert_demo_node(GraphNodeId::Task(task_id));
+
+        let updated_at = Timestamp::from_unix_millis(1).expect("timestamp");
+        assert!(scene.apply_command_state_update(
+            command_id,
+            Some(task_id),
+            Some("task.agent.start"),
+            CommandState::Running,
+            Some("starting"),
+            updated_at,
+        ));
+
+        let node = scene
+            .node(GraphNodeId::Task(task_id))
+            .expect("task node should exist");
+        assert_eq!(node.agent_status, AgentStatus::Running);
+        let latest = node.latest_command.as_ref().expect("latest command");
+        assert_eq!(latest.command_id, command_id);
+        assert_eq!(latest.state, CommandState::Running);
+        assert_eq!(
+            latest.last_message.as_ref().map(|message| message.as_ref()),
+            Some("starting")
+        );
     }
 }
