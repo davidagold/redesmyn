@@ -294,6 +294,25 @@ impl AgentSessionsPaletteOverlay {
         cx.notify();
     }
 
+    pub fn set_selected_display_index(&mut self, display_index: usize, cx: &mut Context<RootView>) {
+        if !self.open || self.is_blocking_loading() || self.action_in_flight {
+            return;
+        }
+
+        let display = self.display_rows(cx);
+        if display.ordered_indices.is_empty() {
+            return;
+        }
+
+        let clamped = display_index.min(display.ordered_indices.len().saturating_sub(1));
+        if self.selected_index == clamped {
+            return;
+        }
+
+        self.selected_index = clamped;
+        cx.notify();
+    }
+
     pub fn activate_entry_by_session_id(
         &mut self,
         session_id: SessionId,
@@ -545,6 +564,9 @@ impl AgentSessionsPaletteOverlay {
         if self.loading && self.entries.is_empty() {
             right_header = right_header
                 .child(ProgressPill::new("Loading sessions…").kind(ProgressPillKind::Accent));
+        } else if self.loading {
+            right_header = right_header
+                .child(ProgressPill::new("Refreshing sessions…").kind(ProgressPillKind::Accent));
         } else if self.action_in_flight {
             right_header = right_header
                 .child(ProgressPill::new("Opening session…").kind(ProgressPillKind::Accent));
@@ -631,8 +653,8 @@ impl AgentSessionsPaletteOverlay {
                     list = list.child(render_entry_row(
                         entry,
                         row_display_index == selected_index,
-                        self.loading || self.action_in_flight,
-                        &root,
+                        row_display_index,
+                        self.is_blocking_loading() || self.action_in_flight,
                         cx,
                         &theme,
                     ));
@@ -661,8 +683,8 @@ impl AgentSessionsPaletteOverlay {
                     list = list.child(render_entry_row(
                         entry,
                         row_display_index == selected_index,
-                        self.loading || self.action_in_flight,
-                        &root,
+                        row_display_index,
+                        self.is_blocking_loading() || self.action_in_flight,
                         cx,
                         &theme,
                     ));
@@ -739,8 +761,8 @@ impl AgentSessionsPaletteOverlay {
 fn render_entry_row(
     entry: &AgentSessionPaletteEntry,
     selected: bool,
+    display_index: usize,
     globally_disabled: bool,
-    root: &Entity<RootView>,
     cx: &mut Context<RootView>,
     theme: &UiTheme,
 ) -> impl IntoElement {
@@ -762,9 +784,6 @@ fn render_entry_row(
         .border_1()
         .border_color(theme.colors.border.opacity(0.0))
         .when(selected, |this| this.border_color(theme.colors.ring))
-        .when(!selected, |this| {
-            this.hover(|this| this.border_color(theme.colors.border.opacity(0.45)))
-        })
         .child(
             div()
                 .flex()
@@ -807,14 +826,19 @@ fn render_entry_row(
     if disabled {
         row = row.opacity(0.55).cursor_not_allowed();
     } else {
-        let root = root.clone();
+        row = row.on_mouse_move(cx.listener(move |this, _, _, cx| {
+            this.agent_sessions_palette
+                .set_selected_display_index(display_index, cx);
+            this.ui_updates.bump();
+        }));
+
         let session_id = entry.session_id;
-        row = row.cursor_pointer().on_click(move |_, _, cx| {
-            root.update(cx, |this, cx| {
+        row = row
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
                 this.activate_agent_session_palette_entry_by_session_id(session_id, cx);
                 this.ui_updates.bump();
-            });
-        });
+            }));
     }
 
     row

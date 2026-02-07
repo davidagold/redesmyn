@@ -3,7 +3,7 @@ mod command_palette_overlay;
 mod live_updates;
 mod settings_dialog;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,6 +14,7 @@ use gpui::{
     SharedString, Subscription, Task, WeakEntity, Window, div, prelude::*, px,
 };
 use tokio::sync::{mpsc, oneshot, watch};
+use tokio::task::JoinSet;
 
 use redesmyn_ids::{EventId, SessionId, TaskId};
 use redesmyn_protocol::client::{ModelReasoningEffort, SessionModelSelection, SubscriptionEvent};
@@ -6735,6 +6736,16 @@ struct EpicSessionGroupContext {
     epic_id: Option<redesmyn_ids::EpicId>,
 }
 
+#[derive(Debug)]
+struct LoadedEpicPaletteData {
+    epic_slug: String,
+    epic_title: Option<String>,
+    epic_id: Option<redesmyn_ids::EpicId>,
+    repo_scope: Option<RepoScope>,
+    task_lookup: HashMap<TaskId, (String, String, redesmyn_protocol::client::TaskState)>,
+    session_summaries: Vec<redesmyn_protocol::client::SessionSummary>,
+}
+
 async fn load_agent_session_palette_entries(
     client: ControlPlaneClient,
 ) -> Result<Vec<AgentSessionPaletteEntry>, String> {
@@ -6748,39 +6759,29 @@ async fn load_agent_session_palette_entries(
     let mut repo_labels: HashMap<RepoScope, String> = HashMap::new();
     let mut partial_errors = Vec::new();
 
+    let mut epic_graph_tasks = JoinSet::new();
     for epic in epics {
-        let epic_slug = epic.slug.clone();
-        let graph = match client.get_epic_graph(epic_slug.clone()).await {
-            Ok(graph) => graph,
-            Err(error) => {
-                partial_errors.push(format!("Failed to load epic {epic_slug}: {error}"));
-                continue;
-            }
-        };
+        let client = client.clone();
+        epic_graph_tasks.spawn(async move {
+            let epic_slug = epic.slug.clone();
+            let graph = client
+                .get_epic_graph(epic_slug.clone())
+                .await
+                .map_err(|error| format!("Failed to load epic {epic_slug}: {error}"))?;
 
-        let repo_scope = graph
-            .workspace_id
-            .zip(graph.repo_id)
-            .map(|(workspace_id, repo_id)| RepoScope::new(workspace_id, repo_id));
-        let epic_title = graph
-            .epic_title
-            .clone()
-            .or_else(|| (!epic.name.trim().is_empty()).then_some(epic.name.clone()));
-        let epic_id = epic.epic_id.or(graph.epic_id);
-
-        if let Some(scope) = repo_scope {
-            repo_epics
-                .entry(scope)
-                .or_default()
-                .push(EpicSessionGroupContext {
-                    epic_slug: epic_slug.clone(),
-                    epic_title: epic_title.clone(),
-                    epic_id,
-                });
-        }
-
-        let task_lookup: HashMap<TaskId, (String, String, redesmyn_protocol::client::TaskState)> =
-            graph
+            let repo_scope = graph
+                .workspace_id
+                .zip(graph.repo_id)
+                .map(|(workspace_id, repo_id)| RepoScope::new(workspace_id, repo_id));
+            let epic_title = graph
+                .epic_title
+                .clone()
+                .or_else(|| (!epic.name.trim().is_empty()).then_some(epic.name.clone()));
+            let epic_id = epic.epic_id.or(graph.epic_id);
+            let task_lookup: HashMap<
+                TaskId,
+                (String, String, redesmyn_protocol::client::TaskState),
+            > = graph
                 .nodes
                 .iter()
                 .filter_map(|node| {
@@ -6793,7 +6794,48 @@ async fn load_agent_session_palette_entries(
                 })
                 .collect();
 
-        for summary in graph.session_summaries {
+            Ok::<_, String>(LoadedEpicPaletteData {
+                epic_slug,
+                epic_title,
+                epic_id,
+                repo_scope,
+                task_lookup,
+                session_summaries: graph.session_summaries,
+            })
+        });
+    }
+
+    let mut loaded_epics = Vec::new();
+    while let Some(result) = epic_graph_tasks.join_next().await {
+        match result {
+            Ok(Ok(epic)) => loaded_epics.push(epic),
+            Ok(Err(error)) => partial_errors.push(error),
+            Err(error) => partial_errors.push(format!("Epic graph task failed: {error}")),
+        }
+    }
+
+    for epic in loaded_epics {
+        let LoadedEpicPaletteData {
+            epic_slug,
+            epic_title,
+            epic_id,
+            repo_scope,
+            task_lookup,
+            session_summaries,
+        } = epic;
+
+        if let Some(scope) = repo_scope {
+            repo_epics
+                .entry(scope)
+                .or_default()
+                .push(EpicSessionGroupContext {
+                    epic_slug: epic_slug.clone(),
+                    epic_title: epic_title.clone(),
+                    epic_id,
+                });
+        }
+
+        for summary in session_summaries {
             let (task_slug, task_title, task_state) = task_lookup
                 .get(&summary.task_id)
                 .map(|(slug, title, state)| (Some(slug.clone()), Some(title.clone()), Some(*state)))
@@ -6828,41 +6870,89 @@ async fn load_agent_session_palette_entries(
         }
     }
 
-    for (scope, epics_for_repo) in repo_epics {
-        let mut pinned_epics_by_session: HashMap<SessionId, (String, Option<String>)> =
-            HashMap::new();
-        for epic in &epics_for_repo {
-            let Some(epic_id) = epic.epic_id else {
-                continue;
-            };
+    let repo_scopes: Vec<RepoScope> = repo_epics.keys().copied().collect();
+    let mut chat_sessions_by_repo: HashMap<
+        RepoScope,
+        Vec<redesmyn_protocol::client::AgentSessionSummary>,
+    > = HashMap::new();
+    let mut repos_with_chats = HashSet::new();
 
-            match client.get_epic_pinned_chat_session(scope, epic_id).await {
-                Ok(Some(session_id)) => {
-                    pinned_epics_by_session
-                        .entry(session_id)
-                        .or_insert((epic.epic_slug.clone(), epic.epic_title.clone()));
+    let mut chat_tasks = JoinSet::new();
+    for scope in repo_scopes {
+        let client = client.clone();
+        chat_tasks.spawn(async move { (scope, client.list_chat_sessions(scope, true, 200).await) });
+    }
+
+    while let Some(result) = chat_tasks.join_next().await {
+        match result {
+            Ok((scope, Ok(sessions))) => {
+                if !sessions.is_empty() {
+                    repos_with_chats.insert(scope);
                 }
-                Ok(None) => {}
-                Err(error) => {
-                    partial_errors.push(format!(
-                        "Failed to read pinned chat for epic {}: {}",
-                        epic.epic_slug, error
-                    ));
-                }
+                chat_sessions_by_repo.insert(scope, sessions);
             }
-        }
-
-        let chat_sessions = match client.list_chat_sessions(scope, true, 200).await {
-            Ok(sessions) => sessions,
-            Err(error) => {
+            Ok((scope, Err(error))) => {
                 partial_errors.push(format!(
                     "Failed to list chat sessions for repo {}: {}",
                     repo_scope_display_label(scope, &mut repo_labels),
                     error
                 ));
-                continue;
             }
-        };
+            Err(error) => partial_errors.push(format!("Chat session task failed: {error}")),
+        }
+    }
+
+    let mut pinned_by_repo: HashMap<RepoScope, HashMap<SessionId, (String, Option<String>)>> =
+        HashMap::new();
+    let mut pin_tasks = JoinSet::new();
+    for (scope, epics_for_repo) in &repo_epics {
+        if !repos_with_chats.contains(scope) {
+            continue;
+        }
+        for epic in epics_for_repo {
+            let Some(epic_id) = epic.epic_id else {
+                continue;
+            };
+
+            let client = client.clone();
+            let scope = *scope;
+            let epic_slug = epic.epic_slug.clone();
+            let epic_title = epic.epic_title.clone();
+            pin_tasks.spawn(async move {
+                (
+                    scope,
+                    epic_slug,
+                    epic_title,
+                    client.get_epic_pinned_chat_session(scope, epic_id).await,
+                )
+            });
+        }
+    }
+
+    while let Some(result) = pin_tasks.join_next().await {
+        match result {
+            Ok((scope, epic_slug, epic_title, Ok(Some(session_id)))) => {
+                pinned_by_repo
+                    .entry(scope)
+                    .or_default()
+                    .entry(session_id)
+                    .or_insert((epic_slug, epic_title));
+            }
+            Ok((_scope, _epic_slug, _epic_title, Ok(None))) => {}
+            Ok((scope, epic_slug, _epic_title, Err(error))) => {
+                partial_errors.push(format!(
+                    "Failed to read pinned chat for epic {} (repo {}): {}",
+                    epic_slug,
+                    repo_scope_display_label(scope, &mut repo_labels),
+                    error
+                ));
+            }
+            Err(error) => partial_errors.push(format!("Pinned chat task failed: {error}")),
+        }
+    }
+
+    for (scope, chat_sessions) in chat_sessions_by_repo {
+        let pinned_epics_by_session = pinned_by_repo.remove(&scope).unwrap_or_default();
 
         for chat in chat_sessions {
             let pinned_epic = pinned_epics_by_session.get(&chat.session_id).cloned();
