@@ -976,13 +976,23 @@ fn default_worktree_path(worktree_root: &std::path::Path, branch_name: &str) -> 
     out
 }
 
+fn worktree_branch_matches(worktree_branch: &GitRefName, branch_name: &str) -> bool {
+    if worktree_branch.as_str() == branch_name {
+        return true;
+    }
+    if let Some(stripped) = worktree_branch.as_str().strip_prefix("refs/heads/") {
+        return stripped == branch_name;
+    }
+    false
+}
+
 async fn ensure_task_worktree(
     git_backend: &Arc<dyn GitBackend>,
     repo_root: &std::path::Path,
     worktree_root: &std::path::Path,
     branch_name: &str,
 ) -> Result<PathBuf, ErrorEnvelope> {
-    let branch = GitRefName::new(branch_name.to_string()).map_err(|err| {
+    let _branch = GitRefName::new(branch_name.to_string()).map_err(|err| {
         ErrorEnvelope::new(ErrorCategory::InvalidRequest, "Invalid task branch name.")
             .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
     })?;
@@ -997,7 +1007,12 @@ async fn ensure_task_worktree(
 
     if let Some(existing) = worktrees
         .iter()
-        .find(|worktree| worktree.branch.as_ref() == Some(&branch))
+        .find(|worktree| {
+            worktree
+                .branch
+                .as_ref()
+                .is_some_and(|branch| worktree_branch_matches(branch, branch_name))
+        })
     {
         return Ok(existing.path.clone());
     }
@@ -1190,4 +1205,27 @@ async fn send_command_update(
         ))
         .await
         .map_err(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::worktree_branch_matches;
+    use redesmyn_git::GitRefName;
+
+    #[test]
+    fn worktree_branch_matches_short_and_full_head_refs() {
+        let short =
+            GitRefName::new("rn/director-v0/T-1-director-run-semantics").expect("valid short ref");
+        let full = GitRefName::new("refs/heads/rn/director-v0/T-1-director-run-semantics")
+            .expect("valid full ref");
+
+        assert!(worktree_branch_matches(
+            &short,
+            "rn/director-v0/T-1-director-run-semantics"
+        ));
+        assert!(worktree_branch_matches(
+            &full,
+            "rn/director-v0/T-1-director-run-semantics"
+        ));
+    }
 }

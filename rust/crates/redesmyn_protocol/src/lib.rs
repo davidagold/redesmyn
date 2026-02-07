@@ -23,6 +23,7 @@ pub mod agent_commands;
 pub mod artifacts;
 pub mod client;
 pub mod daemon;
+pub mod prelude;
 pub mod session;
 pub mod session_live;
 pub mod sync_commands;

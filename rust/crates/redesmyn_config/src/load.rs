@@ -13,7 +13,7 @@ use crate::model::{
 };
 use crate::paths::{
     default_control_plane_client_socket_path, default_db_path, default_repo_registry_dir,
-    discover_repo_root_from_cwd,
+    default_worktree_root, discover_repo_root_from_cwd,
 };
 use crate::secret::SecretString;
 
@@ -184,7 +184,7 @@ fn build_rust_config(
         .daemon
         .worktree_root
         .map(|p| resolve_path(&ctx.base_dir, p))
-        .unwrap_or_else(|| ctx.base_dir.clone());
+        .unwrap_or_else(|| default_worktree_root(&ctx.base_dir));
 
     let daemon_token = input
         .control_plane

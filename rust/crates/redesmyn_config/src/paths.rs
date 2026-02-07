@@ -55,6 +55,10 @@ pub(crate) fn default_repo_registry_dir(base_dir: &Path) -> PathBuf {
     state_dir(base_dir).join("repos")
 }
 
+pub(crate) fn default_worktree_root(base_dir: &Path) -> PathBuf {
+    state_dir(base_dir).join("worktrees")
+}
+
 pub(crate) fn default_control_plane_client_socket_path(base_dir: &Path) -> PathBuf {
     let repo_scoped = state_dir(base_dir).join(CONTROL_PLANE_SOCKET_FILE_NAME);
 
@@ -146,6 +150,14 @@ mod tests {
             .join(CONTROL_PLANE_SOCKET_FILE_NAME);
 
         assert_eq!(default_control_plane_client_socket_path(base_dir), expected);
+    }
+
+    #[test]
+    fn default_worktree_root_is_repo_scoped() {
+        let base_dir = Path::new("/tmp/redesmyn-config-test");
+        let expected = base_dir.join(DEFAULT_STATE_DIR_NAME).join("worktrees");
+
+        assert_eq!(default_worktree_root(base_dir), expected);
     }
 
     #[cfg(unix)]

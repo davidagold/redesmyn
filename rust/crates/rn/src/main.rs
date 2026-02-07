@@ -23,6 +23,7 @@ use redesmyn_protocol::sync_commands::{LOCAL_SYNC_FROM_DOCS_KIND, LocalSyncFromD
 use redesmyn_protocol::{
     CodexApprovalPolicy, CodexSandboxPolicy, ErrorCategory, ErrorEnvelope, ProtocolEnvelope, Scope,
 };
+use redesmyn_protocol::prelude::BUILT_IN_PRELUDE_TEMPLATE;
 use serde::Serialize;
 use toml_edit::DocumentMut;
 
@@ -604,7 +605,10 @@ fn task_start(args: TaskStartArgs, output: &Output) -> CommandOutcome {
 
     let defaults = load_effective_task_start_defaults(&repo_root);
     let prelude_prompt = if defaults.send_prelude {
-        defaults.prelude.clone()
+        defaults
+            .prelude
+            .clone()
+            .or_else(|| Some(BUILT_IN_PRELUDE_TEMPLATE.to_string()))
     } else {
         None
     };

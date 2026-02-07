@@ -10,6 +10,9 @@ use redesmyn_protocol::client::{
     SendTaskAgentMessageResponse, SessionModelSelection, StartAgentResponse, StopAgentResponse,
     TaskAgentMessageConversationContinuity, TaskAgentMessageDelivery,
 };
+use redesmyn_protocol::prelude::{
+    PreludeTemplateContext, default_worktree_relative_path, render_prelude_template,
+};
 use redesmyn_protocol::session::{
     CodexApprovalPolicy, CodexApprovalPolicyChanged, CodexSandboxPolicy, CodexSandboxPolicyChanged,
     SessionEnded, SessionEventKind, SessionModelChanged, SessionModelReasoningEffort, SessionScope,
@@ -125,6 +128,74 @@ async fn load_task_branch_name(
         })?;
 
     Ok(branch_name)
+}
+
+#[derive(Debug, Clone)]
+struct TaskPreludeContextData {
+    task_id: String,
+    task_title: String,
+    task_doc: String,
+    epic_slug: String,
+    epic_readme: String,
+    branch: String,
+    worktree: String,
+}
+
+async fn load_task_prelude_context(
+    pool: &SqlitePool,
+    task_id: TaskId,
+) -> Result<TaskPreludeContextData, ErrorEnvelope> {
+    let row: Option<(Option<String>, String, Option<String>, String)> = sqlx::query_as(
+        r#"
+        SELECT t.local_ref, t.title, t.branch_name, e.slug
+        FROM tasks t
+        JOIN epics e ON e.id = t.epic_id
+        WHERE t.id = ?1
+        LIMIT 1
+        "#,
+    )
+    .bind(task_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|err| {
+        ErrorEnvelope::new(
+            ErrorCategory::Internal,
+            "Failed to load task prelude context.",
+        )
+        .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
+    })?;
+
+    let (local_ref, task_title, branch_name, epic_slug) = row.ok_or_else(|| {
+        ErrorEnvelope::new(
+            ErrorCategory::NotFound,
+            "Task not found while preparing prelude.",
+        )
+        .with_detail(ErrorDetail::from([(
+            "task_id".to_string(),
+            task_id.to_string(),
+        )]))
+    })?;
+
+    let task_id_value = local_ref
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| task_id.to_string());
+    let branch = branch_name
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| format!("rn/{epic_slug}/{task_id_value}"));
+    let task_doc = format!("epics/{epic_slug}/tasks/{task_id_value}/README.md");
+    let epic_readme = format!("epics/{epic_slug}/README.md");
+
+    Ok(TaskPreludeContextData {
+        task_id: task_id_value,
+        task_title,
+        task_doc,
+        epic_slug,
+        epic_readme,
+        branch: branch.clone(),
+        worktree: default_worktree_relative_path(&branch),
+    })
 }
 
 async fn end_sessions(pool: &SqlitePool, session_ids: &[SessionId]) -> Result<(), ErrorEnvelope> {
@@ -525,17 +596,40 @@ pub(super) async fn execute_start_agent(
     if let Some(selection) = session_model_selection.as_ref() {
         append_session_model_changed(control_plane, session_id, task_id, selection).await?;
     }
-    if let Some(prompt) = initial_prompt.as_deref() {
-        let trimmed = prompt.trim();
-        if !trimmed.is_empty() {
-            append_user_message(control_plane, session_id, task_id, trimmed).await?;
-        }
-    }
-
-    let initial_prompt = initial_prompt
+    let mut initial_prompt = initial_prompt
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-
+    if let Some(prompt) = initial_prompt.as_ref() {
+        match load_task_prelude_context(control_plane.pool(), task_id).await {
+            Ok(context) => {
+                let rendered = render_prelude_template(
+                    prompt,
+                    PreludeTemplateContext {
+                        task_id: &context.task_id,
+                        task_title: &context.task_title,
+                        task_doc: &context.task_doc,
+                        epic_slug: &context.epic_slug,
+                        epic_readme: &context.epic_readme,
+                        branch: &context.branch,
+                        worktree: &context.worktree,
+                    },
+                );
+                let rendered = rendered.trim().to_string();
+                if rendered.is_empty() {
+                    initial_prompt = None;
+                } else {
+                    initial_prompt = Some(rendered);
+                }
+            }
+            Err(err) => {
+                redesmyn_logging::tracing::warn!(
+                    task_id = %task_id,
+                    error = ?err,
+                    "unable to resolve task prelude context; using raw prompt"
+                );
+            }
+        }
+    }
     let policy_snapshot = crate::policy_snapshot::load_session_policy_snapshot(
         control_plane.session_events(),
         session_id,
@@ -555,7 +649,7 @@ pub(super) async fn execute_start_agent(
         task_id,
         Some(task_branch_name),
         agent_kind,
-        initial_prompt,
+        initial_prompt.clone(),
         Some(policy_snapshot),
         stop_session_ids.clone(),
     )?;
@@ -590,6 +684,12 @@ pub(super) async fn execute_start_agent(
             .unwrap_or_else(|| "Failed to start agent.".to_string());
 
         return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, message).with_detail(detail));
+    }
+
+    if command.state == CommandState::Succeeded {
+        if let Some(prompt) = initial_prompt.as_deref() {
+            append_user_message(control_plane, session_id, task_id, prompt).await?;
+        }
     }
 
     let _ = maybe_mark_task_in_progress(control_plane, repo, task_id).await;

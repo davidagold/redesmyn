@@ -3583,7 +3583,7 @@ async fn task_quick_action_request(
         TaskQuickActionKind::Start => RequestPayload::StartAgent(StartAgentRequest {
             task_id,
             agent_kind: AgentKind::Codex,
-            initial_prompt: start_initial_prompt,
+            initial_prompt: start_initial_prompt.clone(),
             on_conflict: AgentMessageConflictAction::Fail,
             session_model_selection: start_model_selection,
             codex_approval_policy: start_codex_approval_policy,
@@ -3592,7 +3592,7 @@ async fn task_quick_action_request(
         TaskQuickActionKind::Restart => RequestPayload::RestartAgent(RestartAgentRequest {
             task_id,
             agent_kind: AgentKind::Codex,
-            initial_prompt: None,
+            initial_prompt: start_initial_prompt,
         }),
         TaskQuickActionKind::Stop => RequestPayload::StopAgent(StopAgentRequest { task_id }),
     };

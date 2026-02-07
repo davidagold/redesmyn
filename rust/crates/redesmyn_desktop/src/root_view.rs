@@ -12,6 +12,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 use redesmyn_ids::EventId;
 use redesmyn_protocol::client::{ModelReasoningEffort, SessionModelSelection, SubscriptionEvent};
+use redesmyn_protocol::prelude::BUILT_IN_PRELUDE_TEMPLATE;
 use redesmyn_protocol::sync_commands::{LOCAL_SYNC_EVENT_APPLIED, LOCAL_SYNC_EVENT_FAILED};
 use redesmyn_protocol::task_events::TASK_STATE_CHANGED_EVENT;
 use redesmyn_protocol::ui_driver::{
@@ -2119,6 +2120,7 @@ fn load_task_start_initial_prompt() -> Option<String> {
         .prelude
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+        .or_else(|| Some(BUILT_IN_PRELUDE_TEMPLATE.to_string()))
 }
 
 fn load_task_start_codex_approval_policy() -> Option<CodexApprovalPolicy> {

@@ -137,3 +137,45 @@ async fn start_agent_returns_unavailable_and_rolls_back_session_when_no_daemon_i
         "expected a rolled-back stopped session"
     );
 }
+
+#[tokio::test]
+async fn start_agent_failure_does_not_append_initial_prompt_message() {
+    let control_plane = ControlPlane::open_test().await.expect("control plane");
+    let (workspace_id, repo_id, task_id) = seed_repo_and_task(&control_plane).await;
+
+    let result = control_plane
+        .start_agent(
+            workspace_id,
+            repo_id,
+            StartAgentRequest {
+                task_id,
+                agent_kind: AgentKind::Codex,
+                initial_prompt: Some("prelude message".to_string()),
+                on_conflict: AgentMessageConflictAction::Fail,
+                session_model_selection: None,
+                codex_approval_policy: None,
+                codex_sandbox_policy: None,
+            },
+        )
+        .await;
+
+    let err = result.expect_err("expected start-agent failure without daemon");
+    assert_eq!(err.category, ErrorCategory::Unavailable);
+
+    let persisted_user_messages: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM session_events
+        WHERE task_id = ?1 AND kind = 'user_message'
+        "#,
+    )
+    .bind(task_id)
+    .fetch_one(control_plane.pool())
+    .await
+    .expect("count persisted user messages");
+
+    assert_eq!(
+        persisted_user_messages, 0,
+        "initial prompt should not be persisted when start fails"
+    );
+}

@@ -6,6 +6,7 @@ use gpui::{
     WeakEntity, Window, div, prelude::*, px,
 };
 use redesmyn_protocol::client::SessionModelOption;
+use redesmyn_protocol::prelude::BUILT_IN_PRELUDE_TEMPLATE;
 
 use redesmyn_ui::UiContext;
 use redesmyn_ui::components::{
@@ -26,35 +27,6 @@ use crate::orchestration_config::{
 use super::RootView;
 
 const SETTINGS_DIALOG_TRANSITION_KEY: &str = "settings_dialog";
-
-const BUILT_IN_PRELUDE_TEMPLATE: &str = "Redesmyn agent prelude\n\
-\n\
-Assignment\n\
-\n\
-- You are assigned task {task_id}: {task_title}.\n\
-- Read the task doc at {task_doc} and implement its requirements.\n\
-\n\
-Objective\n\
-\n\
-- Complete the task end-to-end: implement, validate, and leave the branch in a clean state.\n\
-\n\
-Context\n\
-\n\
-- Epic: {epic_slug} (read {epic_readme})\n\
-- Branch: {branch}\n\
-- Worktree: {worktree}\n\
-\n\
-Process\n\
-\n\
-- Read AGENTS.md at repo root and follow it.\n\
-- Read the epic README and the task README before coding.\n\
-- Skim related tasks (parent, children, blockers) to understand context and avoid conflicts.\n\
-- Keep changes small, well-typed, and easy to review; avoid unrelated changes.\n\
-- If requirements or context are unclear, ask before making big assumptions.\n\
-\n\
-Requirements\n\
-\n\
-- Run `just check` before you finish.\n";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SettingsSection {
@@ -1404,7 +1376,7 @@ impl SettingsDialog {
             .child(placeholder_row("{branch}", "Branch name for the task."))
             .child(placeholder_row(
                 "{worktree}",
-                "Absolute path to the task worktree.",
+                "Task worktree path (defaults to .redesmyn/worktrees/<branch>).",
             ));
 
         let card = div()
