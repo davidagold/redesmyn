@@ -1,7 +1,9 @@
+mod agent_sessions_palette_overlay;
 mod command_palette_overlay;
 mod live_updates;
 mod settings_dialog;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,7 +15,7 @@ use gpui::{
 };
 use tokio::sync::{mpsc, oneshot, watch};
 
-use redesmyn_ids::EventId;
+use redesmyn_ids::{EventId, SessionId, TaskId};
 use redesmyn_protocol::client::{ModelReasoningEffort, SessionModelSelection, SubscriptionEvent};
 use redesmyn_protocol::prelude::BUILT_IN_PRELUDE_TEMPLATE;
 use redesmyn_protocol::ui_driver::{
@@ -53,7 +55,9 @@ use redesmyn_ui_graph::{GraphView, GraphViewEvent};
 
 use crate::app::SessionViewerFixtureEmitter;
 use crate::command_palette::{
-    CloseCommandPalette, SelectNextCommand, SelectPreviousCommand, ToggleCommandPalette,
+    CloseAgentSessionsPalette, CloseCommandPalette, SelectNextAgentSession, SelectNextCommand,
+    SelectPreviousAgentSession, SelectPreviousCommand, ToggleAgentSessionsPalette,
+    ToggleCommandPalette,
 };
 use crate::control_plane_client::{ControlPlaneClient, ControlPlaneClientError};
 use crate::orchestration_config::{
@@ -67,6 +71,9 @@ use crate::task_filters::{
     TaskFiltersToggleChipFocus,
 };
 
+use self::agent_sessions_palette_overlay::{
+    AgentSessionKind, AgentSessionNavigation, AgentSessionPaletteEntry, AgentSessionsPaletteOverlay,
+};
 use self::command_palette_overlay::CommandPaletteOverlay;
 use self::live_updates::{LiveUpdateAction, LiveUpdateRouter};
 use self::settings_dialog::SettingsDialog;
@@ -153,6 +160,8 @@ pub struct RootView {
     workspace_pane: Entity<WorkspacePaneHost>,
     focus_handle: FocusHandle,
     command_palette: CommandPaletteOverlay,
+    agent_sessions_palette: AgentSessionsPaletteOverlay,
+    agent_sessions_palette_task: Option<Task<()>>,
     settings_dialog: SettingsDialog,
     settings_model_catalog_task: Option<Task<()>>,
     chrome: ChromeState,
@@ -206,8 +215,9 @@ impl RootView {
             workspace_pane.clone(),
             cx,
         );
-
         let palette_input = command_palette.input_entity();
+        let agent_sessions_palette = AgentSessionsPaletteOverlay::new(focus_handle.clone(), cx);
+        let agent_sessions_palette_input = agent_sessions_palette.input_entity();
         let settings_dialog = SettingsDialog::new(focus_handle.clone(), cx);
         let settings_prelude_input = settings_dialog.prelude_input_entity();
 
@@ -232,6 +242,17 @@ impl RootView {
                 .handle_text_input_event(event.clone(), cx);
             this.ui_updates.bump();
         }));
+        subscriptions.push(
+            cx.subscribe(&agent_sessions_palette_input, |this, _, event, cx| {
+                if let Some(selection) = this
+                    .agent_sessions_palette
+                    .handle_text_input_event(event.clone(), cx)
+                {
+                    this.activate_agent_session_palette_entry(selection, cx);
+                }
+                this.ui_updates.bump();
+            }),
+        );
 
         subscriptions.push(cx.subscribe(&settings_prelude_input, |this, _, event, cx| {
             this.settings_dialog
@@ -246,6 +267,8 @@ impl RootView {
             workspace_pane,
             focus_handle,
             command_palette,
+            agent_sessions_palette,
+            agent_sessions_palette_task: None,
             settings_dialog,
             settings_model_catalog_task: None,
             chrome: ChromeState::new(),
@@ -298,7 +321,29 @@ impl RootView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let opening = !self.command_palette.is_open();
+        if opening && self.agent_sessions_palette.is_open() {
+            self.agent_sessions_palette.handle_close_action(window, cx);
+        }
         self.command_palette.toggle(window, cx);
+        self.ui_updates.bump();
+    }
+
+    fn toggle_agent_sessions_palette(
+        &mut self,
+        _: &ToggleAgentSessionsPalette,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let opening = !self.agent_sessions_palette.is_open();
+        if opening && self.command_palette.is_open() {
+            self.command_palette.handle_close_action(window, cx);
+        }
+
+        self.agent_sessions_palette.toggle(window, cx);
+        if opening && self.agent_sessions_palette.is_open() {
+            self.refresh_agent_sessions_palette(cx);
+        }
         self.ui_updates.bump();
     }
 
@@ -312,6 +357,16 @@ impl RootView {
         self.ui_updates.bump();
     }
 
+    fn close_agent_sessions_palette(
+        &mut self,
+        _: &CloseAgentSessionsPalette,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.agent_sessions_palette.handle_close_action(window, cx);
+        self.ui_updates.bump();
+    }
+
     fn toggle_settings_dialog(
         &mut self,
         _: &ToggleSettingsDialog,
@@ -321,6 +376,9 @@ impl RootView {
         let opening = !matches!(self.chrome.panel, Some(ChromePanel::Settings));
         if opening && self.command_palette.is_open() {
             self.command_palette.handle_close_action(window, cx);
+        }
+        if opening && self.agent_sessions_palette.is_open() {
+            self.agent_sessions_palette.handle_close_action(window, cx);
         }
 
         self.toggle_panel(ChromePanel::Settings, cx);
@@ -365,6 +423,122 @@ impl RootView {
     ) {
         self.command_palette.select_next(cx);
         self.ui_updates.bump();
+    }
+
+    fn select_previous_agent_session(
+        &mut self,
+        _: &SelectPreviousAgentSession,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.agent_sessions_palette.select_previous(cx);
+        self.ui_updates.bump();
+    }
+
+    fn select_next_agent_session(
+        &mut self,
+        _: &SelectNextAgentSession,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.agent_sessions_palette.select_next(cx);
+        self.ui_updates.bump();
+    }
+
+    fn refresh_agent_sessions_palette(&mut self, cx: &mut Context<Self>) {
+        if self.agent_sessions_palette_task.is_some() {
+            return;
+        }
+
+        let Some(client) = self.model.read(cx).chrome_control_plane_client.clone() else {
+            self.agent_sessions_palette
+                .fail_loading("Control plane client unavailable.", cx);
+            self.ui_updates.bump();
+            return;
+        };
+
+        self.agent_sessions_palette.start_loading(cx);
+
+        let tokio = client.tokio().clone();
+        self.agent_sessions_palette_task =
+            Some(cx.spawn(move |weak: WeakEntity<Self>, cx: &mut AsyncApp| {
+                let cx = cx.clone();
+                async move {
+                    let Some(entity) = weak.upgrade() else {
+                        return;
+                    };
+
+                    let task = tokio
+                        .spawn(async move { load_agent_session_palette_entries(client).await });
+                    let result = match task.await {
+                        Ok(result) => result,
+                        Err(error) => Err(format!("Session palette refresh failed: {error}")),
+                    };
+
+                    let _ = cx.update(|cx| {
+                        entity.update(cx, |this, cx| {
+                            this.agent_sessions_palette_task = None;
+                            match result {
+                                Ok(entries) => {
+                                    this.agent_sessions_palette.finish_loading(entries, cx);
+                                }
+                                Err(error) => {
+                                    this.agent_sessions_palette.fail_loading(error, cx);
+                                }
+                            }
+                            this.ui_updates.bump();
+                        });
+                    });
+                }
+            }));
+    }
+
+    fn activate_agent_session_palette_entry_by_session_id(
+        &mut self,
+        session_id: SessionId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(entry) = self
+            .agent_sessions_palette
+            .activate_entry_by_session_id(session_id, cx)
+        else {
+            return;
+        };
+
+        self.activate_agent_session_palette_entry(entry, cx);
+    }
+
+    fn activate_agent_session_palette_entry(
+        &mut self,
+        entry: AgentSessionPaletteEntry,
+        cx: &mut Context<Self>,
+    ) {
+        match entry.navigation {
+            AgentSessionNavigation::Task { epic_slug, task_id } => {
+                self.select_epic(epic_slug, cx);
+                self.workspace_pane
+                    .update(cx, |pane, cx| pane.focus_task_card_when_ready(task_id, cx));
+                self.agent_sessions_palette.complete_activation_success(cx);
+                self.ui_updates.bump();
+            }
+            AgentSessionNavigation::Chat {
+                epic_slug,
+                session_id,
+            } => {
+                self.select_epic(epic_slug, cx);
+                self.set_left_pane_collapsed(false, cx);
+                self.session_pane.update(cx, |pane, cx| {
+                    pane.surface_session_when_ready(session_id, cx)
+                });
+                self.agent_sessions_palette.complete_activation_success(cx);
+                self.ui_updates.bump();
+            }
+            AgentSessionNavigation::Disabled { reason } => {
+                self.agent_sessions_palette
+                    .complete_activation_failure(reason, cx);
+                self.ui_updates.bump();
+            }
+        }
     }
 
     fn subscribe_ui_updates(&self) -> watch::Receiver<u64> {
@@ -3261,9 +3435,13 @@ impl Render for RootView {
             .key_context("Desktop")
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::toggle_command_palette))
+            .on_action(cx.listener(Self::toggle_agent_sessions_palette))
             .on_action(cx.listener(Self::close_command_palette))
+            .on_action(cx.listener(Self::close_agent_sessions_palette))
             .on_action(cx.listener(Self::select_previous_command))
             .on_action(cx.listener(Self::select_next_command))
+            .on_action(cx.listener(Self::select_previous_agent_session))
+            .on_action(cx.listener(Self::select_next_agent_session))
             .on_action(cx.listener(Self::toggle_settings_dialog))
             .on_action(cx.listener(Self::close_settings_dialog))
             .on_mouse_down(gpui::MouseButton::Left, {
@@ -3278,12 +3456,51 @@ impl Render for RootView {
             .bg(theme.colors.background)
             .capture_key_down({
                 let root = root.clone();
-                move |event, _, cx| {
+                move |event, window, cx| {
+                    let handled_palette = root.update(cx, |this, cx| {
+                        if !this.agent_sessions_palette.is_open() {
+                            return false;
+                        }
+
+                        match event.keystroke.key.as_str() {
+                            "escape" => {
+                                this.agent_sessions_palette.handle_close_action(window, cx);
+                                this.ui_updates.bump();
+                                true
+                            }
+                            "up" => {
+                                this.agent_sessions_palette.select_previous(cx);
+                                this.ui_updates.bump();
+                                true
+                            }
+                            "down" => {
+                                this.agent_sessions_palette.select_next(cx);
+                                this.ui_updates.bump();
+                                true
+                            }
+                            "enter" => {
+                                if let Some(selection) =
+                                    this.agent_sessions_palette.activate_selected_entry(cx)
+                                {
+                                    this.activate_agent_session_palette_entry(selection, cx);
+                                }
+                                this.ui_updates.bump();
+                                true
+                            }
+                            _ => false,
+                        }
+                    });
+
+                    if handled_palette {
+                        cx.stop_propagation();
+                        return;
+                    }
+
                     if event.keystroke.key != "escape" {
                         return;
                     }
 
-                    let did_close = root.update(cx, |this, cx| {
+                    let did_close_panel = root.update(cx, |this, cx| {
                         let was_open = this.chrome.panel.is_some();
                         if was_open {
                             this.close_panel(cx);
@@ -3291,7 +3508,7 @@ impl Render for RootView {
                         was_open
                     });
 
-                    if did_close {
+                    if did_close_panel {
                         cx.stop_propagation();
                     }
                 }
@@ -3310,6 +3527,9 @@ impl Render for RootView {
 
         if self.command_palette.is_open() {
             root_container = root_container.child(self.command_palette.render(window, cx));
+        }
+        if self.agent_sessions_palette.is_open() {
+            root_container = root_container.child(self.agent_sessions_palette.render(window, cx));
         }
 
         if let Some(dialog) = self
@@ -3336,6 +3556,7 @@ struct EpicSessionPaneHost {
     fallback_session_id: Option<redesmyn_ids::SessionId>,
     selected_epic: Option<redesmyn_protocol::client::EpicSummary>,
     pinned_session_id: Option<redesmyn_ids::SessionId>,
+    pending_session_focus: Option<SessionId>,
     chat_sessions: Vec<redesmyn_protocol::client::AgentSessionSummary>,
     panel: Option<EpicSessionPanePanel>,
     scroll: ScrollHandle,
@@ -3383,6 +3604,7 @@ impl EpicSessionPaneHost {
             fallback_session_id,
             selected_epic: None,
             pinned_session_id: None,
+            pending_session_focus: None,
             chat_sessions: Vec::new(),
             panel: None,
             scroll: ScrollHandle::new(),
@@ -3412,6 +3634,7 @@ impl EpicSessionPaneHost {
         self.selection_generation = self.selection_generation.wrapping_add(1);
         self.selected_epic = epic;
         self.pinned_session_id = None;
+        self.pending_session_focus = None;
         self.chat_sessions.clear();
         self.panel = None;
         self.load_task = None;
@@ -3451,6 +3674,14 @@ impl EpicSessionPaneHost {
             self.selected_epic.as_ref(),
             Some(epic) if epic.slug == epic_slug
         )
+    }
+
+    fn surface_session_when_ready(&mut self, session_id: SessionId, cx: &mut Context<Self>) {
+        self.pending_session_focus = Some(session_id);
+        self.session_view.update(cx, |view, cx| {
+            view.set_session_id(Some(session_id), cx);
+        });
+        cx.notify();
     }
 
     fn emit_demo_message(
@@ -3596,11 +3827,16 @@ impl EpicSessionPaneHost {
                                 this.pinned_session_id = pinned_session_id;
                                 this.chat_sessions = chat_sessions;
                                 this.load.succeed();
+                                let session_to_surface =
+                                    this.pending_session_focus.take().or(this.pinned_session_id);
                                 this.session_view.update(cx, |view, cx| {
-                                    view.set_session_id(pinned_session_id, cx);
+                                    view.set_session_id(session_to_surface, cx);
                                 });
                             }
-                            Err(err) => this.load.fail(err.to_string()),
+                            Err(err) => {
+                                this.pending_session_focus = None;
+                                this.load.fail(err.to_string());
+                            }
                         }
 
                         cx.notify();
@@ -4433,6 +4669,7 @@ struct WorkspacePaneHost {
     graph_refresh_pending: bool,
     repo_event_subscription: Option<RepoEventLogSubscription>,
     live_update_router: LiveUpdateRouter,
+    pending_task_focus: Option<TaskId>,
     selection_generation: u64,
     _subscriptions: Vec<Subscription>,
 }
@@ -4649,6 +4886,7 @@ impl WorkspacePaneHost {
             graph_refresh_pending: false,
             repo_event_subscription: None,
             live_update_router: LiveUpdateRouter::new(),
+            pending_task_focus: None,
             selection_generation: 0,
             _subscriptions: subscriptions,
         }
@@ -4670,6 +4908,7 @@ impl WorkspacePaneHost {
         if slug_changed {
             self.selection_generation = self.selection_generation.wrapping_add(1);
             self.graph_task = None;
+            self.pending_task_focus = None;
             self.graph_state = redesmyn_protocol::ui_driver::UiGraphLoadState::Unselected;
             self.graph_node_count = 0;
             self.graph_edge_count = 0;
@@ -4699,11 +4938,32 @@ impl WorkspacePaneHost {
         cx.notify();
     }
 
+    fn focus_task_card_when_ready(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
+        self.pending_task_focus = Some(task_id);
+        self.try_apply_pending_task_focus(cx);
+    }
+
     fn set_sessions_collapsed(&mut self, collapsed: bool, cx: &mut Context<Self>) {
         if self.sessions_collapsed == collapsed {
             return;
         }
         self.sessions_collapsed = collapsed;
+        cx.notify();
+    }
+
+    fn try_apply_pending_task_focus(&mut self, cx: &mut Context<Self>) {
+        let Some(task_id) = self.pending_task_focus else {
+            return;
+        };
+        if !self.graph_view.read(cx).contains_task_node(task_id) {
+            return;
+        }
+
+        self.graph_view.update(cx, |view, cx| {
+            view.driver_select_node_by_task_id(task_id, cx)
+        });
+        self.pending_task_focus = None;
+        self.ui_updates.bump();
         cx.notify();
     }
 
@@ -5505,6 +5765,7 @@ impl WorkspacePaneHost {
                                 this.graph_view.update(cx, |view, cx| {
                                     view.replace_from_epic_graph(&graph, cx);
                                 });
+                                this.try_apply_pending_task_focus(cx);
                             }
                             Err(err) => {
                                 this.graph_state =
@@ -5513,6 +5774,7 @@ impl WorkspacePaneHost {
                                 this.stop_repo_event_subscription(cx);
                                 this.task_session_view
                                     .update(cx, |view, _cx| view.set_repo_scope(None));
+                                this.pending_task_focus = None;
                             }
                         }
 
@@ -6464,6 +6726,257 @@ impl Render for WorkspacePaneHost {
             .child(body.child(graph_host))
             .track_focus(&self.focus_handle(cx))
     }
+}
+
+#[derive(Debug, Clone)]
+struct EpicSessionGroupContext {
+    epic_slug: String,
+    epic_title: Option<String>,
+    epic_id: Option<redesmyn_ids::EpicId>,
+}
+
+async fn load_agent_session_palette_entries(
+    client: ControlPlaneClient,
+) -> Result<Vec<AgentSessionPaletteEntry>, String> {
+    let epics = client
+        .list_epics()
+        .await
+        .map_err(|error| format!("Failed to list epics: {error}"))?;
+
+    let mut entries_by_session: HashMap<SessionId, AgentSessionPaletteEntry> = HashMap::new();
+    let mut repo_epics: HashMap<RepoScope, Vec<EpicSessionGroupContext>> = HashMap::new();
+    let mut repo_labels: HashMap<RepoScope, String> = HashMap::new();
+    let mut partial_errors = Vec::new();
+
+    for epic in epics {
+        let epic_slug = epic.slug.clone();
+        let graph = match client.get_epic_graph(epic_slug.clone()).await {
+            Ok(graph) => graph,
+            Err(error) => {
+                partial_errors.push(format!("Failed to load epic {epic_slug}: {error}"));
+                continue;
+            }
+        };
+
+        let repo_scope = graph
+            .workspace_id
+            .zip(graph.repo_id)
+            .map(|(workspace_id, repo_id)| RepoScope::new(workspace_id, repo_id));
+        let epic_title = graph
+            .epic_title
+            .clone()
+            .or_else(|| (!epic.name.trim().is_empty()).then_some(epic.name.clone()));
+        let epic_id = epic.epic_id.or(graph.epic_id);
+
+        if let Some(scope) = repo_scope {
+            repo_epics
+                .entry(scope)
+                .or_default()
+                .push(EpicSessionGroupContext {
+                    epic_slug: epic_slug.clone(),
+                    epic_title: epic_title.clone(),
+                    epic_id,
+                });
+        }
+
+        let task_lookup: HashMap<TaskId, (String, String, redesmyn_protocol::client::TaskState)> =
+            graph
+                .nodes
+                .iter()
+                .filter_map(|node| {
+                    node.task_id.map(|task_id| {
+                        (
+                            task_id,
+                            (node.task_slug.clone(), node.title.clone(), node.state),
+                        )
+                    })
+                })
+                .collect();
+
+        for summary in graph.session_summaries {
+            let (task_slug, task_title, task_state) = task_lookup
+                .get(&summary.task_id)
+                .map(|(slug, title, state)| (Some(slug.clone()), Some(title.clone()), Some(*state)))
+                .unwrap_or((None, None, None));
+
+            if matches!(task_state, Some(redesmyn_protocol::client::TaskState::Done)) {
+                continue;
+            }
+
+            let repo_group_label = repo_scope
+                .map(|scope| repo_scope_display_label(scope, &mut repo_labels))
+                .unwrap_or_else(|| "No value".to_string());
+
+            let entry = AgentSessionPaletteEntry {
+                session_id: summary.session_id,
+                kind: AgentSessionKind::Task,
+                repo_group_label,
+                epic_slug: Some(epic_slug.clone()),
+                epic_title: epic_title.clone(),
+                task_slug,
+                task_title,
+                summary: summary.message_preview.clone(),
+                last_activity: Some(summary.last_event_at),
+                is_active: summary.kind != "session_ended",
+                navigation: AgentSessionNavigation::Task {
+                    epic_slug: epic_slug.clone(),
+                    task_id: summary.task_id,
+                },
+            };
+
+            upsert_agent_session_palette_entry(&mut entries_by_session, entry);
+        }
+    }
+
+    for (scope, epics_for_repo) in repo_epics {
+        let mut pinned_epics_by_session: HashMap<SessionId, (String, Option<String>)> =
+            HashMap::new();
+        for epic in &epics_for_repo {
+            let Some(epic_id) = epic.epic_id else {
+                continue;
+            };
+
+            match client.get_epic_pinned_chat_session(scope, epic_id).await {
+                Ok(Some(session_id)) => {
+                    pinned_epics_by_session
+                        .entry(session_id)
+                        .or_insert((epic.epic_slug.clone(), epic.epic_title.clone()));
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    partial_errors.push(format!(
+                        "Failed to read pinned chat for epic {}: {}",
+                        epic.epic_slug, error
+                    ));
+                }
+            }
+        }
+
+        let chat_sessions = match client.list_chat_sessions(scope, true, 200).await {
+            Ok(sessions) => sessions,
+            Err(error) => {
+                partial_errors.push(format!(
+                    "Failed to list chat sessions for repo {}: {}",
+                    repo_scope_display_label(scope, &mut repo_labels),
+                    error
+                ));
+                continue;
+            }
+        };
+
+        for chat in chat_sessions {
+            let pinned_epic = pinned_epics_by_session.get(&chat.session_id).cloned();
+            let (epic_slug, epic_title, navigation) = match pinned_epic {
+                Some((slug, title)) => (
+                    Some(slug.clone()),
+                    title,
+                    AgentSessionNavigation::Chat {
+                        epic_slug: slug,
+                        session_id: chat.session_id,
+                    },
+                ),
+                None => (
+                    None,
+                    None,
+                    AgentSessionNavigation::Disabled {
+                        reason: "No epic binding for this session.".into(),
+                    },
+                ),
+            };
+
+            let entry = AgentSessionPaletteEntry {
+                session_id: chat.session_id,
+                kind: AgentSessionKind::Chat,
+                repo_group_label: repo_scope_display_label(scope, &mut repo_labels),
+                epic_slug,
+                epic_title,
+                task_slug: None,
+                task_title: None,
+                summary: chat.title.clone(),
+                last_activity: chat.updated_at.or(chat.created_at),
+                is_active: chat_session_is_active(&chat),
+                navigation,
+            };
+
+            upsert_agent_session_palette_entry(&mut entries_by_session, entry);
+        }
+    }
+
+    let mut entries: Vec<AgentSessionPaletteEntry> = entries_by_session.into_values().collect();
+    entries.sort_by(|left, right| {
+        cmp_last_activity_desc(left.last_activity, right.last_activity).then_with(|| {
+            left.session_id
+                .to_string()
+                .cmp(&right.session_id.to_string())
+        })
+    });
+
+    if entries.is_empty() && !partial_errors.is_empty() {
+        return Err(partial_errors.join(" | "));
+    }
+
+    if !partial_errors.is_empty() {
+        redesmyn_logging::tracing::warn!(
+            error_count = partial_errors.len(),
+            first_error = %partial_errors[0],
+            "agent sessions palette loaded with partial errors",
+        );
+    }
+
+    Ok(entries)
+}
+
+fn cmp_last_activity_desc(left: Option<Timestamp>, right: Option<Timestamp>) -> std::cmp::Ordering {
+    right.cmp(&left)
+}
+
+fn upsert_agent_session_palette_entry(
+    entries: &mut HashMap<SessionId, AgentSessionPaletteEntry>,
+    candidate: AgentSessionPaletteEntry,
+) {
+    let Some(existing) = entries.get(&candidate.session_id) else {
+        entries.insert(candidate.session_id, candidate);
+        return;
+    };
+
+    let candidate_nav_enabled = !matches!(
+        &candidate.navigation,
+        AgentSessionNavigation::Disabled { .. }
+    );
+    let existing_nav_enabled = !matches!(
+        &existing.navigation,
+        AgentSessionNavigation::Disabled { .. }
+    );
+
+    let should_replace = (!existing_nav_enabled && candidate_nav_enabled)
+        || cmp_last_activity_desc(candidate.last_activity, existing.last_activity).is_lt();
+
+    if should_replace {
+        entries.insert(candidate.session_id, candidate);
+    }
+}
+
+fn repo_scope_display_label(scope: RepoScope, labels: &mut HashMap<RepoScope, String>) -> String {
+    if let Some(label) = labels.get(&scope) {
+        return label.clone();
+    }
+
+    let next = labels.len() + 1;
+    let label = format!("Repo {next}");
+    labels.insert(scope, label.clone());
+    label
+}
+
+fn chat_session_is_active(session: &redesmyn_protocol::client::AgentSessionSummary) -> bool {
+    if session.closed_at.is_some() || session.ended_at.is_some() {
+        return false;
+    }
+
+    matches!(
+        session.status,
+        redesmyn_protocol::client::AgentSessionStatus::Running
+            | redesmyn_protocol::client::AgentSessionStatus::Blocked
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

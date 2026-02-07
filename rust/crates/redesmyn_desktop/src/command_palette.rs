@@ -4,9 +4,13 @@ actions!(
     redesmyn_desktop_command_palette,
     [
         ToggleCommandPalette,
+        ToggleAgentSessionsPalette,
         CloseCommandPalette,
+        CloseAgentSessionsPalette,
         SelectPreviousCommand,
         SelectNextCommand,
+        SelectPreviousAgentSession,
+        SelectNextAgentSession,
     ]
 );
 
@@ -109,6 +113,8 @@ pub fn bind_command_palette_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-k", ToggleCommandPalette, Some("Desktop")),
         KeyBinding::new("ctrl-k", ToggleCommandPalette, Some("Desktop")),
+        KeyBinding::new("cmd-s", ToggleAgentSessionsPalette, Some("Desktop")),
+        KeyBinding::new("ctrl-s", ToggleAgentSessionsPalette, Some("Desktop")),
         KeyBinding::new("escape", CloseCommandPalette, Some("CommandPalette")),
         KeyBinding::new(
             "escape",
@@ -124,6 +130,26 @@ pub fn bind_command_palette_keys(cx: &mut App) {
             "down",
             SelectNextCommand,
             Some("CommandPalette > TextInput"),
+        ),
+        KeyBinding::new(
+            "escape",
+            CloseAgentSessionsPalette,
+            Some("AgentSessionsPalette"),
+        ),
+        KeyBinding::new(
+            "escape",
+            CloseAgentSessionsPalette,
+            Some("AgentSessionsPalette > TextInput"),
+        ),
+        KeyBinding::new(
+            "up",
+            SelectPreviousAgentSession,
+            Some("AgentSessionsPalette > TextInput"),
+        ),
+        KeyBinding::new(
+            "down",
+            SelectNextAgentSession,
+            Some("AgentSessionsPalette > TextInput"),
         ),
     ]);
 }
