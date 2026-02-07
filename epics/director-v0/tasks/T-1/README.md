@@ -9,20 +9,24 @@ rn:
 
 ## Plan
 
-- Specify the director’s run model:
-  - triggers (manual, periodic, “wake on new event”)
-  - how concurrent wakeups are handled (coalescing is OK)
-- Specify event consumption semantics:
-  - persistent cursor
-  - per-run high-water mark
-  - exactly-which events are visible to the director in a run
-- Specify how the director produces intents:
-  - intent types (merge actions, gate requests, “request changes”, etc.)
-  - idempotency keys so the same intent isn’t re-issued on replay
-- Specify the minimal state the director must persist (cursor + last run metadata).
+- Specify the director/controller lifecycle:
+  - director is an epic-pinned LLM session
+  - controller wakes director on significant event changes
+  - concurrent wakeups are coalesced deterministically
+- Specify event-consumption semantics:
+  - persistent cursor for acknowledged consumption
+  - high-water mark semantics at wake boundaries
+  - exact visibility rules for "events available in this wake"
+- Specify action idempotency around direct `rn` execution by the director:
+  - repeated wake processing must not cause duplicate task starts/merges/gates
+  - command-side idempotency keys and/or state guards are explicit
+- Specify the minimal persisted state:
+  - per-epic director session identity
+  - event cursor / last acknowledged event
+  - last wake metadata (reason, size, timestamp)
 
 ## Acceptance Criteria
 
-- The “new events while running” story is explicit and does not require a separate “ack table”.
-- The director can be restarted without losing correctness (cursor replay is sufficient).
-- Intent emission is idempotent and safe under retries.
+- The "new events while running" behavior is explicit and does not rely on polling.
+- Director restarts preserve correctness via cursored replay.
+- Reprocessing a wake is safe and does not duplicate orchestration actions.

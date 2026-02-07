@@ -1,26 +1,31 @@
 ---
 rn:
   node:
-    branch: rn/director-v0/T-4-git-bundle-artifacts
-  parent: T-3
+    branch: rn/director-v0/T-4-controller-wake-protocol
+  parent: T-1
 ---
 
-# T-4 Remote change delivery via git bundle artifacts
+# T-4 Controller <-> director wake protocol + backlog delivery
 
 ## Plan
 
-- Specify “commit SHA as change identity” as the default, and define the fallback when the control plane can’t
-  fetch the commit objects directly.
-- Define a “git bundle” artifact workflow:
-  - remote executor creates a bundle containing the candidate commit(s) + required history
-  - bundle is uploaded/streamed as an artifact to the control plane
-  - designated executor imports the bundle (fetch) and makes the ref available locally
-- Define how this integrates with merge queue + gating:
-  - what ref the queue points at before/after import
-  - how to surface diffs/logs for review in UI
+- Define significant-event detection for wakeups:
+  - which event kinds require waking the director
+  - coalescing/deduping behavior while director is busy
+- Define wake payload contract:
+  - include all available unacknowledged events at wake time
+  - deterministic ordering
+  - chunking behavior when payload exceeds message budget
+- Define director acknowledgement contract:
+  - explicit ack cursor returned by director
+  - retry/replay behavior when ack is missing or partial
+- Define controller safety behavior:
+  - no polling requirement in v0
+  - bounded queue growth / backlog handling strategy
+  - clear wake reasons and observability for debugging
 
 ## Acceptance Criteria
 
-- A remote executor without push credentials can still deliver reviewable, reproducible changes.
-- The control plane can surface “what changed” using git-native objects once the bundle is imported.
-- Artifacts are immutable and content-addressable (recommended) so the same change can be re-applied safely.
+- Director can be driven entirely by controller wake messages in v0 (no direct event polling required).
+- No events are silently dropped between wake and ack, including large-backlog scenarios.
+- Replayed wake deliveries are safe and do not cause unintended duplicate orchestration actions.

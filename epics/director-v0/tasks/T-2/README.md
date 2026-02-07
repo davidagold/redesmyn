@@ -12,6 +12,9 @@ rn:
 - Define the merge queue primitives:
   - queue item identity and state machine (draft → ready → gated → mergeable → merged/blocked/etc.)
   - dependency/blocker modeling (A approved pending B; A needs follow-up wiring commit)
+- Define action authority model on top of the queue:
+  - director agent chooses queue actions and executes via `rn`
+  - conductor can override/pause/approve policy-sensitive transitions
 - Define the conductor interaction model:
   - approve/reject/defer/requeue
   - request changes (with a structured reason)
@@ -23,5 +26,5 @@ rn:
 ## Acceptance Criteria
 
 - The queue can represent pending dependencies and staged approvals without inventing ad-hoc states.
-- The conductor has explicit actions (not implicit by editing text) and can see why items are blocked.
+- Director-driven actions and conductor overrides are both explicit, durable, and explainable.
 - The director can re-evaluate ordering when new information arrives (e.g. task C appears).

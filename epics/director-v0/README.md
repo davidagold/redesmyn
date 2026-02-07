@@ -12,31 +12,47 @@ rn:
 This file is the canonical “control doc” for the **Director v0** epic: intent, v0 spec, sequencing, and key
 decisions. Keep it current.
 
+## Terminology
+
+- **Director agent**: the LLM session pinned to an epic that decides orchestration actions and runs `rn` directly.
+- **Controller**: mechanical wake/queue layer that observes events and sends messages to the director agent.
+- **Conductor**: human operator that can pause/override/approve policy-sensitive actions.
+- **Remote execution**: where/with-what credentials commands run. This is intentionally out of scope for this epic.
+
 ## 1) Vision
 
 Add a **director** that can drive multi-agent work towards a coherent outcome:
 
 - Observe the control plane’s durable event stream.
-- Propose merge actions (order, dependencies, wiring work) and gating.
-- Route intent into the existing command system so the control plane can delegate to appropriate executors.
+- Decide merge/start/request-change/gating actions for an epic.
+- Execute those actions via `rn` commands from the director agent session.
 - Keep the human “conductor” in the loop for approvals/overrides.
 
-The control plane remains the source of truth for state and execution; the director is an automation consumer
-of that state, not an alternate authority.
+The control plane remains the source of truth for state and execution. The director agent is the required
+decision-maker for orchestration, while the controller provides deterministic wakeup and backlog delivery.
 
 ## 2) Key decisions (v0)
 
-### 2.1 Event consumption: cursor + high-water mark (no separate ack queue)
+### 2.1 Push-based controller -> director wake protocol (no polling in v0)
 
-Director runs consume events from the durable event log using:
+- The director should be woken by the controller when significant new information arrives.
+- v0 does not require the director to poll event queues directly.
+- Wakeups can be coalesced, but wake payload correctness must be deterministic (cursor-based).
 
-- a **persistent cursor** (last processed event ID / timestamp), and
-- a **run high-water mark** taken at run start (process “events ≤ HWM” for determinism).
+### 2.2 Wake payload policy: include all available unacknowledged events
 
-New events arriving during a run are picked up on the next run; wakeups can be lossy because correctness comes
-from cursor replay.
+- For expediency and backlog control, each wake includes all unacknowledged events available at wake time.
+- If the payload is too large for one message, the controller should chunk deterministically without dropping
+  events.
+- Director acknowledgements advance an explicit cursor so the controller knows what has been consumed.
 
-### 2.2 Merge queue: explicit, human-steerable
+### 2.3 Director executes orchestration via `rn`
+
+- The director agent directly runs `rn` commands for orchestration actions (start task, merge, run gates, etc.).
+- Event emission comes from normal command handling paths; no separate intent-runner is required for v0.
+- Controller responsibilities are wakeup, delivery, dedupe/coalescing, and lifecycle coordination.
+
+### 2.4 Merge queue: explicit, human-steerable
 
 The director operates on an explicit merge queue that supports:
 
@@ -45,7 +61,7 @@ The director operates on an explicit merge queue that supports:
 - conductor actions (approve, defer, request changes, requeue),
 - and visibility into what’s gated/blocked and why.
 
-### 2.3 Gating is a first-class command, applied sparingly
+### 2.5 Gating is a first-class command, applied sparingly
 
 Gates (tests, lint, typecheck, build, etc.) are modeled as commands that:
 
@@ -54,37 +70,49 @@ Gates (tests, lint, typecheck, build, etc.) are modeled as commands that:
 - publish logs/artifacts for review,
 - and can be cached by `(candidate_ref, base_ref_used, policy)`.
 
-### 2.4 Changes are identified by commit SHA when possible; transport is an artifact concern
+### 2.6 Review path: director-owned in v0, pluggable provider later
 
-The source of truth for “what changed” should be **git objects** (commit SHA + reachable history). When the
-control plane cannot fetch those objects directly (e.g. remote executor has no push creds), the change can be
-delivered as a **git bundle artifact** via the protocol/artifact channel.
+- In v0, the director agent may perform review itself.
+- Future direction: delegate review to a separate review mechanism (LLM session/tool/CLI flow) and have the
+  director consume structured review outputs.
+- Event schema should preserve this evolution path (e.g. `review_requested` / `review_completed`-style events).
 
-### 2.5 Network/security: start with VPN
+### 2.7 UI is part of the director contract, kept minimal in v0
 
-Remote parity should assume private networking first (VPN). AuthN/AuthZ still matters even over VPN:
-
-- daemons authenticate to the control plane (v0: shared token; later: mTLS/OIDC),
-- control plane authorizes commands per actor/role,
-- and repo executor leases fence mutating operations.
+- The director surface is the pinned epic session view.
+- Composer is disabled while automatic direction is active, unless the user explicitly pauses automatic direction.
+- The UI includes a subtle integrated visual treatment indicating an active director session (avoid badge-only UI).
+- A small controller overlay in graph view shows wake/queue status only (not duplicate task progress surfaces).
 
 ## 3) v0 scope
 
-- Director run semantics (wakeups, cursoring, idempotency).
+- Director/controller run semantics (wakeups, backlog delivery, cursor/ack, idempotency).
 - Merge queue + conductor controls.
 - Gate policy and gate execution plumbing (as commands).
-- “Change delivery” via git bundle artifacts for remote executors.
-- Minimal AuthN/AuthZ surfaces to support remote daemons safely.
+- Director-driven orchestration via direct `rn` command execution.
+- Director UI v0 as pinned session + controller overlay.
+
+## 3.1 Explicit out-of-scope (moved to sibling epic)
+
+The following is tracked in `epics/remote-execution-v0/README.md`:
+
+- Remote change transport (e.g. git bundle artifact workflows).
+- Remote daemon/executor AuthN/AuthZ and deployment security posture.
 
 ## 4) Non-goals (v0)
 
 - Fully autonomous merging without human approval.
 - Multi-user shared control plane with fine-grained org policies.
 - Perfect scheduling; v0 can be “wake on event + manual run”.
+- Solving remote execution transport/security in this epic.
 
 ## 5) Tasks
 
-See `epics/director-v0/tasks/` for the task breakdown.
+- `epics/director-v0/tasks/T-1/README.md`: Director run semantics (cursor/high-water/idempotency).
+- `epics/director-v0/tasks/T-2/README.md`: Merge queue model + conductor actions.
+- `epics/director-v0/tasks/T-3/README.md`: Gate policy + caching as commands.
+- `epics/director-v0/tasks/T-4/README.md`: Controller <-> director wake protocol + event backlog delivery.
+- `epics/director-v0/tasks/T-5/README.md`: Director UI v0 (pinned session + controller overlay).
 
 ## 6) Sequencing intent (parallelizable)
 
@@ -92,5 +120,6 @@ See `epics/director-v0/tasks/` for the task breakdown.
 - After `T-1`, execute in parallel:
   - `T-2` merge queue model + conductor actions.
   - `T-3` gate policy + caching as commands.
-  - `T-5` AuthN/AuthZ v0 for remote daemons + executors.
-- Then land `T-4` after `T-3`, with an explicit alignment pass against `T-2` for queue ref semantics before/after bundle import.
+  - `T-4` wake protocol + backlog delivery.
+- Land `T-5` after `T-4`, with alignment against `T-2`/`T-3` so the UI mirrors queue/gate/controller state
+  without duplicating task-card information.

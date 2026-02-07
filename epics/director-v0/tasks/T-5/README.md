@@ -1,26 +1,30 @@
 ---
 rn:
   node:
-    branch: rn/director-v0/T-5-authn-authz-v0
-  parent: T-1
+    branch: rn/director-v0/T-5-director-session-ui-v0
+  parent: T-4
 ---
 
-# T-5 AuthN/AuthZ v0 for remote daemons + executors
+# T-5 Director UI v0 (pinned session + controller overlay)
 
 ## Plan
 
-- Define the v0 AuthN story for daemons connecting over VPN:
-  - shared token in handshake (v0)
-  - upgrade path to mTLS and/or OIDC later
-- Define the v0 AuthZ story:
-  - which actors can enqueue commands, run gates, and perform mutating git operations
-  - how repo executor leases fence writers (defense-in-depth)
-- Specify concrete deployment sketches:
-  - laptop control plane + EC2 daemon over VPN
-  - optional SSH port-forwarding as an ergonomic supplement (not a substitute for AuthZ)
+- Use the epic-pinned director session as the primary UI (no separate heavy workbench in v0).
+- Add automatic-direction controls:
+  - composer disabled while automatic direction is active
+  - explicit pause/resume automatic direction toggle; composer re-enabled when paused
+- Add integrated active-director visual treatment:
+  - subtle, structural styling (integrated with layout/chrome)
+  - avoid badge-only or duplicate status labels
+- Add a small controller overlay in graph view (e.g. corner dock) that shows:
+  - queued wake/message count
+  - controller state (idle/sending/waiting-ack/error)
+  - last wake reason/time
+- Keep overlay scope tight:
+  - do not duplicate task-card progress/status content already visible in graph
 
 ## Acceptance Criteria
 
-- It’s clear what secrets/credentials exist in v0, where they live, and how they rotate.
-- It’s clear which capabilities are authorized for which actors in v0.
-- The design doesn’t assume “private network == trusted”.
+- A user can clearly tell when the director session is actively auto-directing the epic.
+- Users cannot accidentally send manual messages while auto-direction is active.
+- Controller queue/wake state is visible without introducing duplicate task-status surfaces.

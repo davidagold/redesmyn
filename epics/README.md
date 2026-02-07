@@ -16,6 +16,7 @@ By default, prefer git history + PRs + Linear/GitHub metadata as the changelog. 
 - `epics/graph-viz/README.md`
 - `epics/agent-orchestration/README.md`
 - `epics/director-v0/README.md`
+- `epics/remote-execution-v0/README.md`
 - `epics/harness-interface-v0/README.md`
 - `epics/ui-v0/README.md`
 - `epics/messages-commands/README.md`
