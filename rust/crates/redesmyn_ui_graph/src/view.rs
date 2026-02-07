@@ -40,14 +40,17 @@ use crate::scene::{AgentStatus, GraphEdgeId, GraphNodeId, GraphScene, TrunkMarkK
 
 use redesmyn_markdown::{MarkdownParseOptions, parse_markdown};
 use redesmyn_protocol::client::{
-    AgentKind, AgentMessageConflictAction, MergeReadiness, RequestPayload, ResponseResult,
-    RestartAgentRequest, SessionModelSelection, StartAgentRequest, StopAgentRequest, TaskState,
+    AgentKind, AgentMessageConflictAction, CommandState, MergeReadiness, RequestPayload,
+    ResponseResult, RestartAgentRequest, SessionModelSelection, StartAgentRequest,
+    StopAgentRequest, TaskState,
 };
 use redesmyn_protocol::ui_driver::{
     UiGraphCameraState, UiGraphEdgeId as UiDriverGraphEdgeId, UiGraphLoadState,
     UiGraphNodeId as UiDriverGraphNodeId, UiGraphState,
 };
-use redesmyn_protocol::{CodexApprovalPolicy, CodexSandboxPolicy, ProtocolEnvelope, RepoScope};
+use redesmyn_protocol::{
+    CodexApprovalPolicy, CodexSandboxPolicy, ProtocolEnvelope, RepoScope, Timestamp,
+};
 use redesmyn_ui_session::{SessionView, SessionViewEvent, TaskSessionOperation};
 
 /// Key context used for graph-only keyboard shortcuts (e.g., task filter toggle).
@@ -531,6 +534,70 @@ impl GraphView {
 
         self.update_selection_bar_target(cx);
         cx.notify();
+    }
+
+    pub fn apply_task_state_update(
+        &mut self,
+        task_id: TaskId,
+        state: TaskState,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.apply_runtime_scene_update(cx, |scene| scene.apply_task_state_update(task_id, state))
+    }
+
+    pub fn apply_command_state_update(
+        &mut self,
+        command_id: CommandId,
+        target_task_id: Option<TaskId>,
+        kind: Option<&str>,
+        state: CommandState,
+        message: Option<&str>,
+        updated_at: Timestamp,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.apply_runtime_scene_update(cx, |scene| {
+            scene.apply_command_state_update(
+                command_id,
+                target_task_id,
+                kind,
+                state,
+                message,
+                updated_at,
+            )
+        })
+    }
+
+    fn apply_runtime_scene_update<F>(&mut self, cx: &mut Context<Self>, mut apply: F) -> bool
+    where
+        F: FnMut(&mut GraphScene) -> bool,
+    {
+        let previous_selected = self.scene.selection().selected_node;
+        let changed = if let Some(full) = self.full_scene.as_mut() {
+            let changed_full = apply(full);
+            if changed_full {
+                self.scene = full.filtered_pruned(&self.task_filters);
+            }
+            changed_full
+        } else {
+            apply(&mut self.scene)
+        };
+
+        if !changed {
+            return false;
+        }
+
+        self.edge_label_cache.borrow_mut().clear();
+
+        let next_selected = self.scene.selection().selected_node;
+        if previous_selected != next_selected {
+            self.reset_expanded_card_state();
+            self.sync_task_session_view(next_selected, cx);
+            self.sync_task_description(next_selected, cx);
+        }
+
+        self.update_selection_bar_target(cx);
+        cx.notify();
+        true
     }
 
     fn visual_selected_node(&self) -> Option<GraphNodeId> {

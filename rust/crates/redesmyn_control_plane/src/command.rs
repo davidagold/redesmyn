@@ -40,6 +40,9 @@ struct CommandUpdateEventPayload {
     command_id: CommandId,
     update_id: CommandUpdateId,
     state: String,
+    kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    target_task_id: Option<TaskId>,
     message: Option<String>,
 }
 
@@ -431,6 +434,8 @@ impl Commands {
             command_id: command.command_id,
             update_id: update.update_id,
             state: update.state.as_str().to_string(),
+            kind: command.kind.clone(),
+            target_task_id: command.target_task_id,
             message: update.message.clone(),
         };
 
