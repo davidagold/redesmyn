@@ -128,7 +128,13 @@ pub async fn serve_client_api_listener(
         tokio::select! {
             _ = shutdown.recv() => break,
             accept = listener.accept() => {
-                let (stream, _addr) = accept?;
+                let (stream, _addr) = match accept {
+                    Ok(value) => value,
+                    Err(err) => {
+                        tracing::warn!(error = %err, "client API UDS accept failed; continuing");
+                        continue;
+                    }
+                };
                 let task_codec = codec;
                 let task_control_plane = control_plane.clone();
                 let mut task_shutdown = shutdown.resubscribe();
