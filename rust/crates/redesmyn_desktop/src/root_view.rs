@@ -4458,6 +4458,9 @@ impl WorkspacePaneHost {
         task_session_view.update(cx, |view, cx| {
             view.set_task_start_model_selection(task_start_model_selection, cx);
             view.set_task_start_initial_prompt(task_start_initial_prompt, cx);
+            // In expanded task cards, the composer sits next to a details panel. Expand the
+            // settings submenu inward so it remains within the task-session surface.
+            view.set_settings_menu_secondary_side(CascadingMenuSecondarySide::Left, cx);
         });
         let graph_session_view = task_session_view.clone();
         let graph_view = cx.new(|cx| GraphView::new_empty(graph_session_view, cx));

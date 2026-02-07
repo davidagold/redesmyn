@@ -50,12 +50,13 @@ use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 use redesmyn_session_view_model::{SessionEventItemContent, SessionFeedState, SessionTimelineItem};
 use redesmyn_ui::components::{
     ButtonKind, Callout, CalloutKind, CascadingMenu, CascadingMenuId, CascadingMenuMetrics,
-    CascadingMenuRowStyle, CascadingMenuState, CascadingMenuSurfaceStyle, Expandable, IconButton,
-    MarkdownView, OverlaySurfaceKind, ScrollFade, ScrollbarStyle, StyledScrollbar, TextArea,
-    TextButton, TextInput, TextInputEvent, TextInputPastedImage, Tooltip,
-    cascading_menu_move_left_to_primary, cascading_menu_radio_indicator, cascading_menu_row,
-    cascading_menu_row_value, cascading_menu_surface, cascading_select_menu_item,
-    clear_open_cascading_menu_for, overlay_surface, set_open_cascading_menu_for,
+    CascadingMenuRowStyle, CascadingMenuSecondarySide, CascadingMenuState,
+    CascadingMenuSurfaceStyle, Expandable, IconButton, MarkdownView, OverlaySurfaceKind,
+    ScrollFade, ScrollbarStyle, StyledScrollbar, TextArea, TextButton, TextInput, TextInputEvent,
+    TextInputPastedImage, Tooltip, cascading_menu_move_left_to_primary,
+    cascading_menu_radio_indicator, cascading_menu_row, cascading_menu_row_value,
+    cascading_menu_surface, cascading_select_menu_item, clear_open_cascading_menu_for,
+    overlay_surface, set_open_cascading_menu_for,
 };
 use redesmyn_ui::styles::ThemeMode;
 use redesmyn_ui::utils::{
@@ -1260,6 +1261,7 @@ pub struct SessionView {
     session_settings_submenu_index: usize,
     session_model_menu_index: usize,
     session_reasoning_menu_index: usize,
+    settings_menu_secondary_side: CascadingMenuSecondarySide,
     session_model_shortcut_availability: ActionAvailabilityProbe,
     session_reasoning_shortcut_availability: ActionAvailabilityProbe,
     policies_fetch_generation: u64,
@@ -1447,6 +1449,7 @@ impl SessionView {
             session_settings_submenu_index: 0,
             session_model_menu_index: 0,
             session_reasoning_menu_index: 0,
+            settings_menu_secondary_side: CascadingMenuSecondarySide::Right,
             session_model_shortcut_availability: ActionAvailabilityProbe::new(),
             session_reasoning_shortcut_availability: ActionAvailabilityProbe::new(),
             policies_fetch_generation: 0,
@@ -1992,6 +1995,18 @@ impl SessionView {
         } else {
             self.close_session_settings_menu(cx);
         }
+    }
+
+    pub fn set_settings_menu_secondary_side(
+        &mut self,
+        side: CascadingMenuSecondarySide,
+        cx: &mut Context<Self>,
+    ) {
+        if self.settings_menu_secondary_side == side {
+            return;
+        }
+        self.settings_menu_secondary_side = side;
+        cx.notify();
     }
 
     pub fn reconcile_settings_menu_open(&mut self, open: bool, cx: &mut Context<Self>) {
@@ -7268,6 +7283,11 @@ impl Render for SessionView {
                 gap: theme.spacing.sm,
                 ..row_style
             };
+            let secondary_side = self.settings_menu_secondary_side;
+            let secondary_indicator = match secondary_side {
+                CascadingMenuSecondarySide::Right => "›",
+                CascadingMenuSecondarySide::Left => "‹",
+            };
 
             let primary_width = px(220.0);
             let secondary_width = px(240.0);
@@ -7321,7 +7341,7 @@ impl Render for SessionView {
                                 .gap(theme.spacing.xs)
                                 .min_w_0()
                                 .child(cascading_menu_row_value(&theme, current_label))
-                                .child(div().flex_shrink_0().child("›")),
+                                .child(div().flex_shrink_0().child(secondary_indicator)),
                         );
 
                 primary_list = primary_list.child(row);
@@ -7499,6 +7519,7 @@ impl Render for SessionView {
                     .child(
                         CascadingMenu::new(primary_menu)
                             .metrics(menu_metrics)
+                            .secondary_side(secondary_side)
                             .maybe_secondary(submenu_top, submenu),
                     )
                     .into_any_element(),
