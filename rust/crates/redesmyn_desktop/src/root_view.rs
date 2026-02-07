@@ -5333,14 +5333,15 @@ impl Render for WorkspacePaneHost {
             .task_session_view
             .read(cx)
             .is_composer_focused(window, cx);
+        let graph_shortcut_scope_focused = self.graph_view.focus_handle(cx).is_focused(window);
 
         let filter_shortcut_enabled = self
             .task_filters_action_availability
-            .is_action_available_or(
+            .is_action_available_in_scope(
                 window,
                 cx,
                 &OpenTaskFilters,
-                self.graph_view.focus_handle(cx).is_focused(window),
+                graph_shortcut_scope_focused,
             )
             && !task_composer_focused;
         let filter_tab_height = px(28.0);

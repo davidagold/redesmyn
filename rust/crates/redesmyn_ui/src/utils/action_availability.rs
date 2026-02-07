@@ -55,6 +55,24 @@ impl ActionAvailabilityProbe {
         window.is_action_available(action, cx)
     }
 
+    /// Returns whether the action is available and the caller's local shortcut scope is focused.
+    ///
+    /// This prevents cross-surface false positives when multiple views in the same window register
+    /// identical key contexts and action handlers.
+    pub fn is_action_available_in_scope<T: 'static>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<T>,
+        action: &dyn Action,
+        scope_focused: bool,
+    ) -> bool {
+        if !scope_focused {
+            return false;
+        }
+
+        self.is_action_available_or(window, cx, action, true)
+    }
+
     fn schedule_ready(&self, window: &Window, entity_id: EntityId) {
         let ready = self.ready.clone();
         window.on_next_frame(move |_, cx| {

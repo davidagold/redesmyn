@@ -1187,6 +1187,7 @@ pub enum SessionViewEvent {
 
 pub struct SessionView {
     focus_handle: FocusHandle,
+    composer_focus_handle: FocusHandle,
     timeline_list_state: ListState,
     timeline_items: Rc<Vec<SessionTimelineItem>>,
     timeline_follow_bottom: Rc<Cell<bool>>,
@@ -1310,6 +1311,7 @@ impl SessionView {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
+        let composer_focus_handle = cx.focus_handle();
         let timeline_list_state =
             ListState::new(1, gpui::ListAlignment::Top, px(400.0)).measure_all();
         let show_debug_controls = std::env::var("REDESMYN_SESSION_VIEWER_DEBUG_CONTROLS")
@@ -1365,6 +1367,7 @@ impl SessionView {
 
         let mut this = Self {
             focus_handle,
+            composer_focus_handle,
             timeline_list_state,
             timeline_items: Rc::new(Vec::new()),
             timeline_follow_bottom: Rc::new(Cell::new(false)),
@@ -1962,8 +1965,8 @@ impl SessionView {
         cx.notify();
     }
 
-    pub fn is_composer_focused(&self, window: &Window, cx: &App) -> bool {
-        self.composer_input.focus_handle(cx).is_focused(window)
+    pub fn is_composer_focused(&self, window: &Window, _cx: &App) -> bool {
+        self.composer_focus_handle.is_focused(window)
     }
 
     fn open_cascading_menu_for_self(&self, cx: &Context<Self>) -> Option<CascadingMenuId> {
@@ -3049,15 +3052,21 @@ impl SessionView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let shortcut_scope_focused = self.is_composer_focused(window, cx);
         let available = self
             .session_model_shortcut_availability
-            .is_action_available_or(window, cx, &OpenSessionModelSelector, false);
+            .is_action_available_in_scope(
+                window,
+                cx,
+                &OpenSessionModelSelector,
+                shortcut_scope_focused,
+            );
         if !available || self.session_model_selectors_disabled() {
             return;
         }
         self.set_session_model_menu_index_from_selection();
         self.set_open_cascading_menu_for_self(Some(CascadingMenuId::SessionModel), cx);
-        window.focus(&self.focus_handle);
+        window.focus(&self.composer_focus_handle);
         cx.notify();
     }
 
@@ -3067,15 +3076,21 @@ impl SessionView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let shortcut_scope_focused = self.is_composer_focused(window, cx);
         let available = self
             .session_reasoning_shortcut_availability
-            .is_action_available_or(window, cx, &OpenSessionReasoningSelector, false);
+            .is_action_available_in_scope(
+                window,
+                cx,
+                &OpenSessionReasoningSelector,
+                shortcut_scope_focused,
+            );
         if !available || self.session_model_selectors_disabled() {
             return;
         }
         self.set_session_reasoning_menu_index_from_selection();
         self.set_open_cascading_menu_for_self(Some(CascadingMenuId::SessionReasoning), cx);
-        window.focus(&self.focus_handle);
+        window.focus(&self.composer_focus_handle);
         cx.notify();
     }
 
@@ -7512,22 +7527,22 @@ impl Render for SessionView {
                 .opacity(if enabled { 1.0 } else { 0.4 })
                 .child(label)
         };
-        let selector_shortcut_fallback = self.composer_input.focus_handle(cx).is_focused(window);
+        let selector_shortcut_scope_focused = self.is_composer_focused(window, cx);
         let model_shortcut_enabled = self
             .session_model_shortcut_availability
-            .is_action_available_or(
+            .is_action_available_in_scope(
                 window,
                 cx,
                 &OpenSessionModelSelector,
-                selector_shortcut_fallback,
+                selector_shortcut_scope_focused,
             );
         let reasoning_shortcut_enabled = self
             .session_reasoning_shortcut_availability
-            .is_action_available_or(
+            .is_action_available_in_scope(
                 window,
                 cx,
                 &OpenSessionReasoningSelector,
-                selector_shortcut_fallback,
+                selector_shortcut_scope_focused,
             );
 
         let model_menu_open = open_menu == Some(CascadingMenuId::SessionModel);
@@ -8073,6 +8088,7 @@ impl Render for SessionView {
             .relative()
             .w_full()
             .key_context("SessionComposer")
+            .track_focus(&self.composer_focus_handle)
             .when_some(composer_image_strip, |this, strip| this.child(strip))
             .child(self.composer_input.clone())
             .when_some(composer_image_hovercard, |this, hovercard| {
