@@ -4464,6 +4464,8 @@ impl crate::client::EpicGraph {
                 .repo_id
                 .map(|id| id.to_bytes().to_vec())
                 .unwrap_or_default(),
+            repo_slug: self.repo_slug.clone().unwrap_or_default(),
+            repo_title: self.repo_title.clone().unwrap_or_default(),
             command_summaries: self
                 .command_summaries
                 .iter()
@@ -4507,6 +4509,16 @@ impl crate::client::EpicGraph {
             },
             workspace_id: decode_optional_ulid::<WorkspaceId>("workspace_id", &proto.workspace_id)?,
             repo_id: decode_optional_ulid::<RepoId>("repo_id", &proto.repo_id)?,
+            repo_slug: if proto.repo_slug.is_empty() {
+                None
+            } else {
+                Some(proto.repo_slug)
+            },
+            repo_title: if proto.repo_title.is_empty() {
+                None
+            } else {
+                Some(proto.repo_title)
+            },
             command_summaries: proto
                 .command_summaries
                 .into_iter()

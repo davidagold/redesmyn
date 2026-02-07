@@ -75,11 +75,11 @@ impl AgentSessionPaletteEntry {
         let mut parts = Vec::new();
 
         if let Some(epic_slug) = self.epic_slug.as_ref() {
-            parts.push(format!("Epic {epic_slug}"));
+            parts.push(epic_slug.clone());
         }
 
         if let Some(task_slug) = self.task_slug.as_ref() {
-            parts.push(format!("Task {task_slug}"));
+            parts.push(task_slug.clone());
         }
 
         if parts.is_empty() {
@@ -92,7 +92,7 @@ impl AgentSessionPaletteEntry {
     fn group_epic_label(&self) -> String {
         self.epic_slug
             .clone()
-            .unwrap_or_else(|| "No value".to_string())
+            .unwrap_or_else(|| "No epic".to_string())
     }
 
     fn kind_label(&self) -> &'static str {

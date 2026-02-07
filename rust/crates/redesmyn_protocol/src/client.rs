@@ -403,6 +403,10 @@ pub struct EpicGraph {
     pub workspace_id: Option<WorkspaceId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo_id: Option<RepoId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_slug: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_title: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub command_summaries: Vec<CommandSummary>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

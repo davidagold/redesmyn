@@ -25,6 +25,8 @@ pub struct EpicRecord {
     pub epic_id: EpicId,
     pub slug: String,
     pub title: String,
+    pub repo_slug: String,
+    pub repo_title: String,
     pub scope: RepoScope,
 }
 
@@ -205,11 +207,11 @@ async fn load_epic<'e, E>(
 where
     E: Executor<'e, Database = Sqlite> + Copy,
 {
-    let rows: Vec<(EpicId, String, String, RepoId, WorkspaceId)> = match scope {
+    let rows: Vec<(EpicId, String, String, RepoId, WorkspaceId, String, String)> = match scope {
         Some(scope) => {
             sqlx::query_as(
                 r#"
-                SELECT e.id, e.slug, e.title, r.id, r.workspace_id
+                SELECT e.id, e.slug, e.title, r.id, r.workspace_id, r.slug, r.title
                 FROM epics e
                 JOIN repositories r ON r.id = e.repo_id
                 WHERE e.slug = ?1 AND r.id = ?2 AND r.workspace_id = ?3
@@ -224,7 +226,7 @@ where
         None => {
             sqlx::query_as(
                 r#"
-                SELECT e.id, e.slug, e.title, r.id, r.workspace_id
+                SELECT e.id, e.slug, e.title, r.id, r.workspace_id, r.slug, r.title
                 FROM epics e
                 JOIN repositories r ON r.id = e.repo_id
                 WHERE e.slug = ?1
@@ -238,15 +240,19 @@ where
 
     match rows.as_slice() {
         [] => Ok(None),
-        [(epic_id, slug, title, repo_id, workspace_id)] => Ok(Some(EpicRecord {
-            epic_id: *epic_id,
-            slug: slug.clone(),
-            title: title.clone(),
-            scope: RepoScope {
-                workspace_id: *workspace_id,
-                repo_id: *repo_id,
-            },
-        })),
+        [(epic_id, slug, title, repo_id, workspace_id, repo_slug, repo_title)] => {
+            Ok(Some(EpicRecord {
+                epic_id: *epic_id,
+                slug: slug.clone(),
+                title: title.clone(),
+                repo_slug: repo_slug.clone(),
+                repo_title: repo_title.clone(),
+                scope: RepoScope {
+                    workspace_id: *workspace_id,
+                    repo_id: *repo_id,
+                },
+            }))
+        }
         _ => Err(StorageError::InvalidData {
             message: format!("epic slug is not unique: {epic_slug}"),
         }),

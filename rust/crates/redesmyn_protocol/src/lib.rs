@@ -841,6 +841,8 @@ mod tests {
                             epic_title: None,
                             workspace_id: None,
                             repo_id: None,
+                            repo_slug: None,
+                            repo_title: None,
                             command_summaries: Vec::new(),
                             daemon_presences: Vec::new(),
                             session_summaries: Vec::new(),

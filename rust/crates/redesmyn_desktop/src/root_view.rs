@@ -6742,6 +6742,8 @@ struct LoadedEpicPaletteData {
     epic_title: Option<String>,
     epic_id: Option<redesmyn_ids::EpicId>,
     repo_scope: Option<RepoScope>,
+    repo_slug: Option<String>,
+    repo_title: Option<String>,
     task_lookup: HashMap<TaskId, (String, String, redesmyn_protocol::client::TaskState)>,
     session_summaries: Vec<redesmyn_protocol::client::SessionSummary>,
 }
@@ -6799,6 +6801,8 @@ async fn load_agent_session_palette_entries(
                 epic_title,
                 epic_id,
                 repo_scope,
+                repo_slug: graph.repo_slug,
+                repo_title: graph.repo_title,
                 task_lookup,
                 session_summaries: graph.session_summaries,
             })
@@ -6820,11 +6824,27 @@ async fn load_agent_session_palette_entries(
             epic_title,
             epic_id,
             repo_scope,
+            repo_slug,
+            repo_title,
             task_lookup,
             session_summaries,
         } = epic;
 
         if let Some(scope) = repo_scope {
+            if let Some(repo_label) = repo_title
+                .as_ref()
+                .map(|title| title.trim().to_string())
+                .filter(|title| !title.is_empty())
+                .or_else(|| {
+                    repo_slug
+                        .as_ref()
+                        .map(|slug| slug.trim().to_string())
+                        .filter(|slug| !slug.is_empty())
+                })
+            {
+                repo_labels.entry(scope).or_insert(repo_label);
+            }
+
             repo_epics
                 .entry(scope)
                 .or_default()
@@ -6847,7 +6867,7 @@ async fn load_agent_session_palette_entries(
 
             let repo_group_label = repo_scope
                 .map(|scope| repo_scope_display_label(scope, &mut repo_labels))
-                .unwrap_or_else(|| "No value".to_string());
+                .unwrap_or_else(|| "No repo".to_string());
 
             let entry = AgentSessionPaletteEntry {
                 session_id: summary.session_id,

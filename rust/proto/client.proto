@@ -426,6 +426,8 @@ message EpicGraph {
   // RepoScope identifiers (ULID bytes, length = 16).
   bytes workspace_id = 12;
   bytes repo_id = 13;
+  string repo_slug = 14;
+  string repo_title = 15;
 
   repeated CommandSummary command_summaries = 20;
   repeated DaemonPresenceSummary daemon_presences = 21;

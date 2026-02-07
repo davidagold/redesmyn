@@ -3011,6 +3011,8 @@ fn build_epic_graph(
         epic_title: Some(graph.epic.title),
         workspace_id: Some(graph.epic.scope.workspace_id),
         repo_id: Some(graph.epic.scope.repo_id),
+        repo_slug: Some(graph.epic.repo_slug),
+        repo_title: Some(graph.epic.repo_title),
         command_summaries,
         daemon_presences,
         session_summaries,
