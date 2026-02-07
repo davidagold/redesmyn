@@ -961,6 +961,8 @@ async fn start_task_agent(
     task_id: TaskId,
     initial_prompt: Option<String>,
     session_model_selection: Option<SessionModelSelection>,
+    codex_approval_policy: Option<CodexApprovalPolicy>,
+    codex_sandbox_policy: Option<CodexSandboxPolicy>,
     on_conflict: AgentMessageConflictAction,
 ) -> Result<StartAgentResponse, ErrorEnvelope> {
     let payload = RequestPayload::StartAgent(StartAgentRequest {
@@ -969,6 +971,8 @@ async fn start_task_agent(
         initial_prompt,
         on_conflict,
         session_model_selection,
+        codex_approval_policy,
+        codex_sandbox_policy,
     });
     let response = client
         .request_with_envelope(
@@ -1245,6 +1249,8 @@ pub struct SessionView {
     codex_sandbox_policy_timeout_task: Option<Task<()>>,
     task_start_model_selection: Option<SessionModelSelection>,
     task_start_initial_prompt: Option<String>,
+    task_start_codex_approval_policy: Option<CodexApprovalPolicy>,
+    task_start_codex_sandbox_policy: Option<CodexSandboxPolicy>,
     session_model_options: Vec<SessionModelOption>,
     session_model_selection: SessionModelSelection,
     pending_session_model_selection: Option<SessionModelSelection>,
@@ -1430,6 +1436,8 @@ impl SessionView {
             codex_sandbox_policy_timeout_task: None,
             task_start_model_selection: None,
             task_start_initial_prompt: None,
+            task_start_codex_approval_policy: None,
+            task_start_codex_sandbox_policy: None,
             session_model_options: Vec::new(),
             session_model_selection: SessionModelSelection {
                 model_id: None,
@@ -1529,6 +1537,16 @@ impl SessionView {
         self.task_start_initial_prompt.clone()
     }
 
+    #[must_use]
+    pub fn task_start_codex_approval_policy_snapshot(&self) -> Option<CodexApprovalPolicy> {
+        self.task_start_codex_approval_policy
+    }
+
+    #[must_use]
+    pub fn task_start_codex_sandbox_policy_snapshot(&self) -> Option<CodexSandboxPolicy> {
+        self.task_start_codex_sandbox_policy.clone()
+    }
+
     pub fn set_task_start_model_selection(
         &mut self,
         selection: Option<SessionModelSelection>,
@@ -1570,6 +1588,36 @@ impl SessionView {
         }
 
         self.task_start_initial_prompt = normalized;
+        if self.feed.is_none() {
+            cx.notify();
+        }
+    }
+
+    pub fn set_task_start_codex_approval_policy(
+        &mut self,
+        approval_policy: Option<CodexApprovalPolicy>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.task_start_codex_approval_policy == approval_policy {
+            return;
+        }
+
+        self.task_start_codex_approval_policy = approval_policy;
+        if self.feed.is_none() {
+            cx.notify();
+        }
+    }
+
+    pub fn set_task_start_codex_sandbox_policy(
+        &mut self,
+        sandbox_policy: Option<CodexSandboxPolicy>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.task_start_codex_sandbox_policy == sandbox_policy {
+            return;
+        }
+
+        self.task_start_codex_sandbox_policy = sandbox_policy;
         if self.feed.is_none() {
             cx.notify();
         }
@@ -1764,6 +1812,8 @@ impl SessionView {
 
         let session_model_selection = self.task_start_model_selection.clone();
         let initial_prompt = self.task_start_initial_prompt.clone();
+        let codex_approval_policy = self.task_start_codex_approval_policy;
+        let codex_sandbox_policy = self.task_start_codex_sandbox_policy.clone();
         self.start_agent_generation = self.start_agent_generation.wrapping_add(1);
         let generation = self.start_agent_generation;
         self.task_operation = Some(TaskSessionOperation::StartAgent);
@@ -1778,6 +1828,7 @@ impl SessionView {
             let client = client.clone();
             let repo_scope = repo_scope;
             let session_model_selection = session_model_selection.clone();
+            let codex_sandbox_policy = codex_sandbox_policy.clone();
             let cx = cx.clone();
             async move {
                 let result = start_task_agent(
@@ -1786,6 +1837,8 @@ impl SessionView {
                     task_id,
                     initial_prompt.clone(),
                     session_model_selection.clone(),
+                    codex_approval_policy,
+                    codex_sandbox_policy.clone(),
                     AgentMessageConflictAction::Fail,
                 )
                 .await;

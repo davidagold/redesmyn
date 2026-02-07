@@ -47,7 +47,7 @@ use redesmyn_protocol::ui_driver::{
     UiGraphCameraState, UiGraphEdgeId as UiDriverGraphEdgeId, UiGraphLoadState,
     UiGraphNodeId as UiDriverGraphNodeId, UiGraphState,
 };
-use redesmyn_protocol::{ProtocolEnvelope, RepoScope};
+use redesmyn_protocol::{CodexApprovalPolicy, CodexSandboxPolicy, ProtocolEnvelope, RepoScope};
 use redesmyn_ui_session::{SessionView, SessionViewEvent, TaskSessionOperation};
 
 /// Key context used for graph-only keyboard shortcuts (e.g., task filter toggle).
@@ -1522,6 +1522,8 @@ impl GraphView {
         let repo_scope = session_view.repo_scope_snapshot();
         let start_model_selection = session_view.task_start_model_selection_snapshot();
         let start_initial_prompt = session_view.task_start_initial_prompt_snapshot();
+        let start_codex_approval_policy = session_view.task_start_codex_approval_policy_snapshot();
+        let start_codex_sandbox_policy = session_view.task_start_codex_sandbox_policy_snapshot();
 
         let state = self.quick_action_state_mut(task_id);
         let (action, task_slot) = match kind {
@@ -1554,6 +1556,7 @@ impl GraphView {
                 let client = client.clone();
                 let start_model_selection = start_model_selection.clone();
                 let start_initial_prompt = start_initial_prompt.clone();
+                let start_codex_sandbox_policy = start_codex_sandbox_policy.clone();
                 let cx = cx.clone();
                 async move {
                     let result = task_quick_action_request(
@@ -1563,6 +1566,8 @@ impl GraphView {
                         kind,
                         start_initial_prompt.clone(),
                         start_model_selection.clone(),
+                        start_codex_approval_policy,
+                        start_codex_sandbox_policy.clone(),
                     )
                     .await;
                     let _ = cx.update(|cx| {
@@ -3571,6 +3576,8 @@ async fn task_quick_action_request(
     kind: TaskQuickActionKind,
     start_initial_prompt: Option<String>,
     start_model_selection: Option<SessionModelSelection>,
+    start_codex_approval_policy: Option<CodexApprovalPolicy>,
+    start_codex_sandbox_policy: Option<CodexSandboxPolicy>,
 ) -> Result<ResponseResult, redesmyn_protocol::ErrorEnvelope> {
     let payload = match kind {
         TaskQuickActionKind::Start => RequestPayload::StartAgent(StartAgentRequest {
@@ -3579,6 +3586,8 @@ async fn task_quick_action_request(
             initial_prompt: start_initial_prompt,
             on_conflict: AgentMessageConflictAction::Fail,
             session_model_selection: start_model_selection,
+            codex_approval_policy: start_codex_approval_policy,
+            codex_sandbox_policy: start_codex_sandbox_policy,
         }),
         TaskQuickActionKind::Restart => RequestPayload::RestartAgent(RestartAgentRequest {
             task_id,

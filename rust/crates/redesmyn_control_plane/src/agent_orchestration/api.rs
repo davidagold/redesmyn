@@ -6,7 +6,7 @@ use redesmyn_protocol::client::{
     SendTaskAgentMessageResponse, StartAgentRequest, StartAgentResponse, StopAgentRequest,
     StopAgentResponse,
 };
-use redesmyn_protocol::{ErrorCategory, ErrorDetail, ErrorEnvelope, RepoScope};
+use redesmyn_protocol::{CodexApprovalPolicy, CodexSandboxPolicy, ErrorCategory, ErrorDetail, ErrorEnvelope, RepoScope};
 
 use crate::ControlPlane;
 
@@ -42,6 +42,31 @@ impl ControlPlane {
                 "Unknown model reasoning effort.",
             ));
         }
+        if matches!(req.codex_approval_policy, Some(CodexApprovalPolicy::Unknown)) {
+            return Err(super::conflicts::invalid_request(
+                "Unknown Codex approval policy.",
+            ));
+        }
+        if matches!(req.codex_sandbox_policy.as_ref(), Some(CodexSandboxPolicy::Unknown)) {
+            return Err(super::conflicts::invalid_request(
+                "Unknown Codex sandbox policy.",
+            ));
+        }
+        if let Some(CodexSandboxPolicy::WorkspaceWrite { writable_roots, .. }) =
+            req.codex_sandbox_policy.as_ref()
+            && !writable_roots.is_empty()
+        {
+            return Err(super::conflicts::invalid_request(
+                "writable_roots is not supported via the control plane.",
+            ));
+        }
+        if req.agent_kind != redesmyn_protocol::client::AgentKind::Codex
+            && (req.codex_approval_policy.is_some() || req.codex_sandbox_policy.is_some())
+        {
+            return Err(super::conflicts::invalid_request(
+                "Codex session policy defaults are only supported for Codex sessions.",
+            ));
+        }
 
         let active_sessions = state::load_active_task_session_ids(self.pool(), req.task_id).await?;
         let plan = planner::plan_start_agent(active_sessions, req.on_conflict)?;
@@ -56,6 +81,8 @@ impl ControlPlane {
             req.agent_kind,
             req.initial_prompt,
             req.session_model_selection,
+            req.codex_approval_policy,
+            req.codex_sandbox_policy,
             plan.stop_session_ids,
         )
         .await
@@ -103,6 +130,8 @@ impl ControlPlane {
             initial_prompt: req.initial_prompt,
             on_conflict: AgentMessageConflictAction::StopSessionAndStartNew,
             session_model_selection: None,
+            codex_approval_policy: None,
+            codex_sandbox_policy: None,
         };
 
         let started = self.start_agent(workspace_id, repo_id, start).await?;

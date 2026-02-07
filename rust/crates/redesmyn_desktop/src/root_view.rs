@@ -13,6 +13,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use redesmyn_ids::EventId;
 use redesmyn_protocol::client::{ModelReasoningEffort, SessionModelSelection, SubscriptionEvent};
 use redesmyn_protocol::sync_commands::{LOCAL_SYNC_EVENT_APPLIED, LOCAL_SYNC_EVENT_FAILED};
+use redesmyn_protocol::task_events::TASK_STATE_CHANGED_EVENT;
 use redesmyn_protocol::ui_driver::{
     CaptureScreenshotResponse, ClearGraphSelectionResponse, CreateChatSessionResponse,
     MultiSelectAddNodeResponse, MultiSelectRemoveNodeResponse, SelectGraphNodeResponse,
@@ -22,7 +23,9 @@ use redesmyn_protocol::ui_driver::{
     UiSnapshotPredicate, WaitForUiIdleRequest, WaitForUiIdleResponse, WaitForUiSnapshotRequest,
     WaitForUiSnapshotResponse,
 };
-use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, RepoScope, Timestamp};
+use redesmyn_protocol::{
+    CodexApprovalPolicy, CodexSandboxPolicy, ErrorCategory, ErrorEnvelope, RepoScope, Timestamp,
+};
 use redesmyn_transport::client::in_proc::InProcEndpoint as ClientInProcEndpoint;
 use redesmyn_ui_session::SessionView;
 
@@ -52,7 +55,8 @@ use crate::command_palette::{
 };
 use crate::control_plane_client::{ControlPlaneClient, ControlPlaneClientError};
 use crate::orchestration_config::{
-    CodexReasoningEffortDefault, load_effective_defaults, repo_root_from_cwd,
+    CodexApprovalPolicyDefault, CodexReasoningEffortDefault, CodexSandboxPolicyDefault,
+    load_effective_defaults, repo_root_from_cwd,
 };
 use crate::settings_dialog_keys::{CloseSettingsDialog, ToggleSettingsDialog};
 use crate::task_filters::{
@@ -2011,6 +2015,34 @@ fn reasoning_effort_from_default(
     }
 }
 
+fn codex_approval_policy_from_default(
+    value: CodexApprovalPolicyDefault,
+) -> Option<CodexApprovalPolicy> {
+    match value {
+        CodexApprovalPolicyDefault::Default => None,
+        CodexApprovalPolicyDefault::UnlessTrusted => Some(CodexApprovalPolicy::UnlessTrusted),
+        CodexApprovalPolicyDefault::OnFailure => Some(CodexApprovalPolicy::OnFailure),
+        CodexApprovalPolicyDefault::OnRequest => Some(CodexApprovalPolicy::OnRequest),
+        CodexApprovalPolicyDefault::Never => Some(CodexApprovalPolicy::Never),
+    }
+}
+
+fn codex_sandbox_policy_from_default(
+    value: CodexSandboxPolicyDefault,
+) -> Option<CodexSandboxPolicy> {
+    match value {
+        CodexSandboxPolicyDefault::Default => None,
+        CodexSandboxPolicyDefault::ReadOnly => Some(CodexSandboxPolicy::ReadOnly),
+        CodexSandboxPolicyDefault::WorkspaceWrite => Some(CodexSandboxPolicy::WorkspaceWrite {
+            writable_roots: Vec::new(),
+            network_access: false,
+            exclude_tmpdir_env_var: false,
+            exclude_slash_tmp: false,
+        }),
+        CodexSandboxPolicyDefault::DangerFullAccess => Some(CodexSandboxPolicy::DangerFullAccess),
+    }
+}
+
 fn load_default_session_model_selection() -> Option<SessionModelSelection> {
     let repo_root = match repo_root_from_cwd() {
         Ok(repo_root) => repo_root,
@@ -2087,6 +2119,60 @@ fn load_task_start_initial_prompt() -> Option<String> {
         .prelude
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn load_task_start_codex_approval_policy() -> Option<CodexApprovalPolicy> {
+    let repo_root = match repo_root_from_cwd() {
+        Ok(repo_root) => repo_root,
+        Err(err) => {
+            redesmyn_logging::tracing::warn!(
+                error = %err,
+                "unable to resolve repo root for task start codex approval default"
+            );
+            return None;
+        }
+    };
+
+    let defaults = match load_effective_defaults(&repo_root) {
+        Ok(defaults) => defaults,
+        Err(err) => {
+            redesmyn_logging::tracing::warn!(
+                error = %err,
+                repo_root = %repo_root.display(),
+                "unable to load orchestration defaults for task start codex approval default"
+            );
+            return None;
+        }
+    };
+
+    codex_approval_policy_from_default(defaults.session_defaults.codex.approval_policy)
+}
+
+fn load_task_start_codex_sandbox_policy() -> Option<CodexSandboxPolicy> {
+    let repo_root = match repo_root_from_cwd() {
+        Ok(repo_root) => repo_root,
+        Err(err) => {
+            redesmyn_logging::tracing::warn!(
+                error = %err,
+                "unable to resolve repo root for task start codex sandbox default"
+            );
+            return None;
+        }
+    };
+
+    let defaults = match load_effective_defaults(&repo_root) {
+        Ok(defaults) => defaults,
+        Err(err) => {
+            redesmyn_logging::tracing::warn!(
+                error = %err,
+                repo_root = %repo_root.display(),
+                "unable to load orchestration defaults for task start codex sandbox default"
+            );
+            return None;
+        }
+    };
+
+    codex_sandbox_policy_from_default(defaults.session_defaults.codex.sandbox_policy)
 }
 
 async fn apply_default_session_model_selection(
@@ -4455,9 +4541,13 @@ impl WorkspacePaneHost {
             cx.new(|cx| SessionView::new(task_session_client, None, artifact_store_root, cx));
         let task_start_model_selection = load_default_session_model_selection();
         let task_start_initial_prompt = load_task_start_initial_prompt();
+        let task_start_codex_approval_policy = load_task_start_codex_approval_policy();
+        let task_start_codex_sandbox_policy = load_task_start_codex_sandbox_policy();
         task_session_view.update(cx, |view, cx| {
             view.set_task_start_model_selection(task_start_model_selection, cx);
             view.set_task_start_initial_prompt(task_start_initial_prompt, cx);
+            view.set_task_start_codex_approval_policy(task_start_codex_approval_policy, cx);
+            view.set_task_start_codex_sandbox_policy(task_start_codex_sandbox_policy, cx);
             // In expanded task cards, the composer sits next to a details panel. Expand the
             // settings submenu inward so it remains within the task-session surface.
             view.set_settings_menu_secondary_side(CascadingMenuSecondarySide::Left, cx);
@@ -5229,6 +5319,7 @@ impl WorkspacePaneHost {
                                 SubscriptionEvent::EventLog(event) => {
                                     if event.event_type != LOCAL_SYNC_EVENT_APPLIED
                                         && event.event_type != LOCAL_SYNC_EVENT_FAILED
+                                        && event.event_type != TASK_STATE_CHANGED_EVENT
                                     {
                                         continue;
                                     }

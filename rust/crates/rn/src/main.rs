@@ -1,6 +1,7 @@
 use std::{
     env,
     ffi::OsString,
+    fs,
     io::{self, Write as _},
     path::{Path, PathBuf},
     process::{Command, ExitCode, Stdio},
@@ -10,14 +11,20 @@ use std::{
 use clap::{Args, Parser, Subcommand, ValueEnum};
 #[cfg(unix)]
 use redesmyn_client_api::uds::{UdsConnectOptions, connect_uds};
-use redesmyn_config::{discover_repo_root_from, legacy_db_path, rust_db_path};
+use redesmyn_config::{
+    discover_repo_root_from, global_config_path, legacy_db_path, repo_config_path, rust_db_path,
+};
 use redesmyn_protocol::client::{
     AgentKind, AgentMessageConflictAction, CommandState, CreateCommandRequest, GetEpicGraphRequest,
-    RequestPayload, ResponseResult, StartAgentRequest, WaitForCommandRequest,
+    ModelReasoningEffort, RequestPayload, ResponseResult, SessionModelSelection, StartAgentRequest,
+    WaitForCommandRequest,
 };
 use redesmyn_protocol::sync_commands::{LOCAL_SYNC_FROM_DOCS_KIND, LocalSyncFromDocsCommand};
-use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, ProtocolEnvelope, Scope};
+use redesmyn_protocol::{
+    CodexApprovalPolicy, CodexSandboxPolicy, ErrorCategory, ErrorEnvelope, ProtocolEnvelope, Scope,
+};
 use serde::Serialize;
+use toml_edit::DocumentMut;
 
 mod protocol;
 mod ui_driver;
@@ -595,6 +602,29 @@ fn task_start(args: TaskStartArgs, output: &Output) -> CommandOutcome {
         ));
     };
 
+    let defaults = load_effective_task_start_defaults(&repo_root);
+    let prelude_prompt = if defaults.send_prelude {
+        defaults.prelude.clone()
+    } else {
+        None
+    };
+    let user_prompt = args
+        .prompt
+        .clone()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let initial_prompt = merge_task_start_prompts(prelude_prompt, user_prompt);
+
+    let session_model_selection = if defaults.model_id.is_none() && defaults.reasoning_effort.is_none()
+    {
+        None
+    } else {
+        Some(SessionModelSelection {
+            model_id: defaults.model_id.clone(),
+            reasoning_effort: defaults.reasoning_effort,
+        })
+    };
+
     #[derive(Debug, Serialize)]
     struct TaskStartReport {
         repo_root: String,
@@ -624,7 +654,10 @@ fn task_start(args: TaskStartArgs, output: &Output) -> CommandOutcome {
     let result = match runtime.block_on(start_task_agent_via_control_plane(
         &epic_slug,
         &args.task,
-        args.prompt.clone(),
+        initial_prompt,
+        session_model_selection,
+        defaults.codex_approval_policy,
+        defaults.codex_sandbox_policy.clone(),
         args.timeout_ms,
     )) {
         Ok(result) => result,
@@ -831,12 +864,23 @@ struct StartAgentCommandResult {
 async fn start_task_agent_via_control_plane(
     epic_slug: &str,
     task_slug: &str,
-    prompt: Option<String>,
+    initial_prompt: Option<String>,
+    session_model_selection: Option<SessionModelSelection>,
+    codex_approval_policy: Option<CodexApprovalPolicy>,
+    codex_sandbox_policy: Option<CodexSandboxPolicy>,
     timeout_ms: u64,
 ) -> Result<StartAgentCommandResult, ErrorEnvelope> {
     #[cfg(not(unix))]
     {
-        let _ = (epic_slug, task_slug, prompt, timeout_ms);
+        let _ = (
+            epic_slug,
+            task_slug,
+            initial_prompt,
+            session_model_selection,
+            codex_approval_policy,
+            codex_sandbox_policy,
+            timeout_ms,
+        );
         return Err(ErrorEnvelope::new(
             ErrorCategory::Unavailable,
             "client API socket is only supported on unix platforms",
@@ -922,9 +966,11 @@ async fn start_task_agent_via_control_plane(
                 RequestPayload::StartAgent(StartAgentRequest {
                     task_id,
                     agent_kind: AgentKind::Codex,
-                    initial_prompt: prompt,
+                    initial_prompt,
                     on_conflict: AgentMessageConflictAction::Fail,
-                    session_model_selection: None,
+                    session_model_selection,
+                    codex_approval_policy,
+                    codex_sandbox_policy,
                 }),
             )
             .await?
@@ -971,6 +1017,177 @@ async fn start_task_agent_via_control_plane(
             state: command_state_label(waited.state).to_string(),
             message: waited.last_update.and_then(|update| update.message),
         })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct TaskStartDefaults {
+    send_prelude: bool,
+    prelude: Option<String>,
+    model_id: Option<String>,
+    reasoning_effort: Option<ModelReasoningEffort>,
+    codex_approval_policy: Option<CodexApprovalPolicy>,
+    codex_sandbox_policy: Option<CodexSandboxPolicy>,
+}
+
+impl Default for TaskStartDefaults {
+    fn default() -> Self {
+        Self {
+            send_prelude: true,
+            prelude: None,
+            model_id: None,
+            reasoning_effort: None,
+            codex_approval_policy: None,
+            codex_sandbox_policy: None,
+        }
+    }
+}
+
+fn load_effective_task_start_defaults(repo_root: &Path) -> TaskStartDefaults {
+    let mut defaults = TaskStartDefaults::default();
+
+    if let Some(global_path) = global_config_path() {
+        if global_path.exists() {
+            apply_task_start_defaults_from_path(&mut defaults, &global_path);
+        }
+    }
+
+    let repo_path = repo_config_path(repo_root);
+    if repo_path.exists() {
+        apply_task_start_defaults_from_path(&mut defaults, &repo_path);
+    }
+
+    defaults
+}
+
+fn apply_task_start_defaults_from_path(defaults: &mut TaskStartDefaults, path: &Path) {
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(err) => {
+            redesmyn_logging::tracing::warn!(
+                error = %err,
+                path = %path.display(),
+                "unable to read config defaults"
+            );
+            return;
+        }
+    };
+
+    let doc = match content.parse::<DocumentMut>() {
+        Ok(doc) => doc,
+        Err(err) => {
+            redesmyn_logging::tracing::warn!(
+                error = %err,
+                path = %path.display(),
+                "unable to parse config defaults"
+            );
+            return;
+        }
+    };
+
+    if let Some(harness) = doc.get("harness").and_then(|item| item.as_table()) {
+        if let Some(send_prelude) = harness.get("send_prelude").and_then(|item| item.as_bool()) {
+            defaults.send_prelude = send_prelude;
+        }
+
+        if harness.contains_key("prelude") {
+            defaults.prelude = harness
+                .get("prelude")
+                .and_then(|item| item.as_str())
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+        }
+    }
+
+    if let Some(session_defaults) = doc
+        .get("session_defaults")
+        .and_then(|item| item.as_table())
+    {
+        if let Some(codex) = session_defaults.get("codex").and_then(|item| item.as_table()) {
+            if codex.contains_key("model") {
+                defaults.model_id = codex
+                    .get("model")
+                    .and_then(|item| item.as_str())
+                    .and_then(parse_model_id_override);
+            }
+
+            if let Some(value) = codex.get("reasoning_effort").and_then(|item| item.as_str()) {
+                if let Some(override_value) = parse_reasoning_effort_override(value) {
+                    defaults.reasoning_effort = override_value;
+                }
+            }
+
+            if let Some(value) = codex.get("approval_policy").and_then(|item| item.as_str()) {
+                if let Some(override_value) = parse_codex_approval_policy_override(value) {
+                    defaults.codex_approval_policy = override_value;
+                }
+            }
+
+            if let Some(value) = codex.get("sandbox_policy").and_then(|item| item.as_str()) {
+                if let Some(override_value) = parse_codex_sandbox_policy_override(value) {
+                    defaults.codex_sandbox_policy = override_value;
+                }
+            }
+        }
+    }
+}
+
+fn parse_model_id_override(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("default") {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+fn parse_reasoning_effort_override(value: &str) -> Option<Option<ModelReasoningEffort>> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "default" => Some(None),
+        "minimal" => Some(Some(ModelReasoningEffort::Minimal)),
+        "low" => Some(Some(ModelReasoningEffort::Low)),
+        "medium" => Some(Some(ModelReasoningEffort::Medium)),
+        "high" => Some(Some(ModelReasoningEffort::High)),
+        "xhigh" | "x_high" | "x-high" => Some(Some(ModelReasoningEffort::Xhigh)),
+        _ => None,
+    }
+}
+
+fn parse_codex_approval_policy_override(value: &str) -> Option<Option<CodexApprovalPolicy>> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "default" => Some(None),
+        "untrusted" => Some(Some(CodexApprovalPolicy::UnlessTrusted)),
+        "on_failure" | "on-failure" => Some(Some(CodexApprovalPolicy::OnFailure)),
+        "on_request" | "on-request" => Some(Some(CodexApprovalPolicy::OnRequest)),
+        "never" => Some(Some(CodexApprovalPolicy::Never)),
+        _ => None,
+    }
+}
+
+fn parse_codex_sandbox_policy_override(value: &str) -> Option<Option<CodexSandboxPolicy>> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "default" => Some(None),
+        "read_only" | "read-only" => Some(Some(CodexSandboxPolicy::ReadOnly)),
+        "workspace_write" | "workspace-write" => Some(Some(CodexSandboxPolicy::WorkspaceWrite {
+            writable_roots: Vec::new(),
+            network_access: false,
+            exclude_tmpdir_env_var: false,
+            exclude_slash_tmp: false,
+        })),
+        "danger_full_access" | "danger-full-access" => {
+            Some(Some(CodexSandboxPolicy::DangerFullAccess))
+        }
+        _ => None,
+    }
+}
+
+fn merge_task_start_prompts(
+    prelude: Option<String>,
+    prompt: Option<String>,
+) -> Option<String> {
+    match (prelude, prompt) {
+        (None, None) => None,
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (Some(prelude), Some(prompt)) => Some(format!("{prelude}\n\n{prompt}")),
     }
 }
 

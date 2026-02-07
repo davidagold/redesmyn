@@ -533,6 +533,11 @@ message StartAgentRequest {
   AgentMessageConflictAction on_conflict = 5;
   // Optional model + reasoning to apply before the first turn.
   SessionModelSelection session_model_selection = 6;
+  // Optional Codex session defaults to apply before the first turn.
+  // Unspecified means "use the provider default".
+  CodexApprovalPolicy codex_approval_policy = 7;
+  // Unset means "use the provider default".
+  CodexSandboxPolicy codex_sandbox_policy = 8;
 }
 
 message StartAgentResponse {

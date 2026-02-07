@@ -11,9 +11,11 @@ use redesmyn_protocol::client::{
     TaskAgentMessageConversationContinuity, TaskAgentMessageDelivery,
 };
 use redesmyn_protocol::session::{
+    CodexApprovalPolicy, CodexApprovalPolicyChanged, CodexSandboxPolicy, CodexSandboxPolicyChanged,
     SessionEnded, SessionEventKind, SessionModelChanged, SessionModelReasoningEffort, SessionScope,
     SessionStarted,
 };
+use redesmyn_protocol::task_events::TASK_STATE_CHANGED_EVENT;
 use redesmyn_protocol::{
     ErrorCategory, ErrorDetail, ErrorEnvelope, ExternalSessionRef, RepoScope, SessionEvent,
     Timestamp,
@@ -245,6 +247,70 @@ async fn append_user_message(
     Ok(())
 }
 
+async fn append_codex_approval_policy_changed(
+    control_plane: &ControlPlane,
+    session_id: SessionId,
+    task_id: TaskId,
+    approval_policy: CodexApprovalPolicy,
+) -> Result<(), ErrorEnvelope> {
+    if matches!(approval_policy, CodexApprovalPolicy::Unknown) {
+        return Ok(());
+    }
+
+    let event = SessionEvent {
+        session_event_id: SessionEventId::new(),
+        created_at: Timestamp::now_utc(),
+        scope: SessionScope::Task { task_id },
+        session_id,
+        turn_id: None,
+        kind: SessionEventKind::CodexApprovalPolicyChanged(CodexApprovalPolicyChanged {
+            approval_policy: Some(approval_policy),
+        }),
+    };
+
+    control_plane
+        .session_events()
+        .append_session_event(&event)
+        .await
+        .map_err(|err| {
+            ErrorEnvelope::new(ErrorCategory::Internal, "Failed to persist session event.")
+                .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
+        })?;
+    Ok(())
+}
+
+async fn append_codex_sandbox_policy_changed(
+    control_plane: &ControlPlane,
+    session_id: SessionId,
+    task_id: TaskId,
+    sandbox_policy: &CodexSandboxPolicy,
+) -> Result<(), ErrorEnvelope> {
+    if matches!(sandbox_policy, CodexSandboxPolicy::Unknown) {
+        return Ok(());
+    }
+
+    let event = SessionEvent {
+        session_event_id: SessionEventId::new(),
+        created_at: Timestamp::now_utc(),
+        scope: SessionScope::Task { task_id },
+        session_id,
+        turn_id: None,
+        kind: SessionEventKind::CodexSandboxPolicyChanged(CodexSandboxPolicyChanged {
+            sandbox_policy: Some(sandbox_policy.clone()),
+        }),
+    };
+
+    control_plane
+        .session_events()
+        .append_session_event(&event)
+        .await
+        .map_err(|err| {
+            ErrorEnvelope::new(ErrorCategory::Internal, "Failed to persist session event.")
+                .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
+        })?;
+    Ok(())
+}
+
 fn normalize_start_model_selection(
     selection: &SessionModelSelection,
 ) -> Option<SessionModelSelection> {
@@ -309,6 +375,62 @@ async fn append_session_model_changed(
     Ok(())
 }
 
+async fn maybe_mark_task_in_progress(
+    control_plane: &ControlPlane,
+    repo: RepoScope,
+    task_id: TaskId,
+) -> Result<(), ErrorEnvelope> {
+    let updated = sqlx::query(
+        r#"
+        UPDATE tasks
+        SET state = 'in_progress',
+            updated_at_ms = ?2
+        WHERE id = ?1
+          AND state = 'todo'
+        "#,
+    )
+    .bind(task_id)
+    .bind(now_ms())
+    .execute(control_plane.pool())
+    .await
+    .map_err(|err| {
+        ErrorEnvelope::new(ErrorCategory::Internal, "Failed to update task state.")
+            .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
+    })?
+    .rows_affected()
+        > 0;
+
+    if !updated {
+        return Ok(());
+    }
+
+    #[derive(serde::Serialize)]
+    struct TaskStateChangedPayload {
+        task_id: String,
+        state: &'static str,
+    }
+
+    let payload = serde_json::to_vec(&TaskStateChangedPayload {
+        task_id: task_id.to_string(),
+        state: "in_progress",
+    })
+    .unwrap_or_default();
+
+    let _ = control_plane
+        .event_log()
+        .append_event(
+            redesmyn_storage::events::EventScope::Repo {
+                workspace_id: repo.workspace_id,
+                repo_id: repo.repo_id,
+            },
+            TASK_STATE_CHANGED_EVENT,
+            payload,
+        )
+        .await;
+
+    Ok(())
+}
+
 async fn issue_repo_command(
     control_plane: &ControlPlane,
     workspace_id: WorkspaceId,
@@ -368,6 +490,8 @@ pub(super) async fn execute_start_agent(
     agent_kind: AgentKind,
     initial_prompt: Option<String>,
     session_model_selection: Option<SessionModelSelection>,
+    codex_approval_policy: Option<CodexApprovalPolicy>,
+    codex_sandbox_policy: Option<CodexSandboxPolicy>,
     stop_session_ids: Vec<SessionId>,
 ) -> Result<StartAgentResponse, ErrorEnvelope> {
     let RepoScope {
@@ -392,6 +516,12 @@ pub(super) async fn execute_start_agent(
     .await?;
 
     append_session_started(control_plane, session_id, task_id).await?;
+    if let Some(policy) = codex_approval_policy {
+        append_codex_approval_policy_changed(control_plane, session_id, task_id, policy).await?;
+    }
+    if let Some(policy) = codex_sandbox_policy.as_ref() {
+        append_codex_sandbox_policy_changed(control_plane, session_id, task_id, policy).await?;
+    }
     if let Some(selection) = session_model_selection.as_ref() {
         append_session_model_changed(control_plane, session_id, task_id, selection).await?;
     }
@@ -461,6 +591,8 @@ pub(super) async fn execute_start_agent(
 
         return Err(ErrorEnvelope::new(ErrorCategory::Unavailable, message).with_detail(detail));
     }
+
+    let _ = maybe_mark_task_in_progress(control_plane, repo, task_id).await;
 
     Ok(StartAgentResponse {
         command,

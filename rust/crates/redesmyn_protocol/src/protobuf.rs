@@ -3639,10 +3639,19 @@ impl crate::client::StartAgentRequest {
                 .session_model_selection
                 .as_ref()
                 .map(crate::client::SessionModelSelection::to_protobuf),
+            codex_approval_policy: encode_codex_approval_policy(
+                self.codex_approval_policy
+                    .unwrap_or(CodexApprovalPolicy::Unknown),
+            ),
+            codex_sandbox_policy: self
+                .codex_sandbox_policy
+                .as_ref()
+                .map(CodexSandboxPolicy::to_protobuf),
         }
     }
 
     pub fn try_from_protobuf(proto: pbv1::StartAgentRequest) -> Result<Self, ErrorEnvelope> {
+        let approval_policy = decode_codex_approval_policy(proto.codex_approval_policy);
         Ok(Self {
             task_id: decode_required_ulid::<TaskId>("task_id", &proto.task_id)?,
             agent_kind: decode_agent_kind(proto.agent_kind)?,
@@ -3651,6 +3660,17 @@ impl crate::client::StartAgentRequest {
             session_model_selection: proto
                 .session_model_selection
                 .map(crate::client::SessionModelSelection::from_protobuf),
+            codex_approval_policy: match approval_policy {
+                CodexApprovalPolicy::Unknown => None,
+                other => Some(other),
+            },
+            codex_sandbox_policy: match proto.codex_sandbox_policy {
+                Some(policy) => match CodexSandboxPolicy::try_from_protobuf(policy)? {
+                    CodexSandboxPolicy::Unknown => None,
+                    other => Some(other),
+                },
+                None => None,
+            },
         })
     }
 }

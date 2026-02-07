@@ -93,6 +93,8 @@ async fn start_agent_returns_unavailable_and_rolls_back_session_when_no_daemon_i
                 initial_prompt: None,
                 on_conflict: AgentMessageConflictAction::Fail,
                 session_model_selection: None,
+                codex_approval_policy: None,
+                codex_sandbox_policy: None,
             },
         )
         .await;
