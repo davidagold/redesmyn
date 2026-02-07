@@ -1994,15 +1994,39 @@ impl SessionView {
         }
     }
 
+    pub fn reconcile_settings_menu_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        if open {
+            return;
+        }
+
+        if self.reset_session_settings_menu_state() {
+            cx.notify();
+        }
+    }
+
+    fn reset_session_settings_menu_state(&mut self) -> bool {
+        let mut changed = false;
+        if self.session_settings_hovered.take().is_some() {
+            changed = true;
+        }
+        if self.session_settings_focus != SessionSettingsMenuFocus::Primary {
+            self.session_settings_focus = SessionSettingsMenuFocus::Primary;
+            changed = true;
+        }
+        if self.session_settings_submenu_index != 0 {
+            self.session_settings_submenu_index = 0;
+            changed = true;
+        }
+        changed
+    }
+
     fn open_session_settings_menu(&mut self, cx: &mut Context<Self>) {
         if self.open_cascading_menu_for_self(cx) == Some(CascadingMenuId::SessionSettings) {
             return;
         }
 
         self.set_open_cascading_menu_for_self(Some(CascadingMenuId::SessionSettings), cx);
-        self.session_settings_hovered = None;
-        self.session_settings_focus = SessionSettingsMenuFocus::Primary;
-        self.session_settings_submenu_index = 0;
+        self.reset_session_settings_menu_state();
         cx.notify();
     }
 
@@ -3095,15 +3119,15 @@ impl SessionView {
     }
 
     fn close_session_settings_menu(&mut self, cx: &mut Context<Self>) {
-        if self.open_cascading_menu_for_self(cx) != Some(CascadingMenuId::SessionSettings) {
-            return;
+        let was_open =
+            self.open_cascading_menu_for_self(cx) == Some(CascadingMenuId::SessionSettings);
+        if was_open {
+            self.clear_open_cascading_menu_for_self(cx);
         }
-
-        self.clear_open_cascading_menu_for_self(cx);
-        self.session_settings_hovered = None;
-        self.session_settings_focus = SessionSettingsMenuFocus::Primary;
-        self.session_settings_submenu_index = 0;
-        cx.notify();
+        let state_changed = self.reset_session_settings_menu_state();
+        if was_open || state_changed {
+            cx.notify();
+        }
     }
 
     pub fn close_settings_menu(&mut self, cx: &mut Context<Self>) {

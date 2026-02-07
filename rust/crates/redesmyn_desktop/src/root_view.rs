@@ -486,13 +486,23 @@ impl RootView {
     }
 
     fn sync_cascading_menu_state(&mut self, cx: &mut Context<Self>) {
-        let open_menu = cx
-            .try_global::<CascadingMenuState>()
-            .map(|state| state.open_menu())
-            .unwrap_or(None);
+        let session_view_entity_id = self.session_pane.read(cx).session_view.entity_id();
+        let task_session_view_entity_id =
+            self.workspace_pane.read(cx).task_session_view.entity_id();
+        let (open_menu, session_settings_open_in_session_pane, session_settings_open_in_task_pane) =
+            if let Some(state) = cx.try_global::<CascadingMenuState>() {
+                (
+                    state.open_menu(),
+                    state.open_menu_for(session_view_entity_id)
+                        == Some(CascadingMenuId::SessionSettings),
+                    state.open_menu_for(task_session_view_entity_id)
+                        == Some(CascadingMenuId::SessionSettings),
+                )
+            } else {
+                (None, false, false)
+            };
 
         let task_filters_should_open = open_menu == Some(CascadingMenuId::TaskFilters);
-        let session_settings_should_open = open_menu == Some(CascadingMenuId::SessionSettings);
 
         self.workspace_pane.update(cx, |pane, cx| {
             if pane.task_filters_open == task_filters_should_open {
@@ -514,7 +524,13 @@ impl RootView {
 
         self.session_pane.update(cx, |pane, cx| {
             pane.session_view.update(cx, |view, cx| {
-                view.set_settings_menu_open(session_settings_should_open, cx)
+                view.reconcile_settings_menu_open(session_settings_open_in_session_pane, cx);
+            });
+        });
+
+        self.workspace_pane.update(cx, |pane, cx| {
+            pane.task_session_view.update(cx, |view, cx| {
+                view.reconcile_settings_menu_open(session_settings_open_in_task_pane, cx);
             });
         });
 
@@ -539,6 +555,10 @@ impl RootView {
 
         self.session_pane.update(cx, |pane, cx| {
             pane.session_view
+                .update(cx, |view, cx| view.close_settings_menu(cx));
+        });
+        self.workspace_pane.update(cx, |pane, cx| {
+            pane.task_session_view
                 .update(cx, |view, cx| view.close_settings_menu(cx));
         });
 
