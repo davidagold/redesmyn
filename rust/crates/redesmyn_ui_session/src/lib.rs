@@ -1965,8 +1965,8 @@ impl SessionView {
         cx.notify();
     }
 
-    pub fn is_composer_focused(&self, window: &Window, _cx: &App) -> bool {
-        self.composer_focus_handle.is_focused(window)
+    pub fn is_composer_focused(&self, window: &Window, cx: &App) -> bool {
+        self.composer_focus_handle.contains_focused(window, cx)
     }
 
     fn open_cascading_menu_for_self(&self, cx: &Context<Self>) -> Option<CascadingMenuId> {
