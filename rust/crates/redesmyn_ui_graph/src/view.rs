@@ -1622,6 +1622,11 @@ impl GraphView {
             return;
         }
 
+        // Prevent GPUI's default mousedown focus behavior from re-focusing a parent scope
+        // (e.g. the workspace host). Graph keyboard shortcuts are intentionally bound to the
+        // dedicated graph shortcut focus target below.
+        window.prevent_default();
+
         // Keep keyboard shortcut focus on the dedicated graph-shortcuts target.
         // The canvas itself is intentionally not focusable to avoid stealing focus from this.
         window.focus(&self.focus_handle);

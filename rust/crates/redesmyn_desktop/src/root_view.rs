@@ -4262,6 +4262,7 @@ impl Render for EpicSessionPaneHost {
 struct WorkspacePaneHost {
     focus_handle: FocusHandle,
     task_filters_focus_handle: FocusHandle,
+    task_filters_restore_focus: Option<FocusHandle>,
     task_filters_action_availability: ActionAvailabilityProbe,
     ui_updates: UiUpdateCounter,
     model: Entity<DesktopModel>,
@@ -4462,6 +4463,7 @@ impl WorkspacePaneHost {
         Self {
             focus_handle: cx.focus_handle(),
             task_filters_focus_handle: cx.focus_handle(),
+            task_filters_restore_focus: None,
             task_filters_action_availability: ActionAvailabilityProbe::new(),
             ui_updates,
             model,
@@ -4558,6 +4560,7 @@ impl WorkspacePaneHost {
         input_source: TaskFiltersInputSource,
         cx: &mut Context<Self>,
     ) -> FocusHandle {
+        let was_open = self.task_filters_open;
         let open_menu = cx
             .try_global::<CascadingMenuState>()
             .map(|state| state.open_menu())
@@ -4587,6 +4590,10 @@ impl WorkspacePaneHost {
         self.task_filters_value_search_input
             .update(cx, |input, cx| input.set_text("", cx));
 
+        if open && !was_open && self.task_filters_restore_focus.is_none() {
+            self.task_filters_restore_focus = Some(self.graph_view.focus_handle(cx));
+        }
+
         self.graph_view.update(cx, |view, _cx| {
             view.set_scroll_focus_enabled(!open);
         });
@@ -4597,8 +4604,45 @@ impl WorkspacePaneHost {
         if open {
             self.task_filters_search_input.focus_handle(cx)
         } else {
-            self.focus_handle.clone()
+            self.task_filters_restore_focus
+                .take()
+                .unwrap_or_else(|| self.graph_view.focus_handle(cx))
         }
+    }
+
+    fn filter_shortcut_enabled(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self
+            .task_session_view
+            .read(cx)
+            .is_composer_focused(window, cx)
+        {
+            return false;
+        }
+
+        if self.task_filters_open {
+            let task_filters_scope_focused =
+                self.task_filters_focus_handle.contains_focused(window, cx);
+            return self
+                .task_filters_action_availability
+                .is_action_available_in_scope(
+                    window,
+                    cx,
+                    &CloseTaskFilters,
+                    task_filters_scope_focused,
+                );
+        }
+
+        let graph_shortcut_scope_focused = self
+            .graph_view
+            .focus_handle(cx)
+            .contains_focused(window, cx);
+        self.task_filters_action_availability
+            .is_action_available_in_scope(
+                window,
+                cx,
+                &OpenTaskFilters,
+                graph_shortcut_scope_focused,
+            )
     }
 
     fn open_task_filters(
@@ -4617,6 +4661,8 @@ impl WorkspacePaneHost {
 
         let span = redesmyn_logging::redesmyn_info_span!("ui.workspace.filters.open");
         let _guard = span.enter();
+
+        self.task_filters_restore_focus = window.focused(cx);
 
         let focus = self.set_task_filters_open(
             true,
@@ -5329,21 +5375,7 @@ impl Render for WorkspacePaneHost {
 
         let entity_id = cx.entity_id();
         let workspace = cx.entity();
-        let task_composer_focused = self
-            .task_session_view
-            .read(cx)
-            .is_composer_focused(window, cx);
-        let graph_shortcut_scope_focused = self.graph_view.focus_handle(cx).is_focused(window);
-
-        let filter_shortcut_enabled = self
-            .task_filters_action_availability
-            .is_action_available_in_scope(
-                window,
-                cx,
-                &OpenTaskFilters,
-                graph_shortcut_scope_focused,
-            )
-            && !task_composer_focused;
+        let filter_shortcut_enabled = self.filter_shortcut_enabled(window, cx);
         let filter_tab_height = px(28.0);
         let keycap = |label: &'static str| {
             div()
@@ -5374,8 +5406,12 @@ impl Render for WorkspacePaneHost {
             .on_click({
                 let workspace = workspace.clone();
                 move |_, window, cx| {
+                    let restore_focus = window.focused(cx);
                     let focus = workspace.update(cx, |this, cx| {
                         let open = !this.task_filters_open;
+                        if open {
+                            this.task_filters_restore_focus = restore_focus.clone();
+                        }
                         Some(this.set_task_filters_open(
                             open,
                             this.task_filters_active_category,
@@ -5420,7 +5456,9 @@ impl Render for WorkspacePaneHost {
                 .on_mouse_down(gpui::MouseButton::Left, {
                     let workspace = workspace.clone();
                     move |_, window, cx| {
+                        let restore_focus = window.focused(cx);
                         let focus = workspace.update(cx, |this, cx| {
+                            this.task_filters_restore_focus = restore_focus.clone();
                             Some(this.set_task_filters_open(
                                 true,
                                 category,
@@ -6203,19 +6241,23 @@ impl Render for WorkspacePaneHost {
                     host = host
                         .on_mouse_down(gpui::MouseButton::Left, {
                             let workspace = workspace.clone();
-                            move |_, _, cx| {
-                                workspace.update(cx, |this, cx| {
+                            move |_, window, cx| {
+                                let focus = workspace.update(cx, |this, cx| {
                                     if !this.task_filters_open {
-                                        return;
+                                        return None;
                                     }
-                                    this.set_task_filters_open(
+                                    Some(this.set_task_filters_open(
                                         false,
                                         this.task_filters_active_category,
                                         None,
                                         TaskFiltersInputSource::Mouse,
                                         cx,
-                                    );
+                                    ))
                                 });
+
+                                if let Some(focus) = focus {
+                                    window.focus(&focus);
+                                }
                             }
                         })
                         .child(
