@@ -12,8 +12,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use redesmyn_client_api::uds::{UdsConnectOptions, connect_uds};
 use redesmyn_config::{discover_repo_root_from, legacy_db_path, rust_db_path};
 use redesmyn_protocol::client::{
-    CommandState, CreateCommandRequest, GetEpicGraphRequest, RequestPayload, ResponseResult,
-    WaitForCommandRequest,
+    AgentKind, AgentMessageConflictAction, CommandState, CreateCommandRequest, GetEpicGraphRequest,
+    RequestPayload, ResponseResult, StartAgentRequest, WaitForCommandRequest,
 };
 use redesmyn_protocol::sync_commands::{LOCAL_SYNC_FROM_DOCS_KIND, LocalSyncFromDocsCommand};
 use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, ProtocolEnvelope, Scope};
@@ -87,6 +87,7 @@ fn run(cli: Cli, output: &Output) -> CommandOutcome {
     match cli.command {
         Commands::Doctor(args) => doctor(args, output),
         Commands::Sync(args) => sync(args, output),
+        Commands::Task(cmd) => task(cmd, output),
         Commands::Protocol(cmd) => protocol::protocol(cmd, output),
         Commands::UiDriver(cmd) => ui_driver::ui_driver(cmd, output),
         Commands::Db(cmd) => db(cmd, output),
@@ -157,6 +158,10 @@ enum Commands {
     /// Synchronize local task docs into the running control plane.
     Sync(SyncArgs),
 
+    /// Task orchestration helpers.
+    #[command(subcommand)]
+    Task(TaskCommands),
+
     /// Protocol tooling.
     #[command(subcommand)]
     Protocol(protocol::ProtocolCommands),
@@ -205,6 +210,35 @@ struct SyncArgs {
     create_branches: bool,
 
     /// Timeout waiting for sync command completion.
+    #[arg(long, default_value_t = 30_000)]
+    timeout_ms: u64,
+}
+
+#[derive(Debug, Subcommand)]
+enum TaskCommands {
+    /// Start a task agent session (same control-plane request path as the desktop UI).
+    Start(TaskStartArgs),
+}
+
+#[derive(Debug, Args)]
+struct TaskStartArgs {
+    /// Epic slug (defaults only if exactly one local epic exists).
+    #[arg(long)]
+    epic: Option<String>,
+
+    /// Task slug within the epic (e.g. `T-3`).
+    #[arg(long)]
+    task: String,
+
+    /// Path within the repo to operate in (defaults to current directory).
+    #[arg(long)]
+    repo: Option<PathBuf>,
+
+    /// Optional initial prompt to seed the new session.
+    #[arg(long)]
+    prompt: Option<String>,
+
+    /// Timeout waiting for the start command to reach a terminal state.
     #[arg(long, default_value_t = 30_000)]
     timeout_ms: u64,
 }
@@ -517,6 +551,128 @@ fn sync(args: SyncArgs, output: &Output) -> CommandOutcome {
     }
 }
 
+fn task(cmd: TaskCommands, output: &Output) -> CommandOutcome {
+    match cmd {
+        TaskCommands::Start(args) => task_start(args, output),
+    }
+}
+
+fn task_start(args: TaskStartArgs, output: &Output) -> CommandOutcome {
+    let start = match args.repo {
+        Some(path) => path,
+        None => match env::current_dir() {
+            Ok(cwd) => cwd,
+            Err(err) => {
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    format!("failed to read cwd: {err}"),
+                ));
+            }
+        },
+    };
+
+    let repo_root = match discover_repo_root_from(&start) {
+        Some(repo_root) => repo_root,
+        None => {
+            return CommandOutcome::Failure(ErrorEnvelope::new(
+                ErrorCategory::InvalidRequest,
+                format!(
+                    "no .git directory found from {} (pass --repo to specify a repo)",
+                    start.display()
+                ),
+            ));
+        }
+    };
+
+    let epic_slug = if let Some(epic) = args.epic {
+        epic
+    } else if let Some(inferred) = infer_single_epic_slug_from_fs(&repo_root) {
+        inferred
+    } else {
+        return CommandOutcome::Failure(ErrorEnvelope::new(
+            ErrorCategory::InvalidRequest,
+            "multiple epics found; pass --epic <slug>",
+        ));
+    };
+
+    #[derive(Debug, Serialize)]
+    struct TaskStartReport {
+        repo_root: String,
+        epic_slug: String,
+        task_slug: String,
+        session_id: String,
+        command_id: String,
+        state: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    }
+
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .enable_io()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            return CommandOutcome::Failure(ErrorEnvelope::new(
+                ErrorCategory::Internal,
+                format!("failed to initialize async runtime: {err}"),
+            ));
+        }
+    };
+
+    let result = match runtime.block_on(start_task_agent_via_control_plane(
+        &epic_slug,
+        &args.task,
+        args.prompt.clone(),
+        args.timeout_ms,
+    )) {
+        Ok(result) => result,
+        Err(err) => return CommandOutcome::Failure(err),
+    };
+
+    let report = TaskStartReport {
+        repo_root: repo_root.display().to_string(),
+        epic_slug,
+        task_slug: result.task_slug,
+        session_id: result.session_id,
+        command_id: result.command_id,
+        state: result.state,
+        message: result.message.clone(),
+    };
+
+    match output.format {
+        OutputFormat::Human => {
+            if report.state == "succeeded" {
+                println!("started session: {}", report.session_id);
+            } else if let Some(message) = &report.message {
+                println!("{message}");
+            } else {
+                println!("start failed: state={}", report.state);
+            }
+        }
+        OutputFormat::Json => {
+            if let Err(err) = output.print_json_stdout(&report) {
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    format!("failed to write output: {err}"),
+                ));
+            }
+        }
+    }
+
+    if report.state == "succeeded" {
+        CommandOutcome::Success
+    } else {
+        CommandOutcome::Failure(ErrorEnvelope::new(
+            ErrorCategory::Unavailable,
+            report
+                .message
+                .unwrap_or_else(|| format!("failed to start task agent (state={})", report.state)),
+        ))
+    }
+}
+
 #[derive(Debug)]
 struct SyncCommandResult {
     command_id: String,
@@ -639,22 +795,180 @@ async fn sync_from_local_via_control_plane(
             }
         };
 
-        let state = match waited.state {
-            CommandState::Queued => "queued",
-            CommandState::Accepted => "accepted",
-            CommandState::Running => "running",
-            CommandState::Blocked => "blocked",
-            CommandState::Resumable => "resumable",
-            CommandState::Succeeded => "succeeded",
-            CommandState::Failed => "failed",
-            CommandState::Canceled => "canceled",
-            CommandState::Unknown => "unknown",
-        }
-        .to_string();
+        let state = command_state_label(waited.state).to_string();
 
         Ok(SyncCommandResult {
             command_id: waited.command_id.to_string(),
             state,
+            message: waited.last_update.and_then(|update| update.message),
+        })
+    }
+}
+
+fn command_state_label(state: CommandState) -> &'static str {
+    match state {
+        CommandState::Queued => "queued",
+        CommandState::Accepted => "accepted",
+        CommandState::Running => "running",
+        CommandState::Blocked => "blocked",
+        CommandState::Resumable => "resumable",
+        CommandState::Succeeded => "succeeded",
+        CommandState::Failed => "failed",
+        CommandState::Canceled => "canceled",
+        CommandState::Unknown => "unknown",
+    }
+}
+
+#[derive(Debug)]
+struct StartAgentCommandResult {
+    task_slug: String,
+    session_id: String,
+    command_id: String,
+    state: String,
+    message: Option<String>,
+}
+
+async fn start_task_agent_via_control_plane(
+    epic_slug: &str,
+    task_slug: &str,
+    prompt: Option<String>,
+    timeout_ms: u64,
+) -> Result<StartAgentCommandResult, ErrorEnvelope> {
+    #[cfg(not(unix))]
+    {
+        let _ = (epic_slug, task_slug, prompt, timeout_ms);
+        return Err(ErrorEnvelope::new(
+            ErrorCategory::Unavailable,
+            "client API socket is only supported on unix platforms",
+        ));
+    }
+
+    #[cfg(unix)]
+    {
+        let socket_path = load_default_client_socket_path()?;
+        let options = UdsConnectOptions::new(socket_path);
+        let (client, task) = connect_uds(options, 64).await?;
+        tokio::spawn(task.run());
+
+        let graph = match client
+            .request(RequestPayload::GetEpicGraph(GetEpicGraphRequest {
+                epic_slug: epic_slug.to_string(),
+            }))
+            .await?
+        {
+            ResponseResult::GetEpicGraph(resp) => resp.graph,
+            ResponseResult::Error(err) => return Err(err),
+            _ => {
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    "unexpected response for GetEpicGraph",
+                ));
+            }
+        };
+
+        let workspace_id = graph.workspace_id.ok_or_else(|| {
+            ErrorEnvelope::new(
+                ErrorCategory::Internal,
+                "GetEpicGraph response missing workspace_id",
+            )
+        })?;
+        let repo_id = graph.repo_id.ok_or_else(|| {
+            ErrorEnvelope::new(
+                ErrorCategory::Internal,
+                "GetEpicGraph response missing repo_id",
+            )
+        })?;
+
+        let desired_slug = task_slug.trim();
+        let desired_slug_lower = desired_slug.to_ascii_lowercase();
+        let (task_slug, task_id) = graph
+            .nodes
+            .iter()
+            .find(|node| node.task_slug == desired_slug)
+            .or_else(|| {
+                graph
+                    .nodes
+                    .iter()
+                    .find(|node| node.task_slug.to_ascii_lowercase() == desired_slug_lower)
+            })
+            .map(|node| (node.task_slug.clone(), node.task_id))
+            .ok_or_else(|| {
+                let mut known: Vec<String> =
+                    graph.nodes.iter().map(|node| node.task_slug.clone()).collect();
+                known.sort();
+                ErrorEnvelope::new(
+                    ErrorCategory::NotFound,
+                    format!(
+                        "task not found in epic {epic_slug}: {desired_slug} (known: {})",
+                        known.join(", ")
+                    ),
+                )
+            })?;
+
+        let task_id = task_id.ok_or_else(|| {
+            ErrorEnvelope::new(
+                ErrorCategory::Internal,
+                format!("epic graph node is missing task_id for task {task_slug}"),
+            )
+        })?;
+
+        let envelope = ProtocolEnvelope::new().with_scope(Scope::from(
+            redesmyn_protocol::RepoScope::new(workspace_id, repo_id),
+        ));
+
+        let started = match client
+            .request_with_envelope(
+                envelope.clone(),
+                RequestPayload::StartAgent(StartAgentRequest {
+                    task_id,
+                    agent_kind: AgentKind::Codex,
+                    initial_prompt: prompt,
+                    on_conflict: AgentMessageConflictAction::Fail,
+                    session_model_selection: None,
+                }),
+            )
+            .await?
+        {
+            ResponseResult::StartAgent(resp) => resp,
+            ResponseResult::Error(err) => return Err(err),
+            _ => {
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    "unexpected response for StartAgent",
+                ));
+            }
+        };
+
+        let waited = match client
+            .request_with_envelope(
+                envelope,
+                RequestPayload::WaitForCommand(WaitForCommandRequest {
+                    command_id: started.command.command_id,
+                    terminal_states: vec![
+                        CommandState::Succeeded,
+                        CommandState::Failed,
+                        CommandState::Canceled,
+                    ],
+                    timeout_ms,
+                }),
+            )
+            .await?
+        {
+            ResponseResult::WaitForCommand(resp) => resp.command,
+            ResponseResult::Error(err) => return Err(err),
+            _ => {
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    "unexpected response for WaitForCommand",
+                ));
+            }
+        };
+
+        Ok(StartAgentCommandResult {
+            task_slug,
+            session_id: started.session_id.to_string(),
+            command_id: waited.command_id.to_string(),
+            state: command_state_label(waited.state).to_string(),
             message: waited.last_update.and_then(|update| update.message),
         })
     }
