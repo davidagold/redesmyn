@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-38-daemon-claude-code-runner
 rn:
+  node:
+    branch: rn/gpui/T-38-daemon-claude-code-runner
   parent: T-35
   after:
     - T-34

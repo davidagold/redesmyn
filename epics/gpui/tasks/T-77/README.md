@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-77-collapsed-task-card-parity
 rn:
+  node:
+    branch: rn/gpui/T-77-collapsed-task-card-parity
   parent: T-52
 ---
 

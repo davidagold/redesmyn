@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-16-control-plane-skeleton
 rn:
+  node:
+    branch: rn/gpui/T-16-control-plane-skeleton
   parent: T-12
 ---
 

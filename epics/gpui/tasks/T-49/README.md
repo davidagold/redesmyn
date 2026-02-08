@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-49-command-palette-skeleton
 rn:
+  node:
+    branch: rn/gpui/T-49-command-palette-skeleton
   parent: T-44
 ---
 

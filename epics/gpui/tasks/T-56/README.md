@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-56-graph-multiselect
 rn:
+  node:
+    branch: rn/gpui/T-56-graph-multiselect
   parent: T-50
   after:
     - T-44

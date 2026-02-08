@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-27-worktree-service
 rn:
+  node:
+    branch: rn/gpui/T-27-worktree-service
   parent: T-26
 ---
 
@@ -58,6 +60,31 @@ Enforce:
 - worktree is on expected branch (not detached),
 - branch exists and points to expected ref when required,
 - no destructive actions without explicit command intent.
+
+#### 2.1) Branch materialization (stack correctness)
+
+When creating a task worktree, the daemon is responsible for ensuring the task’s **git branch backing**
+exists and is based on the correct “stack” base ref.
+
+Required behavior (parity with Python `ensure_task_worktree`):
+
+- If the task branch already exists: add/attach the worktree to that branch (no implicit rebases).
+- If the task branch is missing: create it from `base_ref`, then add the worktree.
+- **Never** create a new task branch from repo `HEAD` as a fallback.
+
+`base_ref` selection rules:
+
+- Start with `base_ref = epic.root_branch`.
+- Let `cursor = parent_task` (walk the parent chain upward).
+- While `cursor` exists and has a `branch_name`:
+  - If `cursor.branch_name` is already contained in `epic.root_branch` (i.e. `git is-ancestor cursor.branch epic.root_branch`):
+    - The cursor task is effectively merged; continue walking upward.
+  - Else:
+    - If `cursor` is marked `done`, error: “parent is done but root branch does not contain its branch; fast-forward the base branch first.”
+    - Otherwise, set `base_ref = cursor.branch_name` and stop.
+
+This rule ensures new child branches are based on the nearest unmerged ancestor branch (or the epic root)
+so stacked branches remain coherent even before merge/restack (T-29/T-30) is implemented.
 
 ### 3) Repo instance exclusivity
 

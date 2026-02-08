@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-50-gpui-graph-scene
 rn:
+  node:
+    branch: rn/gpui/T-50-gpui-graph-scene
   parent: T-45
   after:
     - T-44

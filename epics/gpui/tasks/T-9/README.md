@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-9-protocol-envelope
 rn:
+  node:
+    branch: rn/gpui/T-9-protocol-envelope
   parent: T-2
 ---
 

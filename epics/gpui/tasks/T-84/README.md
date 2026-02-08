@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-84-agent-selection-at-session-start
 rn:
+  node:
+    branch: rn/gpui/T-84-agent-selection-at-session-start
   parent: null
 ---
 

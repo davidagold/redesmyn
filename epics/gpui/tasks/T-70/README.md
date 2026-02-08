@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-70-session-viewer-fixture-mode
 rn:
+  node:
+    branch: rn/gpui/T-70-session-viewer-fixture-mode
   parent: T-59
   after:
     - T-15

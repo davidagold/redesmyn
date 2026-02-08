@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-71-wire-epic-graph-to-graph-view
 rn:
+  node:
+    branch: rn/gpui/T-71-wire-epic-graph-to-graph-view
   parent: T-46
   after:
     - T-20

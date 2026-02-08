@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-62-session-composer-and-conflicts
 rn:
+  node:
+    branch: rn/gpui/T-62-session-composer-and-conflicts
   parent: T-59
   after:
     - T-41

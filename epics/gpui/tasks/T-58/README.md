@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-58-graph-testability
 rn:
+  node:
+    branch: rn/gpui/T-58-graph-testability
   parent: T-48
   after:
     - T-50

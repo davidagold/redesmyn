@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-31-daemon-integration-tests
 rn:
+  node:
+    branch: rn/gpui/T-31-daemon-integration-tests
   parent: T-23
 ---
 

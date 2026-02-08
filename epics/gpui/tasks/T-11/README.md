@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-11-daemon-stream-protocol
 rn:
+  node:
+    branch: rn/gpui/T-11-daemon-stream-protocol
   parent: T-10
 ---
 

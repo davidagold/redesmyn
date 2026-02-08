@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-2-ulid-newtypes
 rn:
+  node:
+    branch: rn/gpui/T-2-ulid-newtypes
   parent: T-1
 ---
 

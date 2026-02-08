@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-20-client-api-server
 rn:
+  node:
+    branch: rn/gpui/T-20-client-api-server
   parent: T-18
 ---
 

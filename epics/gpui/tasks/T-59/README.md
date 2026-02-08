@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-59-session-viewer-foundations
 rn:
+  node:
+    branch: rn/gpui/T-59-session-viewer-foundations
   parent: T-45
   after:
     - T-14

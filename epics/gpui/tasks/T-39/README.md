@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-39-daemon-app-server-agent
 rn:
+  node:
+    branch: rn/gpui/T-39-daemon-app-server-agent
   parent: T-35
 ---
 

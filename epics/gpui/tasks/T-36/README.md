@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-36-daemon-shell-tmux-runtime
 rn:
+  node:
+    branch: rn/gpui/T-36-daemon-shell-tmux-runtime
   parent: T-23
 ---
 

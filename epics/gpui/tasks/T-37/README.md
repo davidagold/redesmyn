@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-37-daemon-codex-runner
 rn:
+  node:
+    branch: rn/gpui/T-37-daemon-codex-runner
   parent: T-35
   after:
     - T-33

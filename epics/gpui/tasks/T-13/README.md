@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-13-protocol-tooling
 rn:
+  node:
+    branch: rn/gpui/T-13-protocol-tooling
   parent: T-10
   after:
     - T-8

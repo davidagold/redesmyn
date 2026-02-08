@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-75-text-editing-polish-v2
 rn:
+  node:
+    branch: rn/gpui/T-75-text-editing-polish-v2
   parent: T-59
   after:
     - T-72

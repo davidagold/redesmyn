@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-76-codex-app-server-protocol-conformance
 rn:
+  node:
+    branch: rn/gpui/T-76-codex-app-server-protocol-conformance
   parent: T-68
 ---
 

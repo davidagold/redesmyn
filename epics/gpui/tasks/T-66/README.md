@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-66-session-viewer-testability
 rn:
+  node:
+    branch: rn/gpui/T-66-session-viewer-testability
   parent: T-48
   after:
     - T-59

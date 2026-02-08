@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-35-daemon-exec-session-supervisor
 rn:
+  node:
+    branch: rn/gpui/T-35-daemon-exec-session-supervisor
   parent: T-23
 ---
 

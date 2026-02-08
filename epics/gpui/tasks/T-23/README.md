@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-23-daemon-skeleton
 rn:
+  node:
+    branch: rn/gpui/T-23-daemon-skeleton
   parent: T-11
 ---
 

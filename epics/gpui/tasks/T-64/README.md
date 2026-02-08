@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-64-task-session-view-in-expanded-card
 rn:
+  node:
+    branch: rn/gpui/T-64-task-session-view-in-expanded-card
   parent: T-55
   after:
     - T-59

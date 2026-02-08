@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-85-multi-agent-runtime-routing
 rn:
+  node:
+    branch: rn/gpui/T-85-multi-agent-runtime-routing
   parent: T-84
 ---
 

@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-43-gpui-desktop-bootstrap
 rn:
+  node:
+    branch: rn/gpui/T-43-gpui-desktop-bootstrap
   parent: T-16
 ---
 

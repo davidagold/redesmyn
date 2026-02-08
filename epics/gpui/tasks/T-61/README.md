@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-61-session-view-virtual-list
 rn:
+  node:
+    branch: rn/gpui/T-61-session-view-virtual-list
   parent: T-59
   after:
     - T-44

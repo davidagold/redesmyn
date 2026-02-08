@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-30-merge-restack-executor
 rn:
+  node:
+    branch: rn/gpui/T-30-merge-restack-executor
   parent: T-29
 ---
 

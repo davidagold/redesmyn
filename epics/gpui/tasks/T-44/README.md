@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-44-gpui-ui-foundations
 rn:
+  node:
+    branch: rn/gpui/T-44-gpui-ui-foundations
   parent: T-43
 ---
 

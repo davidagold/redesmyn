@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-25-lease-primary-enforcement
 rn:
+  node:
+    branch: rn/gpui/T-25-lease-primary-enforcement
   parent: T-23
 ---
 

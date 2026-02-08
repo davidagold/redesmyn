@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-1-rust-workspace-foundations
 rn:
+  node:
+    branch: rn/gpui/T-1-rust-workspace-foundations
   parent: null
 ---
 

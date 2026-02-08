@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-78-gpu-backpressure
 rn:
+  node:
+    branch: rn/gpui/T-78-gpu-backpressure
   parent: T-77
 ---
 

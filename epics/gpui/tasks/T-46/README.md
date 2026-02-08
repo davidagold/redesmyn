@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-46-gpui-epic-header-chrome
 rn:
+  node:
+    branch: rn/gpui/T-46-gpui-epic-header-chrome
   parent: T-43
   after:
     - T-44

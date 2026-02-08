@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-3-errorresult-conventions
 rn:
+  node:
+    branch: rn/gpui/T-3-errorresult-conventions
   parent: T-1
 ---
 

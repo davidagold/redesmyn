@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-74-user-keymap-customization
 rn:
+  node:
+    branch: rn/gpui/T-74-user-keymap-customization
   parent: T-73
   after:
     - T-44

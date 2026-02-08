@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-72-textarea-wrap-autogrow
 rn:
+  node:
+    branch: rn/gpui/T-72-textarea-wrap-autogrow
   parent: T-59
   after:
     - T-44

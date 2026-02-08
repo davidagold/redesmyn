@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-55-expanded-task-card-details
 rn:
+  node:
+    branch: rn/gpui/T-55-expanded-task-card-details
   parent: T-46
   after:
     - T-44

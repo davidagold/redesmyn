@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-63-left-pane-pinned-chat-session-view
 rn:
+  node:
+    branch: rn/gpui/T-63-left-pane-pinned-chat-session-view
   parent: T-47
   after:
     - T-59

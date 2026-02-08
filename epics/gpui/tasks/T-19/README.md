@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-19-command-engine
 rn:
+  node:
+    branch: rn/gpui/T-19-command-engine
   parent: T-18
 ---
 

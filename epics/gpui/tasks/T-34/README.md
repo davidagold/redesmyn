@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-34-claude-code-parser
 rn:
+  node:
+    branch: rn/gpui/T-34-claude-code-parser
   parent: T-14
 ---
 

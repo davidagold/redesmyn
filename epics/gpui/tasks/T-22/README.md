@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-22-control-plane-test-harness
 rn:
+  node:
+    branch: rn/gpui/T-22-control-plane-test-harness
   parent: T-20
 ---
 

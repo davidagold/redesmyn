@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-54-graph-viewport-behaviors
 rn:
+  node:
+    branch: rn/gpui/T-54-graph-viewport-behaviors
   parent: T-50
   after:
     - T-51

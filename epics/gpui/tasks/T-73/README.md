@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-73-text-editing-actions-v1
 rn:
+  node:
+    branch: rn/gpui/T-73-text-editing-actions-v1
   parent: T-59
   after:
     - T-44

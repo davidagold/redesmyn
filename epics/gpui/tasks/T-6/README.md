@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-6-control-plane-storage-scaffold
 rn:
+  node:
+    branch: rn/gpui/T-6-control-plane-storage-scaffold
   parent: T-2
 ---
 

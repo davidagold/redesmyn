@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-82-header-chrome-polish
 rn:
+  node:
+    branch: rn/gpui/T-82-header-chrome-polish
   parent: T-80
 ---
 

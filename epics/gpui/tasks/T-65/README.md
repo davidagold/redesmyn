@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-65-interactive-session-placeholder
 rn:
+  node:
+    branch: rn/gpui/T-65-interactive-session-placeholder
   parent: T-59
   after:
     - T-44

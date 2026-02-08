@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-10-protobuf-schemas
 rn:
+  node:
+    branch: rn/gpui/T-10-protobuf-schemas
   parent: T-9
 ---
 

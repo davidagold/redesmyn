@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-5-typed-config-layer
 rn:
+  node:
+    branch: rn/gpui/T-5-typed-config-layer
   parent: T-1
 ---
 

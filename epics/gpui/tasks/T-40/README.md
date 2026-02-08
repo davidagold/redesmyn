@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-40-control-plane-session-store
 rn:
+  node:
+    branch: rn/gpui/T-40-control-plane-session-store
   parent: T-17
   after:
     - T-14

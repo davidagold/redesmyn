@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-24-repo-registry-attach
 rn:
+  node:
+    branch: rn/gpui/T-24-repo-registry-attach
   parent: T-23
 ---
 

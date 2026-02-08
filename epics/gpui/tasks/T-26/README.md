@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-26-git-backend-abstraction
 rn:
+  node:
+    branch: rn/gpui/T-26-git-backend-abstraction
   parent: T-23
 ---
 

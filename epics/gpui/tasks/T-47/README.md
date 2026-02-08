@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-47-epic-scoped-session-pane
 rn:
+  node:
+    branch: rn/gpui/T-47-epic-scoped-session-pane
   parent: T-46
   after:
     - T-40

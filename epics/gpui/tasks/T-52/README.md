@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-52-task-node-view
 rn:
+  node:
+    branch: rn/gpui/T-52-task-node-view
   parent: T-50
   after:
     - T-44

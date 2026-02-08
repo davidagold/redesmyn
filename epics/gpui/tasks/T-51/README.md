@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-51-graph-layout-engine
 rn:
+  node:
+    branch: rn/gpui/T-51-graph-layout-engine
   parent: T-2
 ---
 

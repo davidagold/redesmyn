@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-12-client-api-over-uds
 rn:
+  node:
+    branch: rn/gpui/T-12-client-api-over-uds
   parent: T-10
 ---
 

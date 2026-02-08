@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-83-ui-cascading-menu-polish
 rn:
+  node:
+    branch: rn/gpui/T-83-ui-cascading-menu-polish
   parent: T-81
 ---
 

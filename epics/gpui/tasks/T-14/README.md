@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-14-artifacts-and-session-events-contract
 rn:
+  node:
+    branch: rn/gpui/T-14-artifacts-and-session-events-contract
   parent: T-10
 ---
 

@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-32-agent-kind-taxonomy
 rn:
+  node:
+    branch: rn/gpui/T-32-agent-kind-taxonomy
   parent: T-2
 ---
 

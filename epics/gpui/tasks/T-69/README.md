@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-69-graph-node-virtualization
 rn:
+  node:
+    branch: rn/gpui/T-69-graph-node-virtualization
   parent: T-50
   after:
     - T-51

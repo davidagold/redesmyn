@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-68-codex-app-server-runner
 rn:
+  node:
+    branch: rn/gpui/T-68-codex-app-server-runner
   parent: T-39
   after:
     - T-32

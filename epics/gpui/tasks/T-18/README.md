@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-18-event-log-and-subscriptions
 rn:
+  node:
+    branch: rn/gpui/T-18-event-log-and-subscriptions
   parent: T-17
 ---
 

@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-33-codex-parser
 rn:
+  node:
+    branch: rn/gpui/T-33-codex-parser
   parent: T-14
 ---
 

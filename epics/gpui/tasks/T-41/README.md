@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-41-control-plane-agent-commands
 rn:
+  node:
+    branch: rn/gpui/T-41-control-plane-agent-commands
   parent: T-19
   after:
     - T-40

@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-21-epic-graph-query-model
 rn:
+  node:
+    branch: rn/gpui/T-21-epic-graph-query-model
   parent: T-17
 ---
 

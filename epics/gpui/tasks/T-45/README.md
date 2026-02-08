@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-45-gpui-main-split-layout
 rn:
+  node:
+    branch: rn/gpui/T-45-gpui-main-split-layout
   parent: T-44
 ---
 

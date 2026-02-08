@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-67-legacy-db-import
 rn:
+  node:
+    branch: rn/gpui/T-67-legacy-db-import
   parent: T-17
 ---
 

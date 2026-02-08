@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-28-observation-telemetry
 rn:
+  node:
+    branch: rn/gpui/T-28-observation-telemetry
   parent: T-26
 ---
 

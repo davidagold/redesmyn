@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-48-gpui-ui-driver
 rn:
+  node:
+    branch: rn/gpui/T-48-gpui-ui-driver
   parent: T-45
   after:
     - T-15

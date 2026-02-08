@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-60-session-markdown-renderer
 rn:
+  node:
+    branch: rn/gpui/T-60-session-markdown-renderer
   parent: T-59
   after:
     - T-44

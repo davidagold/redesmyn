@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-79-linear-filters
 rn:
+  node:
+    branch: rn/gpui/T-79-linear-filters
   parent: T-71
 ---
 

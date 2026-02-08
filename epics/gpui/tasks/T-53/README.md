@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-53-graph-edges
 rn:
+  node:
+    branch: rn/gpui/T-53-graph-edges
   parent: T-50
   after:
     - T-51

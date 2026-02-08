@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-57-trunk-timeline-column
 rn:
+  node:
+    branch: rn/gpui/T-57-trunk-timeline-column
   parent: T-50
 ---
 

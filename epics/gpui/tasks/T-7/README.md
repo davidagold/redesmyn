@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-7-transport
 rn:
+  node:
+    branch: rn/gpui/T-7-transport
   parent: T-2
 ---
 

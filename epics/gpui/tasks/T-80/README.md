@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-80-filter-ui-polish
 rn:
+  node:
+    branch: rn/gpui/T-80-filter-ui-polish
   parent: T-79
 ---
 

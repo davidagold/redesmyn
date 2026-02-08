@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-15-ai-testability
 rn:
+  node:
+    branch: rn/gpui/T-15-ai-testability
   parent: T-10
 ---
 

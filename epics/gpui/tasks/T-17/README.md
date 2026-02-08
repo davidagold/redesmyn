@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-17-control-plane-db-schema
 rn:
+  node:
+    branch: rn/gpui/T-17-control-plane-db-schema
   parent: T-6
 ---
 

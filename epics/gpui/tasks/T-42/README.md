@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-42-agent-runtime-integration-tests
 rn:
+  node:
+    branch: rn/gpui/T-42-agent-runtime-integration-tests
   parent: T-41
 ---
 

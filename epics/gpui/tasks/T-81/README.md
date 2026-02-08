@@ -3,6 +3,8 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-81-session-settings-menu
 rn:
+  node:
+    branch: rn/gpui/T-81-session-settings-menu
   parent: T-80
 ---
 
