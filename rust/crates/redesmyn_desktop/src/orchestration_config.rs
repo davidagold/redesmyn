@@ -313,6 +313,7 @@ pub struct OrchestrationDefaults {
     pub sandbox_network: SandboxNetworkMode,
     pub session_defaults: SessionDefaults,
     pub openai: OpenAiDefaults,
+    pub ui: UiDefaults,
 }
 
 impl Default for OrchestrationDefaults {
@@ -323,6 +324,7 @@ impl Default for OrchestrationDefaults {
             sandbox_network: SandboxNetworkMode::Allow,
             session_defaults: SessionDefaults::default(),
             openai: OpenAiDefaults::default(),
+            ui: UiDefaults::default(),
         }
     }
 }
@@ -330,6 +332,19 @@ impl Default for OrchestrationDefaults {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct OpenAiDefaults {
     pub api_key: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UiDefaults {
+    pub show_unreachable_agent_sessions: bool,
+}
+
+impl Default for UiDefaults {
+    fn default() -> Self {
+        Self {
+            show_unreachable_agent_sessions: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -349,6 +364,7 @@ struct PartialOrchestrationDefaults {
     sandbox_network: Option<SandboxNetworkMode>,
     session_defaults: PartialSessionDefaults,
     openai: PartialOpenAiDefaults,
+    ui: PartialUiDefaults,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -367,6 +383,11 @@ struct PartialCodexSessionDefaults {
 #[derive(Debug, Clone, Default)]
 struct PartialOpenAiDefaults {
     api_key: Option<Option<String>>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct PartialUiDefaults {
+    show_unreachable_agent_sessions: Option<bool>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -550,6 +571,12 @@ fn parse_partial_from_doc(doc: &DocumentMut) -> PartialOrchestrationDefaults {
         );
     }
 
+    if let Some(ui) = doc.get("ui").and_then(|item| item.as_table()) {
+        partial.ui.show_unreachable_agent_sessions = ui
+            .get("show_unreachable_agent_sessions")
+            .and_then(|item| item.as_bool());
+    }
+
     partial
 }
 
@@ -594,6 +621,9 @@ fn apply_partial(defaults: &mut OrchestrationDefaults, partial: PartialOrchestra
     }
     if let Some(api_key) = partial.openai.api_key {
         defaults.openai.api_key = api_key;
+    }
+    if let Some(show_unreachable) = partial.ui.show_unreachable_agent_sessions {
+        defaults.ui.show_unreachable_agent_sessions = show_unreachable;
     }
 }
 
@@ -721,6 +751,13 @@ fn write_defaults_to_path(
         None => {
             openai.remove("api_key");
         }
+    }
+
+    let ui = ensure_table(&mut doc, "ui");
+    if defaults.ui.show_unreachable_agent_sessions {
+        ui["show_unreachable_agent_sessions"] = value(true);
+    } else {
+        ui.remove("show_unreachable_agent_sessions");
     }
 
     fs::write(path, doc.to_string()).map_err(|source| OrchestrationConfigError::Write {

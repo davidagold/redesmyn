@@ -27,8 +27,11 @@ Config is loaded via `redesmyn_config` (layered defaults → TOML → env overri
 
 Rust config lives under `[rust]` in the shared TOML file.
 
+Agent session palette defaults (repo/global config):
+
+- `[ui].show_unreachable_agent_sessions = true` to include sessions that cannot be opened from Cmd-S.
+
 ### GPUI pinning
 
 GPUI is pinned in the workspace `rust/Cargo.toml` and locked in `rust/Cargo.lock`.
 Update by bumping the `gpui` version in `rust/Cargo.toml`, then regenerating the lockfile.
-

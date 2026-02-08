@@ -159,6 +159,7 @@ pub struct AgentSessionsPaletteOverlay {
     selected_index: usize,
     loading: bool,
     action_in_flight: bool,
+    show_unreachable_entries: bool,
     error: Option<SharedString>,
     entries: Vec<AgentSessionPaletteEntry>,
 }
@@ -174,6 +175,7 @@ impl AgentSessionsPaletteOverlay {
             selected_index: 0,
             loading: false,
             action_in_flight: false,
+            show_unreachable_entries: false,
             error: None,
             entries: Vec::new(),
         }
@@ -246,6 +248,15 @@ impl AgentSessionsPaletteOverlay {
         cx: &mut Context<RootView>,
     ) -> Option<AgentSessionPaletteEntry> {
         self.activate_selected(cx)
+    }
+
+    pub fn set_show_unreachable_entries(&mut self, show: bool, cx: &mut Context<RootView>) {
+        if self.show_unreachable_entries == show {
+            return;
+        }
+        self.show_unreachable_entries = show;
+        self.selected_index = 0;
+        cx.notify();
     }
 
     pub fn handle_close_action(&mut self, window: &mut Window, cx: &mut Context<RootView>) {
@@ -440,6 +451,10 @@ impl AgentSessionsPaletteOverlay {
         self.entries
             .iter()
             .enumerate()
+            .filter(|(_, entry)| {
+                self.show_unreachable_entries
+                    || !matches!(entry.navigation, AgentSessionNavigation::Disabled { .. })
+            })
             .filter(|(_, entry)| entry.search_matches(query))
             .map(|(index, _)| index)
             .collect()
@@ -572,25 +587,6 @@ impl AgentSessionsPaletteOverlay {
                 .child(ProgressPill::new("Opening session…").kind(ProgressPillKind::Accent));
         }
 
-        right_header = right_header.child(
-            IconButton::new(
-                ("agent_sessions_palette_close", cx.entity_id()),
-                div().child("×"),
-            )
-            .tooltip("Close (Esc)")
-            .on_click({
-                let root = root.clone();
-                move |_, window, cx| {
-                    let focus = root.read(cx).focus_handle.clone();
-                    root.update(cx, |this, cx| {
-                        this.agent_sessions_palette.dismiss_overlay(cx);
-                        this.ui_updates.bump();
-                    });
-                    window.focus(&focus);
-                }
-            }),
-        );
-
         let palette_header = div()
             .flex()
             .flex_row()
@@ -635,9 +631,14 @@ impl AgentSessionsPaletteOverlay {
                 list = list.child(
                     div()
                         .pt(theme.spacing.sm)
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(theme.spacing.xs)
                         .text_xs()
                         .text_color(theme.colors.foreground_muted)
-                        .child("Recent sessions"),
+                        .child(div().text_xs().child("◷"))
+                        .child(div().text_xs().child("Recent sessions")),
                 );
 
                 for entry_index in &display.recent_indices {
@@ -703,6 +704,23 @@ impl AgentSessionsPaletteOverlay {
 
         palette_body = palette_body.child(div().max_h(px(420.0)).child(list));
 
+        let close_button = IconButton::new(
+            ("agent_sessions_palette_close", cx.entity_id()),
+            div().child("×"),
+        )
+        .tooltip("Close (Esc)")
+        .on_click({
+            let root = root.clone();
+            move |_, window, cx| {
+                let focus = root.read(cx).focus_handle.clone();
+                root.update(cx, |this, cx| {
+                    this.agent_sessions_palette.dismiss_overlay(cx);
+                    this.ui_updates.bump();
+                });
+                window.focus(&focus);
+            }
+        });
+
         let palette_card = div()
             .key_context("AgentSessionsPalette")
             .w(px(760.0))
@@ -711,9 +729,17 @@ impl AgentSessionsPaletteOverlay {
             .py(theme.spacing.lg)
             .bg(theme.colors.surface)
             .border_1()
-            .border_color(theme.colors.border)
+            .border_color(theme.colors.ring)
             .rounded(theme.radius.xl)
             .shadow_lg()
+            .relative()
+            .child(
+                div()
+                    .absolute()
+                    .top(theme.spacing.sm)
+                    .right(theme.spacing.sm)
+                    .child(close_button),
+            )
             .child(palette_header)
             .child(palette_body);
 

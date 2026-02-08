@@ -1334,6 +1334,12 @@ impl SettingsDialog {
                     .text_color(theme.colors.foreground_muted)
                     .child("Used for automatic chat title generation. Saved to repo config as [openai].api_key."),
             )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.colors.foreground_muted)
+                    .child("Cmd-S palette defaults to hiding unreachable sessions. Set [ui].show_unreachable_agent_sessions = true to include them."),
+            )
             .into_any_element()
     }
 

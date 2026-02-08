@@ -463,6 +463,10 @@ impl RootView {
             return;
         }
 
+        let show_unreachable_entries = agent_sessions_palette_show_unreachable_from_defaults();
+        self.agent_sessions_palette
+            .set_show_unreachable_entries(show_unreachable_entries, cx);
+
         let Some(client) = self.model.read(cx).chrome_control_plane_client.clone() else {
             self.agent_sessions_palette
                 .fail_loading("Control plane client unavailable.", cx);
@@ -481,8 +485,9 @@ impl RootView {
                         return;
                     };
 
-                    let task = tokio
-                        .spawn(async move { load_agent_session_palette_entries(client).await });
+                    let task = tokio.spawn(async move {
+                        load_agent_session_palette_entries(client, show_unreachable_entries).await
+                    });
                     let result = match task.await {
                         Ok(result) => result,
                         Err(error) => Err(format!("Session palette refresh failed: {error}")),
@@ -2352,6 +2357,30 @@ fn sync_chat_title_openai_api_key_from_defaults() {
     };
 
     redesmyn_control_plane::client_api::set_openai_api_key_override(api_key);
+}
+
+async fn apply_default_chat_session_policies(
+fn agent_sessions_palette_show_unreachable_from_defaults() -> bool {
+    match repo_root_from_cwd() {
+        Ok(repo_root) => match load_effective_defaults(&repo_root) {
+            Ok(defaults) => defaults.ui.show_unreachable_agent_sessions,
+            Err(err) => {
+                redesmyn_logging::tracing::warn!(
+                    error = %err,
+                    repo_root = %repo_root.display(),
+                    "unable to load UI defaults for agent sessions palette"
+                );
+                false
+            }
+        },
+        Err(err) => {
+            redesmyn_logging::tracing::warn!(
+                error = %err,
+                "unable to resolve repo root for agent sessions palette defaults"
+            );
+            false
+        }
+    }
 }
 
 async fn apply_default_chat_session_policies(
@@ -6738,6 +6767,7 @@ struct LoadedEpicPaletteData {
 
 async fn load_agent_session_palette_entries(
     client: ControlPlaneClient,
+    show_unreachable_entries: bool,
 ) -> Result<Vec<AgentSessionPaletteEntry>, String> {
     let epics = client
         .list_epics()
@@ -6990,6 +7020,10 @@ async fn load_agent_session_palette_entries(
     }
 
     let mut entries: Vec<AgentSessionPaletteEntry> = entries_by_session.into_values().collect();
+    if !show_unreachable_entries {
+        entries
+            .retain(|entry| !matches!(entry.navigation, AgentSessionNavigation::Disabled { .. }));
+    }
     entries.sort_by(|left, right| {
         cmp_last_activity_desc(left.last_activity, right.last_activity).then_with(|| {
             left.session_id
