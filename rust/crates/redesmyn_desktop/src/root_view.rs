@@ -1,7 +1,9 @@
 mod agent_sessions_palette_overlay;
 mod command_palette_overlay;
 mod live_updates;
+mod palette_overlay;
 mod settings_dialog;
+mod task_palette_overlay;
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -56,9 +58,10 @@ use redesmyn_ui_graph::{GraphView, GraphViewEvent};
 
 use crate::app::SessionViewerFixtureEmitter;
 use crate::command_palette::{
-    CloseAgentSessionsPalette, CloseCommandPalette, SelectNextAgentSession, SelectNextCommand,
-    SelectPreviousAgentSession, SelectPreviousCommand, ToggleAgentSessionsPalette,
-    ToggleCommandPalette,
+    CloseAgentSessionsPalette, CloseCommandPalette, CloseTaskPalette, SelectNextAgentSession,
+    SelectNextCommand, SelectNextTaskPaletteItem, SelectPreviousAgentSession,
+    SelectPreviousCommand, SelectPreviousTaskPaletteItem, ToggleAgentSessionsPalette,
+    ToggleCommandPalette, ToggleTaskPalette,
 };
 use crate::control_plane_client::{ControlPlaneClient, ControlPlaneClientError};
 use crate::orchestration_config::{
@@ -78,6 +81,7 @@ use self::agent_sessions_palette_overlay::{
 use self::command_palette_overlay::CommandPaletteOverlay;
 use self::live_updates::{LiveUpdateAction, LiveUpdateRouter};
 use self::settings_dialog::SettingsDialog;
+use self::task_palette_overlay::{TaskPaletteEntry, TaskPaletteNavigation, TaskPaletteOverlay};
 
 #[derive(Debug)]
 pub struct DesktopModel {
@@ -162,8 +166,10 @@ pub struct RootView {
     focus_handle: FocusHandle,
     command_palette: CommandPaletteOverlay,
     agent_sessions_palette: AgentSessionsPaletteOverlay,
+    task_palette: TaskPaletteOverlay,
     agent_sessions_palette_task: Option<Task<()>>,
     agent_sessions_palette_archive_task: Option<Task<()>>,
+    task_palette_task: Option<Task<()>>,
     settings_dialog: SettingsDialog,
     settings_model_catalog_task: Option<Task<()>>,
     chrome: ChromeState,
@@ -220,6 +226,8 @@ impl RootView {
         let palette_input = command_palette.input_entity();
         let agent_sessions_palette = AgentSessionsPaletteOverlay::new(focus_handle.clone(), cx);
         let agent_sessions_palette_input = agent_sessions_palette.input_entity();
+        let task_palette = TaskPaletteOverlay::new(focus_handle.clone(), cx);
+        let task_palette_input = task_palette.input_entity();
         let settings_dialog = SettingsDialog::new(focus_handle.clone(), cx);
         let settings_prelude_input = settings_dialog.prelude_input_entity();
         let settings_openai_api_key_input = settings_dialog.openai_api_key_input_entity();
@@ -256,6 +264,12 @@ impl RootView {
                 this.ui_updates.bump();
             }),
         );
+        subscriptions.push(cx.subscribe(&task_palette_input, |this, _, event, cx| {
+            if let Some(selection) = this.task_palette.handle_text_input_event(event.clone(), cx) {
+                this.activate_task_palette_entry(selection, cx);
+            }
+            this.ui_updates.bump();
+        }));
 
         subscriptions.push(cx.subscribe(&settings_prelude_input, |this, _, event, cx| {
             this.settings_dialog
@@ -278,8 +292,10 @@ impl RootView {
             focus_handle,
             command_palette,
             agent_sessions_palette,
+            task_palette,
             agent_sessions_palette_task: None,
             agent_sessions_palette_archive_task: None,
+            task_palette_task: None,
             settings_dialog,
             settings_model_catalog_task: None,
             chrome: ChromeState::new(),
@@ -338,6 +354,9 @@ impl RootView {
         if opening && self.agent_sessions_palette.is_open() {
             self.agent_sessions_palette.handle_close_action(window, cx);
         }
+        if opening && self.task_palette.is_open() {
+            self.task_palette.handle_close_action(window, cx);
+        }
         self.command_palette.toggle(window, cx);
         self.ui_updates.bump();
     }
@@ -352,10 +371,34 @@ impl RootView {
         if opening && self.command_palette.is_open() {
             self.command_palette.handle_close_action(window, cx);
         }
+        if opening && self.task_palette.is_open() {
+            self.task_palette.handle_close_action(window, cx);
+        }
 
         self.agent_sessions_palette.toggle(window, cx);
         if opening && self.agent_sessions_palette.is_open() {
             self.refresh_agent_sessions_palette(cx);
+        }
+        self.ui_updates.bump();
+    }
+
+    fn toggle_task_palette(
+        &mut self,
+        _: &ToggleTaskPalette,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let opening = !self.task_palette.is_open();
+        if opening && self.command_palette.is_open() {
+            self.command_palette.handle_close_action(window, cx);
+        }
+        if opening && self.agent_sessions_palette.is_open() {
+            self.agent_sessions_palette.handle_close_action(window, cx);
+        }
+
+        self.task_palette.toggle(window, cx);
+        if opening && self.task_palette.is_open() {
+            self.refresh_task_palette(cx);
         }
         self.ui_updates.bump();
     }
@@ -380,6 +423,16 @@ impl RootView {
         self.ui_updates.bump();
     }
 
+    fn close_task_palette(
+        &mut self,
+        _: &CloseTaskPalette,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.task_palette.handle_close_action(window, cx);
+        self.ui_updates.bump();
+    }
+
     fn toggle_settings_dialog(
         &mut self,
         _: &ToggleSettingsDialog,
@@ -392,6 +445,9 @@ impl RootView {
         }
         if opening && self.agent_sessions_palette.is_open() {
             self.agent_sessions_palette.handle_close_action(window, cx);
+        }
+        if opening && self.task_palette.is_open() {
+            self.task_palette.handle_close_action(window, cx);
         }
 
         self.toggle_panel(ChromePanel::Settings, cx);
@@ -455,6 +511,26 @@ impl RootView {
         cx: &mut Context<Self>,
     ) {
         self.agent_sessions_palette.select_next(cx);
+        self.ui_updates.bump();
+    }
+
+    fn select_previous_task_palette_item(
+        &mut self,
+        _: &SelectPreviousTaskPaletteItem,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.task_palette.select_previous(cx);
+        self.ui_updates.bump();
+    }
+
+    fn select_next_task_palette_item(
+        &mut self,
+        _: &SelectNextTaskPaletteItem,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.task_palette.select_next(cx);
         self.ui_updates.bump();
     }
 
@@ -616,6 +692,93 @@ impl RootView {
                     });
                 }
             }));
+    }
+
+    fn refresh_task_palette(&mut self, cx: &mut Context<Self>) {
+        if self.task_palette_task.is_some() {
+            return;
+        }
+
+        let selected_epic = self
+            .chrome
+            .selected_epic_slug
+            .as_deref()
+            .and_then(|slug| self.chrome.epics.iter().find(|epic| epic.slug == slug))
+            .cloned()
+            .or_else(|| self.chrome.epics.first().cloned());
+        let Some(selected_epic) = selected_epic else {
+            self.task_palette
+                .fail_loading("Select an epic before opening the task palette.", cx);
+            self.ui_updates.bump();
+            return;
+        };
+
+        let Some(client) = self.model.read(cx).chrome_control_plane_client.clone() else {
+            self.task_palette
+                .fail_loading("Control plane client unavailable.", cx);
+            self.ui_updates.bump();
+            return;
+        };
+
+        let epic_slug = selected_epic.slug.clone();
+        let epic_title = (!selected_epic.name.trim().is_empty()).then_some(selected_epic.name);
+        self.task_palette
+            .start_loading_for_epic(epic_slug.clone(), epic_title.clone(), cx);
+
+        let tokio = client.tokio().clone();
+        self.task_palette_task =
+            Some(cx.spawn(move |weak: WeakEntity<Self>, cx: &mut AsyncApp| {
+                let cx = cx.clone();
+                async move {
+                    let Some(entity) = weak.upgrade() else {
+                        return;
+                    };
+
+                    let task = tokio
+                        .spawn(async move { load_task_palette_entries(client, epic_slug).await });
+                    let result = match task.await {
+                        Ok(result) => result,
+                        Err(error) => Err(format!("Task palette refresh failed: {error}")),
+                    };
+
+                    let _ = cx.update(|cx| {
+                        entity.update(cx, |this, cx| {
+                            this.task_palette_task = None;
+                            match result {
+                                Ok(loaded) => {
+                                    this.task_palette.finish_loading_for_epic(
+                                        loaded.epic_slug,
+                                        loaded.epic_title,
+                                        loaded.entries,
+                                        cx,
+                                    );
+                                }
+                                Err(error) => {
+                                    this.task_palette.fail_loading(error, cx);
+                                }
+                            }
+                            this.ui_updates.bump();
+                        });
+                    });
+                }
+            }));
+    }
+
+    fn activate_task_palette_entry(&mut self, entry: TaskPaletteEntry, cx: &mut Context<Self>) {
+        match entry.navigation {
+            TaskPaletteNavigation::Task { epic_slug, task_id } => {
+                self.select_epic(epic_slug, cx);
+                self.workspace_pane
+                    .update(cx, |pane, cx| pane.focus_task_card_when_ready(task_id, cx));
+                self.task_palette.complete_activation_success(cx);
+                self.focus_desktop_root(cx);
+                self.ui_updates.bump();
+            }
+            TaskPaletteNavigation::Disabled { reason } => {
+                self.task_palette.complete_activation_failure(reason, cx);
+                self.ui_updates.bump();
+            }
+        }
     }
 
     fn subscribe_ui_updates(&self) -> watch::Receiver<u64> {
@@ -3456,12 +3619,16 @@ impl Render for RootView {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::toggle_command_palette))
             .on_action(cx.listener(Self::toggle_agent_sessions_palette))
+            .on_action(cx.listener(Self::toggle_task_palette))
             .on_action(cx.listener(Self::close_command_palette))
             .on_action(cx.listener(Self::close_agent_sessions_palette))
+            .on_action(cx.listener(Self::close_task_palette))
             .on_action(cx.listener(Self::select_previous_command))
             .on_action(cx.listener(Self::select_next_command))
             .on_action(cx.listener(Self::select_previous_agent_session))
             .on_action(cx.listener(Self::select_next_agent_session))
+            .on_action(cx.listener(Self::select_previous_task_palette_item))
+            .on_action(cx.listener(Self::select_next_task_palette_item))
             .on_action(cx.listener(Self::toggle_settings_dialog))
             .on_action(cx.listener(Self::close_settings_dialog))
             .on_mouse_down(gpui::MouseButton::Left, {
@@ -3478,6 +3645,39 @@ impl Render for RootView {
                 let root = root.clone();
                 move |event, window, cx| {
                     let handled_palette = root.update(cx, |this, cx| {
+                        if this.task_palette.is_open() {
+                            return match event.keystroke.key.as_str() {
+                                "escape" => {
+                                    this.task_palette.handle_close_action(window, cx);
+                                    this.ui_updates.bump();
+                                    true
+                                }
+                                "up" => {
+                                    this.task_palette.select_previous(cx);
+                                    this.ui_updates.bump();
+                                    true
+                                }
+                                "down" => {
+                                    this.task_palette.select_next(cx);
+                                    this.ui_updates.bump();
+                                    true
+                                }
+                                "enter" => {
+                                    if let Some(selection) =
+                                        this.task_palette.activate_selected_entry(cx)
+                                    {
+                                        this.activate_task_palette_entry(selection, cx);
+                                    }
+                                    if !this.task_palette.is_open() {
+                                        window.focus(&this.focus_handle);
+                                    }
+                                    this.ui_updates.bump();
+                                    true
+                                }
+                                _ => false,
+                            };
+                        }
+
                         if !this.agent_sessions_palette.is_open() {
                             return false;
                         }
@@ -3553,6 +3753,9 @@ impl Render for RootView {
         }
         if self.agent_sessions_palette.is_open() {
             root_container = root_container.child(self.agent_sessions_palette.render(window, cx));
+        }
+        if self.task_palette.is_open() {
+            root_container = root_container.child(self.task_palette.render(window, cx));
         }
 
         if let Some(dialog) = self
@@ -6838,6 +7041,94 @@ struct LoadedEpicPaletteData {
     repo_title: Option<String>,
     task_lookup: HashMap<TaskId, (String, String, redesmyn_protocol::client::TaskState)>,
     session_summaries: Vec<redesmyn_protocol::client::SessionSummary>,
+}
+
+#[derive(Debug)]
+struct LoadedTaskPaletteData {
+    epic_slug: String,
+    epic_title: Option<String>,
+    entries: Vec<TaskPaletteEntry>,
+}
+
+async fn load_task_palette_entries(
+    client: ControlPlaneClient,
+    epic_slug: String,
+) -> Result<LoadedTaskPaletteData, String> {
+    let graph = client
+        .get_epic_graph(epic_slug.clone())
+        .await
+        .map_err(|error| format!("Failed to load epic {epic_slug}: {error}"))?;
+
+    let mut last_activity_by_task: HashMap<TaskId, Timestamp> = HashMap::new();
+    for summary in &graph.session_summaries {
+        last_activity_by_task
+            .entry(summary.task_id)
+            .and_modify(|current| {
+                if summary.last_event_at > *current {
+                    *current = summary.last_event_at;
+                }
+            })
+            .or_insert(summary.last_event_at);
+    }
+
+    let LoadedTaskPaletteData {
+        epic_slug: loaded_epic_slug,
+        epic_title,
+        entries,
+    } = {
+        let graph_epic_slug = graph.epic_slug.clone();
+        let graph_epic_title = graph.epic_title.clone();
+        let mut entries = Vec::new();
+        for node in graph.nodes {
+            let last_activity = node
+                .task_id
+                .and_then(|task_id| last_activity_by_task.get(&task_id).copied());
+
+            let navigation = match node.task_id {
+                Some(task_id) => TaskPaletteNavigation::Task {
+                    epic_slug: graph_epic_slug.clone(),
+                    task_id,
+                },
+                None => TaskPaletteNavigation::Disabled {
+                    reason: "Task id unavailable for this node.".into(),
+                },
+            };
+
+            entries.push(TaskPaletteEntry {
+                task_id: node.task_id,
+                task_slug: node.task_slug,
+                task_title: node.title,
+                task_state: node.state,
+                merge_readiness: node.merge_readiness,
+                branch_name: node.branch_name,
+                last_activity,
+                navigation,
+            });
+        }
+
+        entries.sort_by(|left, right| {
+            left.task_slug
+                .to_ascii_lowercase()
+                .cmp(&right.task_slug.to_ascii_lowercase())
+                .then_with(|| {
+                    left.task_title
+                        .to_ascii_lowercase()
+                        .cmp(&right.task_title.to_ascii_lowercase())
+                })
+        });
+
+        LoadedTaskPaletteData {
+            epic_slug: graph_epic_slug,
+            epic_title: graph_epic_title,
+            entries,
+        }
+    };
+
+    Ok(LoadedTaskPaletteData {
+        epic_slug: loaded_epic_slug,
+        epic_title,
+        entries,
+    })
 }
 
 async fn load_agent_session_palette_entries(

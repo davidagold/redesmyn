@@ -8,13 +8,13 @@ use gpui::{
 use redesmyn_ids::{SessionId, TaskId};
 use redesmyn_protocol::{RepoScope, Timestamp};
 use redesmyn_ui::components::{
-    ButtonKind, Callout, CalloutKind, IconButton, ProgressPill, ProgressPillKind, ScrollArea,
-    TextButton, TextInput, TextInputEvent,
+    ButtonKind, ProgressPillKind, ScrollArea, TextButton, TextInput, TextInputEvent,
 };
 use redesmyn_ui::styles::UiTheme;
 use redesmyn_ui::utils::theme_for_window;
 
 use super::RootView;
+use super::palette_overlay::{SharedPaletteOverlay, render_shared_palette_overlay};
 
 const RECENT_SESSIONS_LIMIT: usize = 8;
 
@@ -640,62 +640,6 @@ impl AgentSessionsPaletteOverlay {
             .selected_index
             .min(display.ordered_indices.len().saturating_sub(1));
 
-        let left_header = div()
-            .flex()
-            .flex_col()
-            .gap(theme.spacing.xs)
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(theme.colors.foreground)
-                    .child("Agent sessions"),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.colors.foreground_muted)
-                    .child("Type to filter, ↑/↓ to select, Enter to open."),
-            );
-
-        let mut right_header = div().flex().flex_row().items_center().gap(theme.spacing.sm);
-
-        if self.loading && self.entries.is_empty() {
-            right_header = right_header
-                .child(ProgressPill::new("Loading sessions…").kind(ProgressPillKind::Accent));
-        } else if self.loading {
-            right_header = right_header
-                .child(ProgressPill::new("Refreshing sessions…").kind(ProgressPillKind::Accent));
-        } else if self.action_in_flight {
-            let label = if self.archiving_session_id.is_some() {
-                "Archiving session…"
-            } else {
-                "Opening session…"
-            };
-            right_header =
-                right_header.child(ProgressPill::new(label).kind(ProgressPillKind::Accent));
-        }
-
-        let palette_header = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .pb(theme.spacing.sm)
-            .child(left_header)
-            .child(right_header);
-
-        let mut palette_body = div().flex().flex_col().gap(theme.spacing.sm);
-
-        if let Some(error) = self.error.as_ref() {
-            palette_body = palette_body.child(
-                Callout::new(error.clone())
-                    .kind(CalloutKind::Danger)
-                    .title("Session palette"),
-            );
-        }
-
-        palette_body = palette_body.child(self.input.clone());
-
         let mut list = ScrollArea::new(
             ("agent_sessions_palette_list", cx.entity_id()),
             self.scroll.clone(),
@@ -791,87 +735,44 @@ impl AgentSessionsPaletteOverlay {
             }
         }
 
-        palette_body = palette_body.child(div().max_h(px(420.0)).child(list));
+        let progress_label = if self.loading && self.entries.is_empty() {
+            Some("Loading sessions…".into())
+        } else if self.loading {
+            Some("Refreshing sessions…".into())
+        } else if self.action_in_flight {
+            let label = if self.archiving_session_id.is_some() {
+                "Archiving session…"
+            } else {
+                "Opening session…"
+            };
+            Some(label.into())
+        } else {
+            None
+        };
 
-        let close_button = IconButton::new(
-            ("agent_sessions_palette_close", cx.entity_id()),
-            div().child("×"),
+        render_shared_palette_overlay(
+            root.clone(),
+            SharedPaletteOverlay {
+                key_context: "AgentSessionsPalette",
+                title: "Agent sessions".into(),
+                subtitle: "Type to filter, ↑/↓ to select, Enter to open.".into(),
+                progress_label,
+                progress_kind: ProgressPillKind::Accent,
+                error_title: "Session palette".into(),
+                error: self.error.clone(),
+                input: self.input.clone(),
+                list: div().max_h(px(420.0)).child(list).into_any_element(),
+                close_button_id: "agent_sessions_palette_close",
+                close_tooltip: "Close (Esc)",
+                backdrop_id: "agent_sessions_palette_backdrop",
+            },
+            window,
+            cx,
+            |this, cx| {
+                this.agent_sessions_palette.dismiss_overlay(cx);
+                this.ui_updates.bump();
+            },
         )
-        .tooltip("Close (Esc)")
-        .on_click({
-            let root = root.clone();
-            move |_, window, cx| {
-                let focus = root.read(cx).focus_handle.clone();
-                root.update(cx, |this, cx| {
-                    this.agent_sessions_palette.dismiss_overlay(cx);
-                    this.ui_updates.bump();
-                });
-                window.focus(&focus);
-            }
-        });
-
-        let palette_card = div()
-            .key_context("AgentSessionsPalette")
-            .w(px(760.0))
-            .max_w(px(920.0))
-            .px(theme.spacing.lg)
-            .py(theme.spacing.lg)
-            .bg(theme.colors.surface)
-            .border_1()
-            .border_color(theme.colors.ring)
-            .rounded(theme.radius.xl)
-            .shadow_lg()
-            .relative()
-            .child(
-                div()
-                    .absolute()
-                    .top(theme.spacing.sm)
-                    .right(theme.spacing.sm)
-                    .child(close_button),
-            )
-            .child(palette_header)
-            .child(palette_body);
-
-        div()
-            .size_full()
-            .absolute()
-            .top_0()
-            .left_0()
-            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-            .child(
-                div()
-                    .size_full()
-                    .bg(theme.colors.background.opacity(0.0))
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .id(("agent_sessions_palette_backdrop", cx.entity_id()))
-                    .cursor_pointer()
-                    .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-                    .on_click({
-                        let root = root.clone();
-                        move |_, window, cx| {
-                            let focus = root.read(cx).focus_handle.clone();
-                            root.update(cx, |this, cx| {
-                                this.agent_sessions_palette.dismiss_overlay(cx);
-                                this.ui_updates.bump();
-                            });
-                            window.focus(&focus);
-                        }
-                    }),
-            )
-            .child(
-                div()
-                    .size_full()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .pt(px(104.0))
-                    .child(palette_card),
-            )
     }
 }
 

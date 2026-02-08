@@ -5,12 +5,16 @@ actions!(
     [
         ToggleCommandPalette,
         ToggleAgentSessionsPalette,
+        ToggleTaskPalette,
         CloseCommandPalette,
         CloseAgentSessionsPalette,
+        CloseTaskPalette,
         SelectPreviousCommand,
         SelectNextCommand,
         SelectPreviousAgentSession,
         SelectNextAgentSession,
+        SelectPreviousTaskPaletteItem,
+        SelectNextTaskPaletteItem,
     ]
 );
 
@@ -115,6 +119,7 @@ pub fn bind_command_palette_keys(cx: &mut App) {
         KeyBinding::new("ctrl-k", ToggleCommandPalette, Some("Desktop")),
         KeyBinding::new("cmd-s", ToggleAgentSessionsPalette, Some("Desktop")),
         KeyBinding::new("ctrl-s", ToggleAgentSessionsPalette, Some("Desktop")),
+        KeyBinding::new("t", ToggleTaskPalette, Some("Desktop")),
         KeyBinding::new("escape", CloseCommandPalette, Some("CommandPalette")),
         KeyBinding::new(
             "escape",
@@ -150,6 +155,18 @@ pub fn bind_command_palette_keys(cx: &mut App) {
             "down",
             SelectNextAgentSession,
             Some("AgentSessionsPalette > TextInput"),
+        ),
+        KeyBinding::new("escape", CloseTaskPalette, Some("TaskPalette")),
+        KeyBinding::new("escape", CloseTaskPalette, Some("TaskPalette > TextInput")),
+        KeyBinding::new(
+            "up",
+            SelectPreviousTaskPaletteItem,
+            Some("TaskPalette > TextInput"),
+        ),
+        KeyBinding::new(
+            "down",
+            SelectNextTaskPaletteItem,
+            Some("TaskPalette > TextInput"),
         ),
     ]);
 }
