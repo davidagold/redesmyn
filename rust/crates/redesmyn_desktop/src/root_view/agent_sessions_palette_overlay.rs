@@ -220,6 +220,7 @@ impl AgentSessionsPaletteOverlay {
         self.archiving_session_id = None;
         self.error = None;
         self.selected_index = 0;
+        self.scroll_selected_into_view(cx);
         cx.notify();
     }
 
@@ -241,6 +242,7 @@ impl AgentSessionsPaletteOverlay {
             TextInputEvent::Changed(_) => {
                 self.selected_index = 0;
                 self.error = None;
+                self.scroll_selected_into_view(cx);
                 cx.notify();
                 None
             }
@@ -262,6 +264,7 @@ impl AgentSessionsPaletteOverlay {
         }
         self.show_unreachable_entries = show;
         self.selected_index = 0;
+        self.scroll_selected_into_view(cx);
         cx.notify();
     }
 
@@ -288,6 +291,7 @@ impl AgentSessionsPaletteOverlay {
             self.selected_index = self.selected_index.saturating_sub(1);
         }
 
+        self.scroll_selected_into_view(cx);
         cx.notify();
     }
 
@@ -308,6 +312,7 @@ impl AgentSessionsPaletteOverlay {
             next
         };
 
+        self.scroll_selected_into_view(cx);
         cx.notify();
     }
 
@@ -327,6 +332,7 @@ impl AgentSessionsPaletteOverlay {
         }
 
         self.selected_index = clamped;
+        self.scroll_selected_into_view(cx);
         cx.notify();
     }
 
@@ -457,6 +463,7 @@ impl AgentSessionsPaletteOverlay {
         self.action_in_flight = false;
         self.archiving_session_id = None;
         self.input.update(cx, |input, cx| input.set_text("", cx));
+        self.scroll_selected_into_view(cx);
         window.focus(&self.input.focus_handle(cx));
         cx.notify();
     }
@@ -579,6 +586,50 @@ impl AgentSessionsPaletteOverlay {
             recent_indices,
             grouped_sections,
         }
+    }
+
+    fn scroll_selected_into_view(&self, cx: &App) {
+        let display = self.display_rows(cx);
+        let Some(child_index) = self.scroll_child_index_for_selected(&display) else {
+            return;
+        };
+        self.scroll.scroll_to_item(child_index);
+    }
+
+    fn scroll_child_index_for_selected(&self, display: &DisplayRows) -> Option<usize> {
+        if display.ordered_indices.is_empty() {
+            return None;
+        }
+
+        let selected_display_index = self
+            .selected_index
+            .min(display.ordered_indices.len().saturating_sub(1));
+        let mut display_index = 0usize;
+        let mut child_index = 0usize;
+
+        if !display.recent_indices.is_empty() {
+            child_index += 1;
+            for _ in &display.recent_indices {
+                if display_index == selected_display_index {
+                    return Some(child_index);
+                }
+                display_index += 1;
+                child_index += 1;
+            }
+        }
+
+        for section in &display.grouped_sections {
+            child_index += 1;
+            for _ in &section.indices {
+                if display_index == selected_display_index {
+                    return Some(child_index);
+                }
+                display_index += 1;
+                child_index += 1;
+            }
+        }
+
+        None
     }
 
     fn render_overlay(&self, window: &mut Window, cx: &mut Context<RootView>) -> impl IntoElement {
@@ -875,47 +926,61 @@ fn render_entry_row(
                         .text_color(theme.colors.foreground)
                         .child(entry.primary_label()),
                 )
-                .child(div().w(px(100.0)).flex().flex_row().justify_end().child({
-                    let can_archive = entry.kind == AgentSessionKind::Chat
-                        && entry.repo_scope.is_some()
-                        && selected;
-                    let is_archiving =
-                        archiving_session_id.is_some_and(|id| id == entry.session_id);
-                    if can_archive {
-                        let label = if is_archiving {
-                            "Archiving…"
-                        } else {
-                            "Archive"
-                        };
-                        let root = root.clone();
-                        let session_id = entry.session_id;
-                        let repo_scope = entry.repo_scope;
-                        TextButton::new(
-                            (
-                                gpui::ElementId::from(("agent_session_archive", cx.entity_id())),
-                                entry.session_id.to_string(),
-                            ),
-                            label,
-                        )
-                        .kind(ButtonKind::Ghost)
-                        .compact()
-                        .disabled(globally_disabled || is_archiving)
-                        .disabled_reason("Wait for the current action to finish.")
-                        .tooltip("Archive chat")
-                        .on_click(move |_, _, cx| {
-                            if let Some(scope) = repo_scope {
-                                root.update(cx, |this, cx| {
-                                    this.archive_agent_session_palette_chat(scope, session_id, cx);
-                                    this.ui_updates.bump();
-                                });
+                .child(
+                    div()
+                        .w(px(100.0))
+                        .h(px(20.0))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_end()
+                        .child({
+                            let can_archive = entry.kind == AgentSessionKind::Chat
+                                && entry.repo_scope.is_some()
+                                && selected;
+                            let is_archiving =
+                                archiving_session_id.is_some_and(|id| id == entry.session_id);
+                            if can_archive {
+                                let label = if is_archiving {
+                                    "Archiving…"
+                                } else {
+                                    "Archive"
+                                };
+                                let root = root.clone();
+                                let session_id = entry.session_id;
+                                let repo_scope = entry.repo_scope;
+                                TextButton::new(
+                                    (
+                                        gpui::ElementId::from((
+                                            "agent_session_archive",
+                                            cx.entity_id(),
+                                        )),
+                                        entry.session_id.to_string(),
+                                    ),
+                                    label,
+                                )
+                                .kind(ButtonKind::Ghost)
+                                .small()
+                                .disabled(globally_disabled || is_archiving)
+                                .disabled_reason("Wait for the current action to finish.")
+                                .tooltip("Archive chat")
+                                .on_click(move |_, _, cx| {
+                                    if let Some(scope) = repo_scope {
+                                        root.update(cx, |this, cx| {
+                                            this.archive_agent_session_palette_chat(
+                                                scope, session_id, cx,
+                                            );
+                                            this.ui_updates.bump();
+                                        });
+                                    }
+                                    cx.stop_propagation();
+                                })
+                                .into_any_element()
+                            } else {
+                                div().into_any_element()
                             }
-                            cx.stop_propagation();
-                        })
-                        .into_any_element()
-                    } else {
-                        div().into_any_element()
-                    }
-                })),
+                        }),
+                ),
         )
         .child(
             div()
