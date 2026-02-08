@@ -3485,6 +3485,7 @@ struct EpicSessionPaneHost {
     create_and_pin: UserActionState,
     pin_existing: UserActionState,
     archive_session: UserActionState,
+    regenerate_title: UserActionState,
     emit_demo_task: Option<Task<()>>,
     emit_demo_in_flight: bool,
     emit_demo_error: Option<SharedString>,
@@ -3532,6 +3533,7 @@ impl EpicSessionPaneHost {
             create_and_pin: UserActionState::default(),
             pin_existing: UserActionState::default(),
             archive_session: UserActionState::default(),
+            regenerate_title: UserActionState::default(),
             emit_demo_task: None,
             emit_demo_in_flight: false,
             emit_demo_error: None,
@@ -3567,6 +3569,8 @@ impl EpicSessionPaneHost {
         self.pin_existing.clear_error();
         self.archive_session.in_flight = false;
         self.archive_session.clear_error();
+        self.regenerate_title.in_flight = false;
+        self.regenerate_title.clear_error();
 
         let session_id = if self.selected_epic.is_some() {
             None
@@ -4137,6 +4141,128 @@ impl EpicSessionPaneHost {
         }));
     }
 
+    fn regenerate_current_chat_title(&mut self, cx: &mut Context<Self>) {
+        if self.regenerate_title.in_flight {
+            return;
+        }
+
+        let Some(client) = self.control_plane_client.clone() else {
+            self.regenerate_title
+                .fail("Control plane client unavailable.");
+            cx.notify();
+            return;
+        };
+
+        let Some(selected_epic) = self.selected_epic.clone() else {
+            self.regenerate_title
+                .fail("Select an epic before regenerating a chat title.");
+            cx.notify();
+            return;
+        };
+
+        let Some(session_id) = self.pinned_session_id else {
+            self.regenerate_title
+                .fail("Select a chat before regenerating its title.");
+            cx.notify();
+            return;
+        };
+
+        let generation = self.selection_generation;
+        let epic_slug = selected_epic.slug.clone();
+        let epic_slug_for_task = epic_slug.clone();
+
+        self.regenerate_title.start();
+        cx.notify();
+
+        let tokio = client.tokio().clone();
+        self.action_task = Some(cx.spawn(move |weak: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let Some(entity) = weak.upgrade() else {
+                    return;
+                };
+
+                let task = tokio.spawn(async move {
+                    let graph = client.get_epic_graph(epic_slug_for_task).await?;
+                    let Some(workspace_id) = graph.workspace_id else {
+                        return Err(ControlPlaneClientError::Server {
+                            message: "Workspace id unavailable for selected epic.".to_string(),
+                        });
+                    };
+                    let Some(repo_id) = graph.repo_id else {
+                        return Err(ControlPlaneClientError::Server {
+                            message: "Repo id unavailable for selected epic.".to_string(),
+                        });
+                    };
+
+                    let scope = RepoScope::new(workspace_id, repo_id);
+                    let epic_id = selected_epic.epic_id.or(graph.epic_id).ok_or_else(|| {
+                        ControlPlaneClientError::Server {
+                            message: "Epic id unavailable for selected epic.".to_string(),
+                        }
+                    })?;
+
+                    let response = client
+                        .regenerate_chat_session_title(scope, session_id)
+                        .await?;
+                    let sessions = client
+                        .list_chat_sessions(scope, Some(epic_id), true, 100)
+                        .await?;
+
+                    Ok::<_, ControlPlaneClientError>((response.title, sessions))
+                });
+
+                let result = match task.await {
+                    Ok(result) => result,
+                    Err(error) => {
+                        let _ = cx.update(|cx| {
+                            entity.update(cx, |this, cx| {
+                                if !this.is_current_selection(generation, &epic_slug) {
+                                    return;
+                                }
+
+                                this.action_task = None;
+                                this.regenerate_title
+                                    .fail(format!("Title regeneration failed: {error}"));
+                                cx.notify();
+                            })
+                        });
+                        return;
+                    }
+                };
+
+                let _ = cx.update(|cx| {
+                    entity.update(cx, |this, cx| {
+                        if !this.is_current_selection(generation, &epic_slug) {
+                            return;
+                        }
+
+                        this.action_task = None;
+
+                        match result {
+                            Ok((_title, sessions)) => {
+                                this.regenerate_title.succeed();
+                                this.chat_sessions = sessions;
+                                if this.pinned_session_id.is_some_and(|id| {
+                                    !this.chat_sessions.iter().any(|s| s.session_id == id)
+                                }) {
+                                    this.pinned_session_id =
+                                        latest_chat_session_id(this.chat_sessions.iter());
+                                }
+                                this.session_view.update(cx, |view, cx| {
+                                    view.set_session_id(this.pinned_session_id, cx);
+                                });
+                            }
+                            Err(err) => this.regenerate_title.fail(err.to_string()),
+                        }
+
+                        cx.notify();
+                    })
+                });
+            }
+        }));
+    }
+
     fn pinned_chat_summary(&self) -> Option<&redesmyn_protocol::client::AgentSessionSummary> {
         let pinned = self.pinned_session_id?;
         self.chat_sessions
@@ -4170,6 +4296,8 @@ impl Render for EpicSessionPaneHost {
             Some("Switching chat")
         } else if self.archive_session.in_flight {
             Some("Archiving")
+        } else if self.regenerate_title.in_flight {
+            Some("Regenerating title")
         } else {
             None
         };
@@ -4180,7 +4308,13 @@ impl Render for EpicSessionPaneHost {
             header_actions = header_actions.child(ProgressPill::new(label));
         }
 
-        let can_act_on_epic = self.selected_epic.is_some() && !self.load.in_flight;
+        let action_in_flight = self.create_and_pin.in_flight
+            || self.pin_existing.in_flight
+            || self.archive_session.in_flight
+            || self.regenerate_title.in_flight;
+        let can_act_on_epic =
+            self.selected_epic.is_some() && !self.load.in_flight && !action_in_flight;
+        let has_selected_chat = self.pinned_session_id.is_some();
 
         let create_button = IconButton::new(
             ("chat_create", cx.entity_id()),
@@ -4216,8 +4350,31 @@ impl Render for EpicSessionPaneHost {
             move |_, _, cx| view.update(cx, |this, cx| this.open_pin_existing(cx))
         });
 
+        let regenerate_title_disabled_reason = if has_selected_chat {
+            "Loading…"
+        } else {
+            "No chat selected"
+        };
+        let regenerate_title_button = IconButton::new(
+            ("chat_regenerate_title", cx.entity_id()),
+            div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_sm()
+                .child("↻"),
+        )
+        .tooltip("Regenerate chat title")
+        .disabled(!can_act_on_epic || !has_selected_chat || self.regenerate_title.in_flight)
+        .disabled_reason(regenerate_title_disabled_reason)
+        .on_click({
+            let view = view.clone();
+            move |_, _, cx| view.update(cx, |this, cx| this.regenerate_current_chat_title(cx))
+        });
+
         header_actions = header_actions
             .child(create_button)
+            .child(regenerate_title_button)
             .child(pin_existing_button);
         if self.fixture.is_some() {
             let label = if self.emit_demo_in_flight {
@@ -4269,6 +4426,7 @@ impl Render for EpicSessionPaneHost {
             .or_else(|| self.create_and_pin.error.clone())
             .or_else(|| self.pin_existing.error.clone())
             .or_else(|| self.archive_session.error.clone())
+            .or_else(|| self.regenerate_title.error.clone())
             .or_else(|| self.emit_demo_error.clone());
 
         if let Some(error) = error {

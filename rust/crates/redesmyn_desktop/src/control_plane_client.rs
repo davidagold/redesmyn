@@ -4,8 +4,9 @@ use redesmyn_protocol::client::{
     AgentKind, ArchiveChatSessionRequest, CommandState, CommandSummary, CreateChatSessionRequest,
     CreateChatSessionResponse, EventLogFilter, GetEpicGraphRequest,
     GetEpicPinnedChatSessionRequest, ListAgentModelsRequest, ListChatSessionsRequest,
-    ListEpicsRequest, PinChatSessionToEpicRequest, RequestPayload, ResponseResult,
-    SessionModelOption, SessionModelSelection, SetSessionCodexApprovalPolicyRequest,
+    ListEpicsRequest, PinChatSessionToEpicRequest, RegenerateChatSessionTitleRequest,
+    RegenerateChatSessionTitleResponse, RequestPayload, ResponseResult, SessionModelOption,
+    SessionModelSelection, SetSessionCodexApprovalPolicyRequest,
     SetSessionCodexApprovalPolicyResponse, SetSessionCodexSandboxPolicyRequest,
     SetSessionCodexSandboxPolicyResponse, SetSessionModelRequest, SetSessionModelResponse,
     StatusRequest, StatusResponse, SubscriptionEvent, SubscriptionFilter,
@@ -172,6 +173,28 @@ impl ControlPlaneClient {
             .await?
         {
             ResponseResult::ArchiveChatSession(_) => Ok(()),
+            ResponseResult::Error(err) => Err(ControlPlaneClientError::Server {
+                message: err.message,
+            }),
+            _ => Err(ControlPlaneClientError::UnexpectedMessage),
+        }
+    }
+
+    pub async fn regenerate_chat_session_title(
+        &self,
+        scope: RepoScope,
+        session_id: SessionId,
+    ) -> Result<RegenerateChatSessionTitleResponse, ControlPlaneClientError> {
+        match self
+            .request_scoped(
+                scope,
+                RequestPayload::RegenerateChatSessionTitle(RegenerateChatSessionTitleRequest {
+                    session_id,
+                }),
+            )
+            .await?
+        {
+            ResponseResult::RegenerateChatSessionTitle(resp) => Ok(resp),
             ResponseResult::Error(err) => Err(ControlPlaneClientError::Server {
                 message: err.message,
             }),

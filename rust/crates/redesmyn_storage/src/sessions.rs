@@ -550,6 +550,62 @@ where
     Ok(result.rows_affected() > 0)
 }
 
+pub async fn set_session_title<'e, E>(
+    executor: E,
+    session_id: SessionId,
+    title: &str,
+) -> Result<bool, StorageError>
+where
+    E: Executor<'e, Database = Sqlite>,
+{
+    let now_ms = now_ms();
+    let result = sqlx::query(
+        r#"
+        UPDATE agent_sessions
+        SET
+            updated_at_ms = ?1,
+            title = ?2
+        WHERE session_id = ?3
+        "#,
+    )
+    .bind(now_ms)
+    .bind(title)
+    .bind(session_id)
+    .execute(executor)
+    .await?;
+
+    Ok(result.rows_affected() > 0)
+}
+
+pub async fn latest_session_event_preview_by_kind<'e, E>(
+    executor: E,
+    session_id: SessionId,
+    kind: &str,
+) -> Result<Option<String>, StorageError>
+where
+    E: Executor<'e, Database = Sqlite>,
+{
+    let row: Option<(String,)> = sqlx::query_as(
+        r#"
+        SELECT message_preview
+        FROM session_events
+        WHERE
+            session_id = ?1
+            AND kind = ?2
+            AND message_preview IS NOT NULL
+            AND TRIM(message_preview) <> ''
+        ORDER BY created_at_ms DESC, id DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(session_id)
+    .bind(kind)
+    .fetch_optional(executor)
+    .await?;
+
+    Ok(row.map(|(preview,)| preview))
+}
+
 pub async fn update_agent_session_status<'e, E>(
     executor: E,
     session_id: SessionId,

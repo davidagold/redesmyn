@@ -64,6 +64,7 @@ enum ClientMethod {
   CLIENT_METHOD_LIST_SESSION_MODELS = 29;
   CLIENT_METHOD_SET_SESSION_MODEL = 30;
   CLIENT_METHOD_LIST_AGENT_MODELS = 31;
+  CLIENT_METHOD_REGENERATE_CHAT_SESSION_TITLE = 32;
 }
 
 // Request for a control-plane method.
@@ -104,6 +105,7 @@ message Request {
     ListSessionModelsRequest list_session_models = 41;
     SetSessionModelRequest set_session_model = 42;
     ListAgentModelsRequest list_agent_models = 43;
+    RegenerateChatSessionTitleRequest regenerate_chat_session_title = 44;
   }
 }
 
@@ -151,6 +153,7 @@ message Response {
     ListSessionModelsResponse list_session_models = 41;
     SetSessionModelResponse set_session_model = 42;
     ListAgentModelsResponse list_agent_models = 43;
+    RegenerateChatSessionTitleResponse regenerate_chat_session_title = 44;
     ErrorEnvelope error = 100;
   }
 }
@@ -761,6 +764,15 @@ message ListChatSessionsRequest {
 
 message ListChatSessionsResponse {
   repeated AgentSessionSummary sessions = 1;
+}
+
+message RegenerateChatSessionTitleRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+}
+
+message RegenerateChatSessionTitleResponse {
+  string title = 1;
 }
 
 message PinChatSessionToEpicRequest {

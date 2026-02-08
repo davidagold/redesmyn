@@ -31,7 +31,8 @@ use redesmyn_protocol::client::{
     GetLatestTaskSessionResponse, GetSessionEventsResponse, HealthResponse,
     ListAgentModelsResponse, ListChatSessionsResponse, ListEpicsResponse,
     ListSessionModelsResponse, ListTaskSessionsResponse, MergeReadiness,
-    PinChatSessionToEpicResponse, RespondPermissionRequestResponse, Response, ResponseResult,
+    PinChatSessionToEpicResponse, RegenerateChatSessionTitleResponse,
+    RespondPermissionRequestResponse, Response, ResponseResult,
     SEND_SESSION_MESSAGE_MAX_IMAGE_ATTACHMENT_BYTES, SEND_SESSION_MESSAGE_MAX_IMAGE_ATTACHMENTS,
     SEND_SESSION_MESSAGE_MAX_IMAGE_TOTAL_BYTES, SendSessionMessageResponse, SessionModelSelection,
     SessionSummary, SetSessionCodexApprovalPolicyResponse, SetSessionCodexSandboxPolicyResponse,
@@ -2286,6 +2287,101 @@ async fn handle_request_result(
             Ok(ResponseResult::ListChatSessions(ListChatSessionsResponse {
                 sessions,
             }))
+        }
+        redesmyn_protocol::client::RequestPayload::RegenerateChatSessionTitle(req) => {
+            let (workspace_id, repo_id) = match require_repo_scope_ids(envelope) {
+                Ok(ids) => ids,
+                Err(err) => return Ok(ResponseResult::Error(err)),
+            };
+
+            let session =
+                redesmyn_storage::sessions::get_agent_session(control_plane.pool(), req.session_id)
+                    .await?;
+            let Some(session) = session else {
+                let detail =
+                    ErrorDetail::from([("session_id".to_string(), req.session_id.to_string())]);
+                return Ok(ResponseResult::Error(
+                    ErrorEnvelope::new(ErrorCategory::NotFound, "Session not found.")
+                        .with_detail(detail),
+                ));
+            };
+
+            if session.scope_workspace_id != workspace_id || session.scope_repo_id != repo_id {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::NotFound,
+                    "Session not found in repo scope.",
+                )));
+            }
+            if session.scope_kind != StorageAgentSessionScopeKind::Chat {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "Session is not a chat session.",
+                )));
+            }
+
+            let Some(api_key) = openai_api_key_from_env() else {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "OpenAI API key is not configured.",
+                )));
+            };
+
+            let prompt = redesmyn_storage::sessions::latest_session_event_preview_by_kind(
+                control_plane.pool(),
+                req.session_id,
+                "user_message",
+            )
+            .await?;
+            let Some(prompt) = prompt
+                .map(|text| text.trim().to_string())
+                .filter(|text| !text.is_empty())
+            else {
+                return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "Cannot regenerate title: this session has no user messages yet.",
+                )));
+            };
+            let prompt: String = prompt.chars().take(CHAT_TITLE_SOURCE_MAX_CHARS).collect();
+
+            let generated = match generate_chat_title_via_openai(&api_key, &prompt).await {
+                Ok(Some(title)) => title,
+                Ok(None) => {
+                    return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "OpenAI did not return a usable chat title.",
+                    )));
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        session_id = %req.session_id,
+                        error = %error,
+                        "failed to regenerate chat title"
+                    );
+                    return Ok(ResponseResult::Error(ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "Failed to regenerate chat title.",
+                    )));
+                }
+            };
+
+            let updated = redesmyn_storage::sessions::set_session_title(
+                control_plane.pool(),
+                req.session_id,
+                &generated,
+            )
+            .await?;
+            if !updated {
+                let detail =
+                    ErrorDetail::from([("session_id".to_string(), req.session_id.to_string())]);
+                return Ok(ResponseResult::Error(
+                    ErrorEnvelope::new(ErrorCategory::NotFound, "Session not found.")
+                        .with_detail(detail),
+                ));
+            }
+
+            Ok(ResponseResult::RegenerateChatSessionTitle(
+                RegenerateChatSessionTitleResponse { title: generated },
+            ))
         }
         redesmyn_protocol::client::RequestPayload::PinChatSessionToEpic(pin) => {
             let (workspace_id, repo_id) = match require_repo_scope_ids(envelope) {

@@ -47,6 +47,7 @@ pub enum ClientMethod {
     ListAgentModels,
     ListSessionModels,
     SetSessionModel,
+    RegenerateChatSessionTitle,
     RespondPermissionRequest,
     StartAgent,
     StopAgent,
@@ -112,6 +113,7 @@ pub enum RequestPayload {
     CreateChatSession(CreateChatSessionRequest),
     ArchiveChatSession(ArchiveChatSessionRequest),
     ListChatSessions(ListChatSessionsRequest),
+    RegenerateChatSessionTitle(RegenerateChatSessionTitleRequest),
     PinChatSessionToEpic(PinChatSessionToEpicRequest),
     UnpinChatSessionFromEpic(UnpinChatSessionFromEpicRequest),
 }
@@ -149,6 +151,7 @@ impl RequestPayload {
             Self::CreateChatSession(_) => ClientMethod::CreateChatSession,
             Self::ArchiveChatSession(_) => ClientMethod::ArchiveChatSession,
             Self::ListChatSessions(_) => ClientMethod::ListChatSessions,
+            Self::RegenerateChatSessionTitle(_) => ClientMethod::RegenerateChatSessionTitle,
             Self::PinChatSessionToEpic(_) => ClientMethod::PinChatSessionToEpic,
             Self::UnpinChatSessionFromEpic(_) => ClientMethod::UnpinChatSessionFromEpic,
         }
@@ -211,6 +214,7 @@ pub enum ResponseResult {
     CreateChatSession(CreateChatSessionResponse),
     ArchiveChatSession(ArchiveChatSessionResponse),
     ListChatSessions(ListChatSessionsResponse),
+    RegenerateChatSessionTitle(RegenerateChatSessionTitleResponse),
     PinChatSessionToEpic(PinChatSessionToEpicResponse),
     UnpinChatSessionFromEpic(UnpinChatSessionFromEpicResponse),
     Error(ErrorEnvelope),
@@ -927,6 +931,16 @@ pub struct ListChatSessionsRequest {
 pub struct ListChatSessionsResponse {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sessions: Vec<AgentSessionSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RegenerateChatSessionTitleRequest {
+    pub session_id: SessionId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RegenerateChatSessionTitleResponse {
+    pub title: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

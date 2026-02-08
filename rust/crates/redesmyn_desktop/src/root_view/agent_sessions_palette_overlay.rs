@@ -805,7 +805,8 @@ fn render_entry_row(
         );
 
     if let Some(reason) = disabled_reason {
-        let should_render_reason = reason.as_ref() != "No epic binding for this session.";
+        let reason_normalized = reason.to_ascii_lowercase();
+        let should_render_reason = !reason_normalized.contains("no epic binding");
         if should_render_reason {
             row = row.child(
                 div()

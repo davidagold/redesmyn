@@ -2246,6 +2246,9 @@ fn encode_client_method(value: crate::client::ClientMethod) -> i32 {
             pbv1::ClientMethod::SetSessionCodexSandboxPolicy as i32
         }
         crate::client::ClientMethod::ListAgentModels => pbv1::ClientMethod::ListAgentModels as i32,
+        crate::client::ClientMethod::RegenerateChatSessionTitle => {
+            pbv1::ClientMethod::RegenerateChatSessionTitle as i32
+        }
         crate::client::ClientMethod::ListSessionModels => {
             pbv1::ClientMethod::ListSessionModels as i32
         }
@@ -2316,6 +2319,9 @@ fn decode_client_method(value: i32) -> Result<crate::client::ClientMethod, Error
             Ok(crate::client::ClientMethod::SetSessionCodexSandboxPolicy)
         }
         Ok(pbv1::ClientMethod::ListAgentModels) => Ok(crate::client::ClientMethod::ListAgentModels),
+        Ok(pbv1::ClientMethod::RegenerateChatSessionTitle) => {
+            Ok(crate::client::ClientMethod::RegenerateChatSessionTitle)
+        }
         Ok(pbv1::ClientMethod::ListSessionModels) => {
             Ok(crate::client::ClientMethod::ListSessionModels)
         }
@@ -2722,6 +2728,9 @@ impl crate::client::Request {
                 crate::client::RequestPayload::ListAgentModels(req) => {
                     pbv1::request::Payload::ListAgentModels(req.to_protobuf())
                 }
+                crate::client::RequestPayload::RegenerateChatSessionTitle(req) => {
+                    pbv1::request::Payload::RegenerateChatSessionTitle(req.to_protobuf())
+                }
                 crate::client::RequestPayload::ListSessionModels(req) => {
                     pbv1::request::Payload::ListSessionModels(req.to_protobuf())
                 }
@@ -2840,6 +2849,11 @@ impl crate::client::Request {
             pbv1::request::Payload::ListAgentModels(req) => {
                 crate::client::RequestPayload::ListAgentModels(
                     crate::client::ListAgentModelsRequest::try_from_protobuf(req)?,
+                )
+            }
+            pbv1::request::Payload::RegenerateChatSessionTitle(req) => {
+                crate::client::RequestPayload::RegenerateChatSessionTitle(
+                    crate::client::RegenerateChatSessionTitleRequest::try_from_protobuf(req)?,
                 )
             }
             pbv1::request::Payload::ListSessionModels(req) => {
@@ -3910,6 +3924,9 @@ impl crate::client::Response {
                 crate::client::ResponseResult::ListAgentModels(resp) => {
                     pbv1::response::Result::ListAgentModels(resp.to_protobuf())
                 }
+                crate::client::ResponseResult::RegenerateChatSessionTitle(resp) => {
+                    pbv1::response::Result::RegenerateChatSessionTitle(resp.to_protobuf())
+                }
                 crate::client::ResponseResult::ListSessionModels(resp) => {
                     pbv1::response::Result::ListSessionModels(resp.to_protobuf())
                 }
@@ -4031,6 +4048,11 @@ impl crate::client::Response {
             pbv1::response::Result::ListAgentModels(resp) => {
                 crate::client::ResponseResult::ListAgentModels(
                     crate::client::ListAgentModelsResponse::try_from_protobuf(resp)?,
+                )
+            }
+            pbv1::response::Result::RegenerateChatSessionTitle(resp) => {
+                crate::client::ResponseResult::RegenerateChatSessionTitle(
+                    crate::client::RegenerateChatSessionTitleResponse::try_from_protobuf(resp)?,
                 )
             }
             pbv1::response::Result::ListSessionModels(resp) => {
@@ -5094,6 +5116,38 @@ impl crate::client::ListChatSessionsResponse {
                 .map(crate::client::AgentSessionSummary::try_from_protobuf)
                 .collect::<Result<Vec<_>, _>>()?,
         })
+    }
+}
+
+impl crate::client::RegenerateChatSessionTitleRequest {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::RegenerateChatSessionTitleRequest {
+        pbv1::RegenerateChatSessionTitleRequest {
+            session_id: self.session_id.to_bytes().to_vec(),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::RegenerateChatSessionTitleRequest,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
+        })
+    }
+}
+
+impl crate::client::RegenerateChatSessionTitleResponse {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::RegenerateChatSessionTitleResponse {
+        pbv1::RegenerateChatSessionTitleResponse {
+            title: self.title.clone(),
+        }
+    }
+
+    pub fn try_from_protobuf(
+        proto: pbv1::RegenerateChatSessionTitleResponse,
+    ) -> Result<Self, ErrorEnvelope> {
+        Ok(Self { title: proto.title })
     }
 }
 
