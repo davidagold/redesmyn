@@ -3,10 +3,12 @@ use redesmyn_logging::tracing;
 use redesmyn_protocol::client::{
     AgentMessageConflictAction, AttachAgentSessionRequest, AttachAgentSessionResponse,
     RestartAgentRequest, RestartAgentResponse, SendTaskAgentMessageRequest,
-    SendTaskAgentMessageResponse, StartAgentRequest, StartAgentResponse, StopAgentRequest,
-    StopAgentResponse,
+    SendTaskAgentMessageResponse, SessionModelSelection, StartAgentRequest, StartAgentResponse,
+    StopAgentRequest, StopAgentResponse,
 };
-use redesmyn_protocol::{CodexApprovalPolicy, CodexSandboxPolicy, ErrorCategory, ErrorDetail, ErrorEnvelope, RepoScope};
+use redesmyn_protocol::{
+    CodexApprovalPolicy, CodexSandboxPolicy, ErrorCategory, ErrorDetail, ErrorEnvelope, RepoScope,
+};
 
 use crate::ControlPlane;
 
@@ -42,12 +44,18 @@ impl ControlPlane {
                 "Unknown model reasoning effort.",
             ));
         }
-        if matches!(req.codex_approval_policy, Some(CodexApprovalPolicy::Unknown)) {
+        if matches!(
+            req.codex_approval_policy,
+            Some(CodexApprovalPolicy::Unknown)
+        ) {
             return Err(super::conflicts::invalid_request(
                 "Unknown Codex approval policy.",
             ));
         }
-        if matches!(req.codex_sandbox_policy.as_ref(), Some(CodexSandboxPolicy::Unknown)) {
+        if matches!(
+            req.codex_sandbox_policy.as_ref(),
+            Some(CodexSandboxPolicy::Unknown)
+        ) {
             return Err(super::conflicts::invalid_request(
                 "Unknown Codex sandbox policy.",
             ));
@@ -119,19 +127,40 @@ impl ControlPlane {
         );
         let _enter = span.enter();
 
-        let stop = StopAgentRequest {
-            task_id: req.task_id,
+        let RestartAgentRequest {
+            task_id,
+            agent_kind,
+            initial_prompt,
+            session_model_selection,
+            codex_approval_policy,
+            codex_sandbox_policy,
+        } = req;
+
+        let request_fallback = RestartStickySettings {
+            session_model_selection,
+            codex_approval_policy,
+            codex_sandbox_policy,
         };
-        let _ = self.stop_agent(workspace_id, repo_id, stop).await;
+        let sticky = load_restart_sticky_settings(self, task_id, request_fallback).await?;
+
+        let stop = StopAgentRequest { task_id };
+        self.stop_agent(workspace_id, repo_id, stop)
+            .await
+            .map_err(|err| {
+                err.with_detail(ErrorDetail::from([(
+                    "restart_phase".to_string(),
+                    "stop".to_string(),
+                )]))
+            })?;
 
         let start = StartAgentRequest {
-            task_id: req.task_id,
-            agent_kind: req.agent_kind,
-            initial_prompt: req.initial_prompt,
+            task_id,
+            agent_kind,
+            initial_prompt,
             on_conflict: AgentMessageConflictAction::StopSessionAndStartNew,
-            session_model_selection: None,
-            codex_approval_policy: None,
-            codex_sandbox_policy: None,
+            session_model_selection: sticky.session_model_selection,
+            codex_approval_policy: sticky.codex_approval_policy,
+            codex_sandbox_policy: sticky.codex_sandbox_policy,
         };
 
         let started = self.start_agent(workspace_id, repo_id, start).await?;
@@ -226,6 +255,116 @@ impl ControlPlane {
             }
         }
     }
+}
+
+#[derive(Debug, Clone, Default)]
+struct RestartStickySettings {
+    session_model_selection: Option<SessionModelSelection>,
+    codex_approval_policy: Option<CodexApprovalPolicy>,
+    codex_sandbox_policy: Option<CodexSandboxPolicy>,
+}
+
+impl RestartStickySettings {
+    fn is_complete(&self) -> bool {
+        self.session_model_selection.is_some()
+            && self.codex_approval_policy.is_some()
+            && self.codex_sandbox_policy.is_some()
+    }
+
+    fn merge_missing_from_policy_snapshot(
+        &mut self,
+        snapshot: redesmyn_protocol::agent_commands::SessionPolicySnapshot,
+    ) {
+        if self.session_model_selection.is_none()
+            && (snapshot.model_id.is_some() || snapshot.model_reasoning_effort.is_some())
+        {
+            self.session_model_selection = Some(SessionModelSelection {
+                model_id: snapshot.model_id,
+                reasoning_effort: snapshot.model_reasoning_effort,
+            });
+        }
+        if self.codex_approval_policy.is_none() {
+            self.codex_approval_policy = snapshot.codex_approval_policy;
+        }
+        if self.codex_sandbox_policy.is_none() {
+            self.codex_sandbox_policy = snapshot.codex_sandbox_policy;
+        }
+    }
+
+    fn merge_missing_from_projection(
+        &mut self,
+        projection: crate::session_events_projection::PolicySnapshotProjection,
+    ) {
+        if self.session_model_selection.is_none()
+            && (projection.model_id.is_some() || projection.model_reasoning_effort.is_some())
+        {
+            self.session_model_selection = Some(SessionModelSelection {
+                model_id: projection.model_id,
+                reasoning_effort: projection.model_reasoning_effort,
+            });
+        }
+        if self.codex_approval_policy.is_none() {
+            self.codex_approval_policy = projection.codex_approval_policy;
+        }
+        if self.codex_sandbox_policy.is_none() {
+            self.codex_sandbox_policy = projection.codex_sandbox_policy;
+        }
+    }
+}
+
+async fn load_restart_sticky_settings(
+    control_plane: &ControlPlane,
+    task_id: TaskId,
+    request_fallback: RestartStickySettings,
+) -> Result<RestartStickySettings, ErrorEnvelope> {
+    let mut sticky = request_fallback;
+
+    if !sticky.is_complete() {
+        let projected = crate::session_events_projection::load_task_last_seen_policy_projection(
+            control_plane.pool(),
+            task_id,
+        )
+        .await
+        .map_err(|err| {
+            ErrorEnvelope::new(
+                ErrorCategory::Internal,
+                "Failed to load task policy projection.",
+            )
+            .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
+        })?;
+        sticky.merge_missing_from_projection(projected);
+    }
+
+    if !sticky.is_complete() {
+        let recent_sessions =
+            state::load_recent_task_sessions(control_plane.pool(), task_id, 50).await?;
+        for session in recent_sessions {
+            let snapshot = match crate::policy_snapshot::load_session_policy_snapshot(
+                control_plane.session_events(),
+                session.session_id,
+            )
+            .await
+            {
+                Ok(snapshot) => snapshot,
+                Err(err) => {
+                    tracing::warn!(
+                        task_id = %task_id,
+                        session_id = %session.session_id,
+                        error = %err,
+                        "failed to load task session policy snapshot while resolving restart settings"
+                    );
+                    continue;
+                }
+            };
+
+            sticky.merge_missing_from_policy_snapshot(snapshot);
+            if sticky.is_complete() {
+                break;
+            }
+        }
+    }
+
+    Ok(sticky)
 }
 
 async fn ensure_task_exists(

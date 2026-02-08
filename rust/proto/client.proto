@@ -562,6 +562,12 @@ message RestartAgentRequest {
   bytes task_id = 1;
   AgentKind agent_kind = 2;
   optional string initial_prompt = 4;
+  // Optional model + reasoning to apply when no prior task policy is available.
+  SessionModelSelection session_model_selection = 6;
+  // Optional fallback Codex approval policy when no prior task policy is available.
+  CodexApprovalPolicy codex_approval_policy = 7;
+  // Optional fallback Codex sandbox policy when no prior task policy is available.
+  CodexSandboxPolicy codex_sandbox_policy = 8;
 }
 
 message RestartAgentResponse {

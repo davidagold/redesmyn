@@ -21,6 +21,7 @@ pub type TxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(30);
 const LEGACY_ID_MAP_MIGRATION_VERSION: i64 = 20260120001000;
+const SESSION_POLICY_PROJECTION_MIGRATION_VERSION: i64 = 20260208000000;
 
 pub async fn open_sqlite_pool(db_path: impl AsRef<Path>) -> Result<SqlitePool, StorageError> {
     let db_path = db_path.as_ref().to_path_buf();
@@ -95,6 +96,7 @@ pub async fn apply_migrations(pool: &SqlitePool) -> Result<(), StorageError> {
         }
         info!(
             elapsed_ms = start.elapsed().as_millis(),
+            latest_migration_version = SESSION_POLICY_PROJECTION_MIGRATION_VERSION,
             "sqlite migrations applied"
         );
         Ok(())

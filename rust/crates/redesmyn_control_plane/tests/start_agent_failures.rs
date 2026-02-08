@@ -1,7 +1,15 @@
 use redesmyn_control_plane::ControlPlane;
-use redesmyn_ids::{EpicId, RepoId, TaskId, WorkspaceId};
+use redesmyn_ids::{EpicId, RepoId, SessionEventId, SessionId, TaskId, WorkspaceId};
 use redesmyn_protocol::ErrorCategory;
-use redesmyn_protocol::client::{AgentKind, AgentMessageConflictAction, StartAgentRequest};
+use redesmyn_protocol::Timestamp;
+use redesmyn_protocol::client::{
+    AgentKind, AgentMessageConflictAction, ModelReasoningEffort, RestartAgentRequest,
+    SessionEventKindFilter, SessionModelSelection, StartAgentRequest,
+};
+use redesmyn_protocol::session::{
+    CodexApprovalPolicy, CodexApprovalPolicyChanged, CodexSandboxPolicy, CodexSandboxPolicyChanged,
+    SessionEvent, SessionEventKind, SessionModelChanged, SessionModelReasoningEffort, SessionScope,
+};
 
 async fn seed_repo_and_task(control_plane: &ControlPlane) -> (WorkspaceId, RepoId, TaskId) {
     let pool = control_plane.pool();
@@ -76,6 +84,145 @@ async fn seed_repo_and_task(control_plane: &ControlPlane) -> (WorkspaceId, RepoI
     .expect("insert task");
 
     (workspace_id, repo_id, task_id)
+}
+
+async fn insert_stopped_task_session(
+    control_plane: &ControlPlane,
+    workspace_id: WorkspaceId,
+    repo_id: RepoId,
+    task_id: TaskId,
+    now_ms: i64,
+) -> SessionId {
+    let session_id = SessionId::new();
+    sqlx::query(
+        r#"
+        INSERT INTO agent_sessions (
+            session_id,
+            created_at_ms,
+            updated_at_ms,
+            scope_workspace_id,
+            scope_repo_id,
+            scope_kind,
+            task_id,
+            agent_kind,
+            status,
+            external_session_ref,
+            title,
+            started_at_ms,
+            ended_at_ms,
+            closed_at_ms
+        ) VALUES (
+            ?1, ?2, ?3, ?4, ?5, 'task', ?6, 'codex', 'stopped', ?7, NULL, ?8, ?9, NULL
+        )
+        "#,
+    )
+    .bind(session_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind(workspace_id)
+    .bind(repo_id)
+    .bind(task_id)
+    .bind(r#"{"type":"none"}"#)
+    .bind(now_ms)
+    .bind(now_ms)
+    .execute(control_plane.pool())
+    .await
+    .expect("insert stopped task session");
+    session_id
+}
+
+async fn append_restart_sticky_events(
+    control_plane: &ControlPlane,
+    session_id: SessionId,
+    task_id: TaskId,
+) {
+    let created_at = Timestamp::now_utc();
+    let events = [
+        SessionEventKind::SessionModelChanged(SessionModelChanged {
+            model_id: Some("gpt-5.3-codex".to_string()),
+            reasoning_effort: Some(SessionModelReasoningEffort::Xhigh),
+        }),
+        SessionEventKind::CodexApprovalPolicyChanged(CodexApprovalPolicyChanged {
+            approval_policy: Some(CodexApprovalPolicy::OnFailure),
+        }),
+        SessionEventKind::CodexSandboxPolicyChanged(CodexSandboxPolicyChanged {
+            sandbox_policy: Some(CodexSandboxPolicy::DangerFullAccess),
+        }),
+    ];
+
+    for kind in events {
+        control_plane
+            .session_events()
+            .append_session_event(&SessionEvent {
+                session_event_id: SessionEventId::new(),
+                created_at,
+                scope: SessionScope::Task { task_id },
+                session_id,
+                turn_id: None,
+                kind,
+            })
+            .await
+            .expect("append sticky session event");
+    }
+}
+
+async fn assert_session_has_sticky_events(control_plane: &ControlPlane, session_id: SessionId) {
+    assert_session_has_expected_sticky_events(
+        control_plane,
+        session_id,
+        "gpt-5.3-codex",
+        SessionModelReasoningEffort::Xhigh,
+        CodexApprovalPolicy::OnFailure,
+        CodexSandboxPolicy::DangerFullAccess,
+    )
+    .await;
+}
+
+async fn assert_session_has_expected_sticky_events(
+    control_plane: &ControlPlane,
+    session_id: SessionId,
+    expected_model_id: &str,
+    expected_reasoning_effort: SessionModelReasoningEffort,
+    expected_approval_policy: CodexApprovalPolicy,
+    expected_sandbox_policy: CodexSandboxPolicy,
+) {
+    let (events, _) = control_plane
+        .session_events()
+        .get_session_events(
+            session_id,
+            None,
+            20,
+            &[
+                SessionEventKindFilter::SessionModelChanged,
+                SessionEventKindFilter::CodexApprovalPolicyChanged,
+                SessionEventKindFilter::CodexSandboxPolicyChanged,
+            ],
+        )
+        .await
+        .expect("load session sticky events");
+
+    let mut saw_model = false;
+    let mut saw_approval = false;
+    let mut saw_sandbox = false;
+    for event in events {
+        match event.kind {
+            SessionEventKind::SessionModelChanged(changed) => {
+                saw_model = changed.model_id.as_deref() == Some(expected_model_id)
+                    && changed.reasoning_effort == Some(expected_reasoning_effort);
+            }
+            SessionEventKind::CodexApprovalPolicyChanged(changed) => {
+                saw_approval = changed.approval_policy == Some(expected_approval_policy);
+            }
+            SessionEventKind::CodexSandboxPolicyChanged(changed) => {
+                saw_sandbox = changed.sandbox_policy == Some(expected_sandbox_policy.clone());
+            }
+            _ => {}
+        }
+    }
+
+    assert!(saw_model, "expected model selection carry-forward event");
+    assert!(saw_approval, "expected approval policy carry-forward event");
+    assert!(saw_sandbox, "expected sandbox policy carry-forward event");
 }
 
 #[tokio::test]
@@ -178,4 +325,195 @@ async fn start_agent_failure_does_not_append_initial_prompt_message() {
         persisted_user_messages, 0,
         "initial prompt should not be persisted when start fails"
     );
+}
+
+#[tokio::test]
+async fn restart_agent_carries_forward_latest_session_settings() {
+    let control_plane = ControlPlane::open_test().await.expect("control plane");
+    let (workspace_id, repo_id, task_id) = seed_repo_and_task(&control_plane).await;
+    let old_session_id =
+        insert_stopped_task_session(&control_plane, workspace_id, repo_id, task_id, 11).await;
+    append_restart_sticky_events(&control_plane, old_session_id, task_id).await;
+
+    let result = control_plane
+        .restart_agent(
+            workspace_id,
+            repo_id,
+            RestartAgentRequest {
+                task_id,
+                agent_kind: AgentKind::Codex,
+                initial_prompt: Some("prelude template".to_string()),
+                session_model_selection: None,
+                codex_approval_policy: None,
+                codex_sandbox_policy: None,
+            },
+        )
+        .await;
+
+    let err = result.expect_err("expected restart-agent failure without daemon");
+    assert_eq!(err.category, ErrorCategory::Unavailable);
+
+    let latest_session_id: SessionId = sqlx::query_scalar(
+        r#"
+        SELECT session_id
+        FROM agent_sessions
+        WHERE task_id = ?1
+        ORDER BY created_at_ms DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(task_id)
+    .fetch_one(control_plane.pool())
+    .await
+    .expect("load latest session id");
+    assert_ne!(latest_session_id, old_session_id);
+
+    assert_session_has_sticky_events(&control_plane, latest_session_id).await;
+}
+
+#[tokio::test]
+async fn restart_agent_uses_latest_non_empty_sticky_settings() {
+    let control_plane = ControlPlane::open_test().await.expect("control plane");
+    let (workspace_id, repo_id, task_id) = seed_repo_and_task(&control_plane).await;
+
+    let sticky_session_id =
+        insert_stopped_task_session(&control_plane, workspace_id, repo_id, task_id, 11).await;
+    append_restart_sticky_events(&control_plane, sticky_session_id, task_id).await;
+
+    let empty_latest_session_id =
+        insert_stopped_task_session(&control_plane, workspace_id, repo_id, task_id, 12).await;
+
+    let result = control_plane
+        .restart_agent(
+            workspace_id,
+            repo_id,
+            RestartAgentRequest {
+                task_id,
+                agent_kind: AgentKind::Codex,
+                initial_prompt: Some("prelude template".to_string()),
+                session_model_selection: None,
+                codex_approval_policy: None,
+                codex_sandbox_policy: None,
+            },
+        )
+        .await;
+
+    let err = result.expect_err("expected restart-agent failure without daemon");
+    assert_eq!(err.category, ErrorCategory::Unavailable);
+
+    let latest_session_id: SessionId = sqlx::query_scalar(
+        r#"
+        SELECT session_id
+        FROM agent_sessions
+        WHERE task_id = ?1
+        ORDER BY created_at_ms DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(task_id)
+    .fetch_one(control_plane.pool())
+    .await
+    .expect("load latest session id");
+    assert_ne!(latest_session_id, empty_latest_session_id);
+    assert_ne!(latest_session_id, sticky_session_id);
+
+    assert_session_has_sticky_events(&control_plane, latest_session_id).await;
+}
+
+#[tokio::test]
+async fn restart_agent_falls_back_to_request_settings_when_no_last_seen_projection() {
+    let control_plane = ControlPlane::open_test().await.expect("control plane");
+    let (workspace_id, repo_id, task_id) = seed_repo_and_task(&control_plane).await;
+
+    let result = control_plane
+        .restart_agent(
+            workspace_id,
+            repo_id,
+            RestartAgentRequest {
+                task_id,
+                agent_kind: AgentKind::Codex,
+                initial_prompt: Some("prelude template".to_string()),
+                session_model_selection: Some(SessionModelSelection {
+                    model_id: Some("gpt-5.3-codex".to_string()),
+                    reasoning_effort: Some(ModelReasoningEffort::Xhigh),
+                }),
+                codex_approval_policy: Some(CodexApprovalPolicy::OnFailure),
+                codex_sandbox_policy: Some(CodexSandboxPolicy::DangerFullAccess),
+            },
+        )
+        .await;
+
+    let err = result.expect_err("expected restart-agent failure without daemon");
+    assert_eq!(err.category, ErrorCategory::Unavailable);
+
+    let latest_session_id: SessionId = sqlx::query_scalar(
+        r#"
+        SELECT session_id
+        FROM agent_sessions
+        WHERE task_id = ?1
+        ORDER BY created_at_ms DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(task_id)
+    .fetch_one(control_plane.pool())
+    .await
+    .expect("load latest session id");
+
+    assert_session_has_sticky_events(&control_plane, latest_session_id).await;
+}
+
+#[tokio::test]
+async fn restart_agent_prefers_request_settings_over_last_seen_projection() {
+    let control_plane = ControlPlane::open_test().await.expect("control plane");
+    let (workspace_id, repo_id, task_id) = seed_repo_and_task(&control_plane).await;
+    let old_session_id =
+        insert_stopped_task_session(&control_plane, workspace_id, repo_id, task_id, 11).await;
+    append_restart_sticky_events(&control_plane, old_session_id, task_id).await;
+
+    let result = control_plane
+        .restart_agent(
+            workspace_id,
+            repo_id,
+            RestartAgentRequest {
+                task_id,
+                agent_kind: AgentKind::Codex,
+                initial_prompt: Some("prelude template".to_string()),
+                session_model_selection: Some(SessionModelSelection {
+                    model_id: Some("gpt-5.2-codex".to_string()),
+                    reasoning_effort: Some(ModelReasoningEffort::Low),
+                }),
+                codex_approval_policy: Some(CodexApprovalPolicy::OnRequest),
+                codex_sandbox_policy: Some(CodexSandboxPolicy::ReadOnly),
+            },
+        )
+        .await;
+
+    let err = result.expect_err("expected restart-agent failure without daemon");
+    assert_eq!(err.category, ErrorCategory::Unavailable);
+
+    let latest_session_id: SessionId = sqlx::query_scalar(
+        r#"
+        SELECT session_id
+        FROM agent_sessions
+        WHERE task_id = ?1
+        ORDER BY created_at_ms DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(task_id)
+    .fetch_one(control_plane.pool())
+    .await
+    .expect("load latest session id");
+    assert_ne!(latest_session_id, old_session_id);
+
+    assert_session_has_expected_sticky_events(
+        &control_plane,
+        latest_session_id,
+        "gpt-5.2-codex",
+        SessionModelReasoningEffort::Low,
+        CodexApprovalPolicy::OnRequest,
+        CodexSandboxPolicy::ReadOnly,
+    )
+    .await;
 }

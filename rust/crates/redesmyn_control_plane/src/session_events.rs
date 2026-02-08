@@ -508,6 +508,11 @@ impl SessionEvents {
         .execute(&self.pool)
         .await?;
 
+        crate::session_events_projection::apply_session_event_to_agent_session_row(
+            &self.pool, event,
+        )
+        .await?;
+
         let _ = self.hub.send(event.clone());
         Ok(())
     }

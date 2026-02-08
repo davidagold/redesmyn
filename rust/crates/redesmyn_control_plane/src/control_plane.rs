@@ -370,15 +370,6 @@ impl ControlPlane {
                 tracing::warn!(error = %err, "failed to append session event");
                 continue;
             }
-
-            if let Err(err) =
-                crate::session_events_projection::apply_session_event_to_agent_session_row(
-                    &self.pool, &event,
-                )
-                .await
-            {
-                tracing::warn!(error = %err, "failed to apply session event to agent session row");
-            }
         }
 
         Ok(())

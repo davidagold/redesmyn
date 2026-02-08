@@ -706,6 +706,12 @@ pub struct RestartAgentRequest {
     pub agent_kind: AgentKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_model_selection: Option<SessionModelSelection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_approval_policy: Option<CodexApprovalPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_sandbox_policy: Option<CodexSandboxPolicy>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
