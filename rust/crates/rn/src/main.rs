@@ -19,11 +19,11 @@ use redesmyn_protocol::client::{
     ModelReasoningEffort, RequestPayload, ResponseResult, SessionModelSelection, StartAgentRequest,
     WaitForCommandRequest,
 };
+use redesmyn_protocol::prelude::BUILT_IN_PRELUDE_TEMPLATE;
 use redesmyn_protocol::sync_commands::{LOCAL_SYNC_FROM_DOCS_KIND, LocalSyncFromDocsCommand};
 use redesmyn_protocol::{
     CodexApprovalPolicy, CodexSandboxPolicy, ErrorCategory, ErrorEnvelope, ProtocolEnvelope, Scope,
 };
-use redesmyn_protocol::prelude::BUILT_IN_PRELUDE_TEMPLATE;
 use serde::Serialize;
 use toml_edit::DocumentMut;
 
@@ -619,15 +619,15 @@ fn task_start(args: TaskStartArgs, output: &Output) -> CommandOutcome {
         .filter(|value| !value.is_empty());
     let initial_prompt = merge_task_start_prompts(prelude_prompt, user_prompt);
 
-    let session_model_selection = if defaults.model_id.is_none() && defaults.reasoning_effort.is_none()
-    {
-        None
-    } else {
-        Some(SessionModelSelection {
-            model_id: defaults.model_id.clone(),
-            reasoning_effort: defaults.reasoning_effort,
-        })
-    };
+    let session_model_selection =
+        if defaults.model_id.is_none() && defaults.reasoning_effort.is_none() {
+            None
+        } else {
+            Some(SessionModelSelection {
+                model_id: defaults.model_id.clone(),
+                reasoning_effort: defaults.reasoning_effort,
+            })
+        };
 
     #[derive(Debug, Serialize)]
     struct TaskStartReport {
@@ -941,8 +941,11 @@ async fn start_task_agent_via_control_plane(
             })
             .map(|node| (node.task_slug.clone(), node.task_id))
             .ok_or_else(|| {
-                let mut known: Vec<String> =
-                    graph.nodes.iter().map(|node| node.task_slug.clone()).collect();
+                let mut known: Vec<String> = graph
+                    .nodes
+                    .iter()
+                    .map(|node| node.task_slug.clone())
+                    .collect();
                 known.sort();
                 ErrorEnvelope::new(
                     ErrorCategory::NotFound,
@@ -1103,11 +1106,11 @@ fn apply_task_start_defaults_from_path(defaults: &mut TaskStartDefaults, path: &
         }
     }
 
-    if let Some(session_defaults) = doc
-        .get("session_defaults")
-        .and_then(|item| item.as_table())
-    {
-        if let Some(codex) = session_defaults.get("codex").and_then(|item| item.as_table()) {
+    if let Some(session_defaults) = doc.get("session_defaults").and_then(|item| item.as_table()) {
+        if let Some(codex) = session_defaults
+            .get("codex")
+            .and_then(|item| item.as_table())
+        {
             if codex.contains_key("model") {
                 defaults.model_id = codex
                     .get("model")
@@ -1184,10 +1187,7 @@ fn parse_codex_sandbox_policy_override(value: &str) -> Option<Option<CodexSandbo
     }
 }
 
-fn merge_task_start_prompts(
-    prelude: Option<String>,
-    prompt: Option<String>,
-) -> Option<String> {
+fn merge_task_start_prompts(prelude: Option<String>, prompt: Option<String>) -> Option<String> {
     match (prelude, prompt) {
         (None, None) => None,
         (Some(value), None) | (None, Some(value)) => Some(value),
