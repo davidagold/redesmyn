@@ -23,6 +23,17 @@ impl ActiveSessionsByTask {
             .and_then(|sessions| sessions.iter().next().copied())
     }
 
+    pub(crate) fn sessions(
+        &self,
+        task_id: TaskId,
+        interface_mode: InterfaceMode,
+    ) -> Vec<SessionId> {
+        self.map
+            .get(&(task_id, interface_mode))
+            .map(|sessions| sessions.iter().copied().collect())
+            .unwrap_or_default()
+    }
+
     pub(crate) fn insert(
         &mut self,
         task_id: TaskId,

@@ -645,6 +645,20 @@ impl AppServerSupervisor {
         self.send_command(session_id, SessionCommand::Stop).await
     }
 
+    pub async fn has_session(&self, session_id: SessionId) -> bool {
+        let st = self.state.lock().await;
+        st.sessions.contains_key(&session_id)
+    }
+
+    pub async fn active_task_sessions(
+        &self,
+        task_id: TaskId,
+        interface_mode: InterfaceMode,
+    ) -> Vec<SessionId> {
+        let st = self.state.lock().await;
+        st.active_by_task.sessions(task_id, interface_mode)
+    }
+
     pub async fn shutdown(&self) {
         let sessions = {
             let mut st = self.state.lock().await;

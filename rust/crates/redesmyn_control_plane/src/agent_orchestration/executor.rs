@@ -1,6 +1,6 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use redesmyn_ids::{RepoId, SessionEventId, SessionId, TaskId, WorkspaceId};
+use redesmyn_ids::{CommandId, RepoId, SessionEventId, SessionId, TaskId, WorkspaceId};
 use redesmyn_protocol::agent_commands::{
     SESSION_AGENT_ATTACH_SESSION, SESSION_AGENT_RESUME_BY_ID_TURN, TASK_AGENT_START,
     TASK_AGENT_STOP,
@@ -33,6 +33,8 @@ use super::planner::{NewSessionPlan, StructuredResumePlan};
 type StorageAgentKind = redesmyn_storage::schema::AgentKind;
 type StorageAgentSessionScopeKind = redesmyn_storage::schema::AgentSessionScopeKind;
 type StorageAgentSessionStatus = redesmyn_storage::schema::AgentSessionStatus;
+
+const START_COMMAND_WAIT_TIMEOUT: Duration = Duration::from_secs(15);
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -529,6 +531,59 @@ async fn issue_repo_command(
         })
 }
 
+async fn wait_for_start_command_terminal(
+    control_plane: &ControlPlane,
+    command: CommandSummary,
+) -> Result<CommandSummary, ErrorEnvelope> {
+    wait_for_start_command_terminal_with_timeout(control_plane, command, START_COMMAND_WAIT_TIMEOUT)
+        .await
+}
+
+async fn wait_for_start_command_terminal_with_timeout(
+    control_plane: &ControlPlane,
+    command: CommandSummary,
+    timeout: Duration,
+) -> Result<CommandSummary, ErrorEnvelope> {
+    if matches!(
+        command.state,
+        CommandState::Succeeded | CommandState::Failed | CommandState::Canceled
+    ) {
+        return Ok(command);
+    }
+
+    control_plane
+        .commands()
+        .wait_for_command(
+            command.command_id,
+            &[
+                CommandState::Succeeded,
+                CommandState::Failed,
+                CommandState::Canceled,
+            ],
+            timeout,
+        )
+        .await
+}
+
+async fn load_command_summary(
+    control_plane: &ControlPlane,
+    command_id: CommandId,
+) -> Result<CommandSummary, ErrorEnvelope> {
+    control_plane
+        .commands()
+        .get_command(command_id)
+        .await
+        .map_err(|err| {
+            let envelope: ErrorEnvelope = err.into();
+            envelope
+        })?
+        .ok_or_else(|| {
+            ErrorEnvelope::new(ErrorCategory::NotFound, "Command not found.").with_detail(
+                ErrorDetail::from([("command_id".to_string(), command_id.to_string())]),
+            )
+        })
+}
+
 async fn rollback_failed_start_session(
     control_plane: &ControlPlane,
     session_id: SessionId,
@@ -663,8 +718,57 @@ pub(super) async fn execute_start_agent(
         json_payload,
     )
     .await?;
+    let command = match wait_for_start_command_terminal(control_plane, command.clone()).await {
+        Ok(command) => command,
+        Err(wait_error) => {
+            let latest = load_command_summary(control_plane, command.command_id).await?;
+            if matches!(
+                latest.state,
+                CommandState::Succeeded | CommandState::Failed | CommandState::Canceled
+            ) {
+                latest
+            } else {
+                let mut detail = ErrorDetail::from([
+                    ("command_id".to_string(), command.command_id.to_string()),
+                    ("session_id".to_string(), session_id.to_string()),
+                    ("task_id".to_string(), task_id.to_string()),
+                    ("wait_error".to_string(), wait_error.message),
+                ]);
 
-    if command.state == CommandState::Failed {
+                if let Some(cleanup_error) =
+                    rollback_failed_start_session(control_plane, session_id, task_id).await
+                {
+                    detail.insert("cleanup_error".to_string(), cleanup_error);
+                }
+
+                let stop_after_timeout = async {
+                    let stop_payload = payloads::stop_task_sessions(task_id, vec![session_id])?;
+                    issue_repo_command(
+                        control_plane,
+                        workspace_id,
+                        repo_id,
+                        TASK_AGENT_STOP.to_string(),
+                        Some(task_id),
+                        stop_payload,
+                    )
+                    .await
+                    .map(|_| ())
+                }
+                .await;
+                if let Err(stop_error) = stop_after_timeout {
+                    detail.insert("stop_after_timeout_error".to_string(), stop_error.message);
+                }
+
+                let timed_out_message = "Timed out waiting for agent start command to finish.";
+                return Err(
+                    ErrorEnvelope::new(ErrorCategory::Unavailable, timed_out_message)
+                        .with_detail(detail),
+                );
+            }
+        }
+    };
+
+    if matches!(command.state, CommandState::Failed | CommandState::Canceled) {
         let mut detail = ErrorDetail::from([
             ("command_id".to_string(), command.command_id.to_string()),
             ("session_id".to_string(), session_id.to_string()),
@@ -873,4 +977,117 @@ pub(super) async fn execute_new_session_send(
         conversation_continuity: plan.conversation_continuity,
         warnings: Vec::new(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wait_for_start_command_terminal_with_timeout;
+    use std::time::Duration;
+
+    use crate::ControlPlane;
+    use redesmyn_protocol::client::CommandState;
+    use redesmyn_storage::commands::CommandScope;
+    use redesmyn_storage::schema::CommandState as StorageCommandState;
+
+    #[tokio::test]
+    async fn wait_for_start_command_terminal_timeout_then_later_succeeds() {
+        let control_plane = ControlPlane::open_test().await.expect("control plane");
+        let created = control_plane
+            .commands()
+            .create_command(
+                CommandScope::None,
+                "task.agent.start".to_string(),
+                None,
+                None,
+                None,
+                Vec::new(),
+            )
+            .await
+            .expect("create command");
+
+        let timed_out = wait_for_start_command_terminal_with_timeout(
+            &control_plane,
+            created.command.clone(),
+            Duration::from_millis(10),
+        )
+        .await
+        .expect_err("expected timeout while command remains queued");
+        assert_eq!(
+            timed_out.category,
+            redesmyn_protocol::ErrorCategory::Unavailable
+        );
+
+        control_plane
+            .commands()
+            .append_update(
+                created.command.command_id,
+                StorageCommandState::Succeeded,
+                Some("dispatched".to_string()),
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("append succeeded update");
+
+        let summary = wait_for_start_command_terminal_with_timeout(
+            &control_plane,
+            created.command,
+            Duration::from_millis(10),
+        )
+        .await
+        .expect("wait should return terminal command");
+        assert_eq!(summary.state, CommandState::Succeeded);
+    }
+
+    #[tokio::test]
+    async fn wait_for_start_command_terminal_timeout_then_later_fails() {
+        let control_plane = ControlPlane::open_test().await.expect("control plane");
+        let created = control_plane
+            .commands()
+            .create_command(
+                CommandScope::None,
+                "task.agent.start".to_string(),
+                None,
+                None,
+                None,
+                Vec::new(),
+            )
+            .await
+            .expect("create command");
+
+        let timed_out = wait_for_start_command_terminal_with_timeout(
+            &control_plane,
+            created.command.clone(),
+            Duration::from_millis(10),
+        )
+        .await
+        .expect_err("expected timeout while command remains queued");
+        assert_eq!(
+            timed_out.category,
+            redesmyn_protocol::ErrorCategory::Unavailable
+        );
+
+        control_plane
+            .commands()
+            .append_update(
+                created.command.command_id,
+                StorageCommandState::Failed,
+                Some("failed later".to_string()),
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("append failed update");
+
+        let summary = wait_for_start_command_terminal_with_timeout(
+            &control_plane,
+            created.command,
+            Duration::from_millis(10),
+        )
+        .await
+        .expect("wait should return terminal command");
+        assert_eq!(summary.state, CommandState::Failed);
+    }
 }

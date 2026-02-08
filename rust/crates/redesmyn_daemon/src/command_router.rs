@@ -22,7 +22,7 @@ use redesmyn_protocol::agent_commands::{
     SESSION_AGENT_SET_MODEL, SESSION_AGENT_SET_PERMISSIONS_MODE, SESSION_AGENT_START,
     SetSessionCodexApprovalPolicyCommand, SetSessionCodexSandboxPolicyCommand,
     SetSessionModelCommand, SetSessionPermissionsModeCommand, StartAgentSessionCommand,
-    StartTaskAgentSessionCommand, TASK_AGENT_START,
+    StartTaskAgentSessionCommand, StopTaskAgentSessionCommand, TASK_AGENT_START, TASK_AGENT_STOP,
 };
 use redesmyn_protocol::client::AgentKind;
 use redesmyn_protocol::daemon::{
@@ -128,6 +128,7 @@ async fn handle_dispatch(
     match dispatch.command_kind.as_str() {
         SESSION_AGENT_START => handle_session_agent_start(router, &frames_tx, dispatch).await,
         TASK_AGENT_START => handle_task_agent_start(router, &frames_tx, dispatch).await,
+        TASK_AGENT_STOP => handle_task_agent_stop(router, &frames_tx, dispatch).await,
         SESSION_AGENT_RESUME_BY_ID_TURN => {
             handle_session_agent_resume_by_id_turn(router, &frames_tx, dispatch).await
         }
@@ -205,6 +206,72 @@ async fn handle_task_agent_start(
     };
 
     handle_agent_start(router, frames_tx, dispatch, mapped).await;
+}
+
+async fn handle_task_agent_stop(
+    router: CommandRouter,
+    frames_tx: &mpsc::Sender<DaemonFrame>,
+    dispatch: CommandDispatch,
+) {
+    let cmd: StopTaskAgentSessionCommand = match decode_payload(&dispatch) {
+        Ok(cmd) => cmd,
+        Err(err) => {
+            reject_command(frames_tx, dispatch, err).await;
+            return;
+        }
+    };
+
+    if let Err(err) = send_command_update(
+        frames_tx,
+        &dispatch,
+        CommandState::Accepted,
+        Some("accepted".to_owned()),
+        None,
+        None,
+        None,
+    )
+    .await
+    {
+        tracing::warn!(error = ?err, "failed to send accepted command update");
+    }
+
+    let session_ids = if cmd.session_ids.is_empty() {
+        match router.codex_driver.stop_task_sessions(cmd.task_id).await {
+            Ok(session_ids) => session_ids,
+            Err(err) => {
+                fail_command(frames_tx, dispatch, err).await;
+                return;
+            }
+        }
+    } else {
+        for session_id in &cmd.session_ids {
+            if let Err(err) = router.codex_driver.stop_session(*session_id).await {
+                fail_command(frames_tx, dispatch, err).await;
+                return;
+            }
+        }
+        cmd.session_ids
+    };
+
+    let message = if session_ids.is_empty() {
+        "no active sessions".to_owned()
+    } else {
+        format!("stopped {} session(s)", session_ids.len())
+    };
+
+    if let Err(err) = send_command_update(
+        frames_tx,
+        &dispatch,
+        CommandState::Succeeded,
+        Some(message),
+        None,
+        None,
+        None,
+    )
+    .await
+    {
+        tracing::warn!(error = ?err, "failed to send succeeded command update");
+    }
 }
 
 async fn handle_agent_start(
@@ -1005,15 +1072,12 @@ async fn ensure_task_worktree(
                 .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
         })?;
 
-    if let Some(existing) = worktrees
-        .iter()
-        .find(|worktree| {
-            worktree
-                .branch
-                .as_ref()
-                .is_some_and(|branch| worktree_branch_matches(branch, branch_name))
-        })
-    {
+    if let Some(existing) = worktrees.iter().find(|worktree| {
+        worktree
+            .branch
+            .as_ref()
+            .is_some_and(|branch| worktree_branch_matches(branch, branch_name))
+    }) {
         return Ok(existing.path.clone());
     }
 
@@ -1209,8 +1273,24 @@ async fn send_command_update(
 
 #[cfg(test)]
 mod tests {
-    use super::worktree_branch_matches;
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use super::{CommandRouter, handle_dispatch, worktree_branch_matches};
+    use crate::agent_driver::{AgentDriver, DriverFuture, ResumeByIdTurnSpec, StartSessionSpec};
+    use crate::repo::UnconfiguredRepoRegistry;
+    use redesmyn_git::GitCliBackend;
     use redesmyn_git::GitRefName;
+    use redesmyn_ids::{CommandId, RepoId, SessionId, TaskId, WorkspaceId};
+    use redesmyn_protocol::agent_commands::{StopTaskAgentSessionCommand, TASK_AGENT_STOP};
+    use redesmyn_protocol::client::SessionModelSelection;
+    use redesmyn_protocol::daemon::{CommandDispatch, CommandState, DaemonMessage};
+    use redesmyn_protocol::session::{
+        CodexApprovalPolicy, CodexSandboxPolicy, PermissionDecision, PermissionsMode,
+    };
+    use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, RepoScope};
+    use tokio::sync::mpsc;
 
     #[test]
     fn worktree_branch_matches_short_and_full_head_refs() {
@@ -1227,5 +1307,299 @@ mod tests {
             &full,
             "rn/director-v0/T-1-director-run-semantics"
         ));
+    }
+
+    #[derive(Clone)]
+    struct FakeAgentDriver {
+        stopped_sessions: Arc<Mutex<Vec<SessionId>>>,
+        stopped_tasks: Arc<Mutex<Vec<TaskId>>>,
+        stop_task_result: Vec<SessionId>,
+    }
+
+    impl FakeAgentDriver {
+        fn new(stop_task_result: Vec<SessionId>) -> Self {
+            Self {
+                stopped_sessions: Arc::new(Mutex::new(Vec::new())),
+                stopped_tasks: Arc::new(Mutex::new(Vec::new())),
+                stop_task_result,
+            }
+        }
+    }
+
+    impl AgentDriver for FakeAgentDriver {
+        fn start_session(
+            &self,
+            _spec: StartSessionSpec,
+        ) -> DriverFuture<'_, Result<(), ErrorEnvelope>> {
+            Box::pin(async {
+                Err(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "unexpected start_session call in test",
+                ))
+            })
+        }
+
+        fn stop_session(
+            &self,
+            session_id: SessionId,
+        ) -> DriverFuture<'_, Result<(), ErrorEnvelope>> {
+            let stopped_sessions = Arc::clone(&self.stopped_sessions);
+            Box::pin(async move {
+                stopped_sessions
+                    .lock()
+                    .expect("lock stopped_sessions")
+                    .push(session_id);
+                Ok(())
+            })
+        }
+
+        fn stop_task_sessions(
+            &self,
+            task_id: TaskId,
+        ) -> DriverFuture<'_, Result<Vec<SessionId>, ErrorEnvelope>> {
+            let stopped_tasks = Arc::clone(&self.stopped_tasks);
+            let stop_task_result = self.stop_task_result.clone();
+            Box::pin(async move {
+                stopped_tasks
+                    .lock()
+                    .expect("lock stopped_tasks")
+                    .push(task_id);
+                Ok(stop_task_result)
+            })
+        }
+
+        fn resume_by_id_turn(
+            &self,
+            _spec: ResumeByIdTurnSpec,
+        ) -> DriverFuture<'_, Result<(), ErrorEnvelope>> {
+            Box::pin(async {
+                Err(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "unexpected resume_by_id_turn call in test",
+                ))
+            })
+        }
+
+        fn interrupt_turn(
+            &self,
+            _session_id: SessionId,
+        ) -> DriverFuture<'_, Result<(), ErrorEnvelope>> {
+            Box::pin(async {
+                Err(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "unexpected interrupt_turn call in test",
+                ))
+            })
+        }
+
+        fn set_permissions_mode(
+            &self,
+            _repo_root: PathBuf,
+            _session_id: SessionId,
+            _task_id: Option<TaskId>,
+            _mode: PermissionsMode,
+        ) -> DriverFuture<'_, Result<(), ErrorEnvelope>> {
+            Box::pin(async {
+                Err(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "unexpected set_permissions_mode call in test",
+                ))
+            })
+        }
+
+        fn set_codex_approval_policy(
+            &self,
+            _repo_root: PathBuf,
+            _session_id: SessionId,
+            _task_id: Option<TaskId>,
+            _approval_policy: Option<CodexApprovalPolicy>,
+        ) -> DriverFuture<'_, Result<(), ErrorEnvelope>> {
+            Box::pin(async {
+                Err(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "unexpected set_codex_approval_policy call in test",
+                ))
+            })
+        }
+
+        fn set_codex_sandbox_policy(
+            &self,
+            _repo_root: PathBuf,
+            _session_id: SessionId,
+            _task_id: Option<TaskId>,
+            _sandbox_policy: Option<CodexSandboxPolicy>,
+        ) -> DriverFuture<'_, Result<(), ErrorEnvelope>> {
+            Box::pin(async {
+                Err(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "unexpected set_codex_sandbox_policy call in test",
+                ))
+            })
+        }
+
+        fn set_model(
+            &self,
+            _repo_root: PathBuf,
+            _session_id: SessionId,
+            _task_id: Option<TaskId>,
+            _selection: SessionModelSelection,
+        ) -> DriverFuture<'_, Result<(), ErrorEnvelope>> {
+            Box::pin(async {
+                Err(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "unexpected set_model call in test",
+                ))
+            })
+        }
+
+        fn list_models(
+            &self,
+            _repo_root: PathBuf,
+            _session_id: SessionId,
+            _task_id: Option<TaskId>,
+        ) -> DriverFuture<
+            '_,
+            Result<
+                (
+                    Vec<redesmyn_protocol::client::SessionModelOption>,
+                    SessionModelSelection,
+                ),
+                ErrorEnvelope,
+            >,
+        > {
+            Box::pin(async {
+                Err(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "unexpected list_models call in test",
+                ))
+            })
+        }
+
+        fn respond_permission_request(
+            &self,
+            _session_id: SessionId,
+            _request_id: String,
+            _decision: PermissionDecision,
+        ) -> DriverFuture<'_, Result<(), ErrorEnvelope>> {
+            Box::pin(async {
+                Err(ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "unexpected respond_permission_request call in test",
+                ))
+            })
+        }
+    }
+
+    fn test_scope() -> RepoScope {
+        RepoScope {
+            workspace_id: WorkspaceId::new(),
+            repo_id: RepoId::new(),
+        }
+    }
+
+    async fn recv_command_update(
+        frames_rx: &mut mpsc::Receiver<redesmyn_protocol::daemon::DaemonFrame>,
+    ) -> redesmyn_protocol::daemon::CommandUpdate {
+        let frame = tokio::time::timeout(Duration::from_secs(2), frames_rx.recv())
+            .await
+            .expect("timeout waiting for frame")
+            .expect("frame channel closed");
+        let DaemonMessage::CommandUpdate(update) = frame.message else {
+            panic!("expected command update");
+        };
+        update
+    }
+
+    #[tokio::test]
+    async fn task_agent_stop_uses_explicit_session_ids() {
+        let driver = FakeAgentDriver::new(Vec::new());
+        let stopped_sessions = Arc::clone(&driver.stopped_sessions);
+        let stopped_tasks = Arc::clone(&driver.stopped_tasks);
+        let router = CommandRouter {
+            repo_registry: Arc::new(UnconfiguredRepoRegistry),
+            git_backend: Arc::new(GitCliBackend::new()),
+            worktree_root: PathBuf::from("/tmp"),
+            codex_driver: Arc::new(driver),
+        };
+        let (frames_tx, mut frames_rx) = mpsc::channel(8);
+
+        let session_1 = SessionId::new();
+        let session_2 = SessionId::new();
+        let task_id = TaskId::new();
+        let dispatch = CommandDispatch {
+            command_id: CommandId::new(),
+            scope: test_scope(),
+            command_kind: TASK_AGENT_STOP.to_string(),
+            json_payload: serde_json::to_vec(&StopTaskAgentSessionCommand {
+                task_id,
+                session_ids: vec![session_1, session_2],
+                reason: None,
+            })
+            .expect("encode stop payload"),
+        };
+
+        handle_dispatch(router, frames_tx, dispatch).await;
+
+        let accepted = recv_command_update(&mut frames_rx).await;
+        assert_eq!(accepted.state, CommandState::Accepted);
+        let succeeded = recv_command_update(&mut frames_rx).await;
+        assert_eq!(succeeded.state, CommandState::Succeeded);
+        assert_eq!(succeeded.message.as_deref(), Some("stopped 2 session(s)"));
+
+        assert_eq!(
+            stopped_sessions
+                .lock()
+                .expect("lock stopped_sessions")
+                .as_slice(),
+            &[session_1, session_2]
+        );
+        assert!(stopped_tasks.lock().expect("lock stopped_tasks").is_empty());
+    }
+
+    #[tokio::test]
+    async fn task_agent_stop_without_session_ids_stops_active_task_sessions() {
+        let returned_session_ids = vec![SessionId::new(), SessionId::new()];
+        let driver = FakeAgentDriver::new(returned_session_ids.clone());
+        let stopped_sessions = Arc::clone(&driver.stopped_sessions);
+        let stopped_tasks = Arc::clone(&driver.stopped_tasks);
+        let router = CommandRouter {
+            repo_registry: Arc::new(UnconfiguredRepoRegistry),
+            git_backend: Arc::new(GitCliBackend::new()),
+            worktree_root: PathBuf::from("/tmp"),
+            codex_driver: Arc::new(driver),
+        };
+        let (frames_tx, mut frames_rx) = mpsc::channel(8);
+
+        let task_id = TaskId::new();
+        let dispatch = CommandDispatch {
+            command_id: CommandId::new(),
+            scope: test_scope(),
+            command_kind: TASK_AGENT_STOP.to_string(),
+            json_payload: serde_json::to_vec(&StopTaskAgentSessionCommand {
+                task_id,
+                session_ids: Vec::new(),
+                reason: None,
+            })
+            .expect("encode stop payload"),
+        };
+
+        handle_dispatch(router, frames_tx, dispatch).await;
+
+        let accepted = recv_command_update(&mut frames_rx).await;
+        assert_eq!(accepted.state, CommandState::Accepted);
+        let succeeded = recv_command_update(&mut frames_rx).await;
+        assert_eq!(succeeded.state, CommandState::Succeeded);
+        assert_eq!(succeeded.message.as_deref(), Some("stopped 2 session(s)"));
+
+        assert!(
+            stopped_sessions
+                .lock()
+                .expect("lock stopped_sessions")
+                .is_empty()
+        );
+        assert_eq!(
+            stopped_tasks.lock().expect("lock stopped_tasks").as_slice(),
+            &[task_id]
+        );
     }
 }
