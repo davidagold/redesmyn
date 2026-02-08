@@ -10,8 +10,8 @@ use std::time::Duration;
 use std::future::Future;
 
 use gpui::{
-    App, AsyncApp, ClickEvent, Context, Entity, FocusHandle, Focusable, Render, ScrollHandle,
-    SharedString, Subscription, Task, WeakEntity, Window, div, prelude::*, px,
+    App, AppContext, AsyncApp, ClickEvent, Context, Entity, FocusHandle, Focusable, Render,
+    ScrollHandle, SharedString, Subscription, Task, WeakEntity, Window, div, prelude::*, px,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinSet;
@@ -539,6 +539,7 @@ impl RootView {
                 self.workspace_pane
                     .update(cx, |pane, cx| pane.focus_task_card_when_ready(task_id, cx));
                 self.agent_sessions_palette.complete_activation_success(cx);
+                self.focus_desktop_root(cx);
                 self.ui_updates.bump();
             }
             AgentSessionNavigation::Chat {
@@ -551,6 +552,7 @@ impl RootView {
                     pane.surface_session_when_ready(session_id, cx)
                 });
                 self.agent_sessions_palette.complete_activation_success(cx);
+                self.focus_desktop_root(cx);
                 self.ui_updates.bump();
             }
             AgentSessionNavigation::Disabled { reason } => {
@@ -655,6 +657,16 @@ impl RootView {
     fn toggle_sessions_pane(&mut self, cx: &mut Context<Self>) {
         self.split_pane
             .update(cx, |pane, cx| pane.toggle_collapsed(cx));
+    }
+
+    fn focus_desktop_root(&self, cx: &mut Context<Self>) {
+        let Some(window_handle) = cx.active_window() else {
+            return;
+        };
+        let focus = self.focus_handle.clone();
+        let _ = cx.update_window(window_handle, move |_, window, _cx| {
+            window.focus(&focus);
+        });
     }
 
     fn toggle_panel(&mut self, panel: ChromePanel, cx: &mut Context<Self>) {
@@ -852,6 +864,7 @@ impl RootView {
         self.workspace_pane.update(cx, move |pane, cx| {
             pane.set_selected_epic(Some(slug_for_workspace), selected, cx)
         });
+        self.focus_desktop_root(cx);
         self.notify_ui_updated(cx);
     }
 
