@@ -3375,10 +3375,12 @@ impl Render for RootView {
                                     .on_click({
                                         let root = root_for_items.clone();
                                         let slug = epic_slug.clone();
-                                        move |_, _, cx| {
+                                        move |_, window, cx| {
+                                            let focus = root.read(cx).focus_handle.clone();
                                             root.update(cx, |this, cx| {
                                                 this.select_epic(slug.clone(), cx)
                                             });
+                                            window.focus(&focus);
                                         }
                                     })
                             })),
