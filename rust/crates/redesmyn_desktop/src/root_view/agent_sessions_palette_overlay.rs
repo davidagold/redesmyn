@@ -222,7 +222,6 @@ impl AgentSessionsPaletteOverlay {
         self.error = None;
         self.selected_index = 0;
         self.scroll.set_offset(point(px(0.0), px(0.0)));
-        self.scroll_selected_into_view(cx);
         cx.notify();
     }
 
@@ -244,7 +243,7 @@ impl AgentSessionsPaletteOverlay {
             TextInputEvent::Changed(_) => {
                 self.selected_index = 0;
                 self.error = None;
-                self.scroll_selected_into_view(cx);
+                self.scroll.set_offset(point(px(0.0), px(0.0)));
                 cx.notify();
                 None
             }
@@ -266,7 +265,7 @@ impl AgentSessionsPaletteOverlay {
         }
         self.show_unreachable_entries = show;
         self.selected_index = 0;
-        self.scroll_selected_into_view(cx);
+        self.scroll.set_offset(point(px(0.0), px(0.0)));
         cx.notify();
     }
 
@@ -465,7 +464,6 @@ impl AgentSessionsPaletteOverlay {
         self.archiving_session_id = None;
         self.input.update(cx, |input, cx| input.set_text("", cx));
         self.scroll.set_offset(point(px(0.0), px(0.0)));
-        self.scroll_selected_into_view(cx);
         window.focus(&self.input.focus_handle(cx));
         cx.notify();
     }
