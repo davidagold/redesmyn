@@ -1,4 +1,6 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use redesmyn_logging::tracing::{self, Instrument as _, info};
 use sqlx::SqlitePool;
@@ -11,7 +13,12 @@ use crate::event_log::{EventLog, EventLogConfig};
 use crate::session_events::{SessionEvents, SessionEventsConfig};
 use crate::task_manager::TaskManager;
 
-use redesmyn_ids::{CommandId, HostInstanceId, TaskId};
+use redesmyn_ids::{CommandId, HostId, HostInstanceId, SessionId, TaskId, WorkspaceId};
+use redesmyn_protocol::agent_commands::{
+    AttachTaskAgentSessionCommand, ResumeByIdTaskAgentTurnCommand, StartAgentSessionCommand,
+    StartTaskAgentSessionCommand, SESSION_AGENT_ATTACH_SESSION, SESSION_AGENT_RESUME_BY_ID_TURN,
+    SESSION_AGENT_START, TASK_AGENT_START, TASK_AGENT_STOP,
+};
 use redesmyn_protocol::daemon::{
     CommandUpdate as DaemonCommandUpdate, SessionEventBatch, SessionLiveEventBatch,
 };
@@ -22,6 +29,19 @@ use redesmyn_protocol::{ErrorEnvelope, RepoScope};
 use redesmyn_storage::commands::CommandScope;
 use redesmyn_storage::events::EventScope;
 use redesmyn_storage::schema::CommandState as StorageCommandState;
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(i64::MAX)
+}
+
+// Guard legacy cleanup to old/stale rows so we avoid clobbering active sessions that
+// predate runner ownership but are still generating recent updates.
+const LEGACY_NULL_OWNER_RECONCILE_MIN_AGE_MS: i64 = 5 * 60 * 1000;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ControlPlaneInitError {
@@ -303,24 +323,332 @@ impl ControlPlane {
 
         let dispatch_result = self
             .daemons()
-            .dispatch_command(repo_scope, command_id, kind, json_payload)
+            .dispatch_command(repo_scope, command_id, kind.clone(), json_payload.clone())
             .await;
 
-        if let Err(err) = dispatch_result {
-            let detail = serde_json::to_vec(&err).unwrap_or_default();
-            let _ = self
-                .commands()
-                .append_update(
-                    command_id,
-                    StorageCommandState::Failed,
-                    Some(err.message),
-                    None,
-                    None,
-                    Some(detail),
-                )
+        match dispatch_result {
+            Ok(host_instance_id) => {
+                if let Some(session_id) = extract_session_id_for_owner_assignment(&kind, &json_payload)
+                {
+                    if let Err(err) = self
+                        .assign_session_runner_instance(session_id, host_instance_id)
+                        .await
+                    {
+                        tracing::warn!(
+                            session_id = %session_id,
+                            host_instance_id = %host_instance_id,
+                            error = %err,
+                            "failed to persist session runner ownership"
+                        );
+                    }
+                }
+            }
+            Err(err) => {
+                let detail = serde_json::to_vec(&err).unwrap_or_default();
+                let _ = self
+                    .commands()
+                    .append_update(
+                        command_id,
+                        StorageCommandState::Failed,
+                        Some(err.message),
+                        None,
+                        None,
+                        Some(detail),
+                    )
+                    .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn register_daemon_presence(
+        &self,
+        host_id: HostId,
+        host_instance_id: HostInstanceId,
+    ) -> Result<(), crate::error::ControlPlaneError> {
+        let now = now_ms();
+        let legacy_cutoff_ms = now.saturating_sub(LEGACY_NULL_OWNER_RECONCILE_MIN_AGE_MS);
+
+        let affected_tasks: Vec<(WorkspaceId, redesmyn_ids::RepoId, TaskId)> =
+            redesmyn_storage::in_transaction(&self.pool, |conn| {
+                Box::pin(async move {
+                    sqlx::query(
+                        r#"
+                        INSERT INTO hosts (id, created_at_ms, hostname)
+                        VALUES (?1, ?2, ?3)
+                        ON CONFLICT(id) DO NOTHING
+                        "#,
+                    )
+                    .bind(host_id)
+                    .bind(now)
+                    .bind(std::env::var("HOSTNAME").ok())
+                    .execute(&mut *conn)
+                    .await?;
+
+                    let stale_rows: Vec<(HostInstanceId,)> = sqlx::query_as(
+                        r#"
+                        SELECT host_instance_id
+                        FROM daemon_presence
+                        WHERE host_id = ?1
+                          AND disconnected_at_ms IS NULL
+                          AND host_instance_id != ?2
+                        "#,
+                    )
+                    .bind(host_id)
+                    .bind(host_instance_id)
+                    .fetch_all(&mut *conn)
+                    .await?;
+
+                    sqlx::query(
+                        r#"
+                        UPDATE daemon_presence
+                        SET
+                            last_heartbeat_at_ms = CASE
+                                WHEN last_heartbeat_at_ms < ?1 THEN ?1
+                                ELSE last_heartbeat_at_ms
+                            END,
+                            disconnected_at_ms = COALESCE(disconnected_at_ms, ?1)
+                        WHERE host_id = ?2
+                          AND disconnected_at_ms IS NULL
+                          AND host_instance_id != ?3
+                        "#,
+                    )
+                    .bind(now)
+                    .bind(host_id)
+                    .bind(host_instance_id)
+                    .execute(&mut *conn)
+                    .await?;
+
+                    sqlx::query(
+                        r#"
+                        INSERT INTO daemon_presence (
+                            host_instance_id,
+                            host_id,
+                            connected_at_ms,
+                            last_heartbeat_at_ms,
+                            disconnected_at_ms
+                        )
+                        VALUES (?1, ?2, ?3, ?3, NULL)
+                        ON CONFLICT(host_instance_id) DO UPDATE SET
+                            last_heartbeat_at_ms = excluded.last_heartbeat_at_ms,
+                            disconnected_at_ms = NULL
+                        "#,
+                    )
+                    .bind(host_instance_id)
+                    .bind(host_id)
+                    .bind(now)
+                    .execute(&mut *conn)
+                    .await?;
+
+                    let stale_instance_ids: Vec<HostInstanceId> =
+                        stale_rows.into_iter().map(|(id,)| id).collect();
+                    let mut affected_tasks = Vec::new();
+
+                    if !stale_instance_ids.is_empty() {
+                        let mut affected_builder = sqlx::QueryBuilder::new(
+                            r#"
+                            SELECT DISTINCT scope_workspace_id, scope_repo_id, task_id
+                            FROM agent_sessions
+                            WHERE scope_kind = 'task'
+                              AND ended_at_ms IS NULL
+                              AND task_id IS NOT NULL
+                              AND runner_host_instance_id IN (
+                            "#,
+                        );
+                        {
+                            let mut ids = affected_builder.separated(", ");
+                            for id in &stale_instance_ids {
+                                ids.push_bind(*id);
+                            }
+                        }
+                        affected_builder.push(")");
+                        affected_tasks.extend(
+                            affected_builder
+                                .build_query_as::<(WorkspaceId, redesmyn_ids::RepoId, TaskId)>()
+                                .fetch_all(&mut *conn)
+                                .await?,
+                        );
+
+                        let mut reconcile_builder = sqlx::QueryBuilder::new(
+                            r#"
+                            UPDATE agent_sessions
+                            SET
+                                updated_at_ms = 
+                            "#,
+                        );
+                        reconcile_builder.push_bind(now);
+                        reconcile_builder.push(
+                            r#",
+                                status = 'error',
+                                ended_at_ms = COALESCE(ended_at_ms, 
+                            "#,
+                        );
+                        reconcile_builder.push_bind(now);
+                        reconcile_builder.push(
+                            r#")
+                            WHERE ended_at_ms IS NULL
+                              AND runner_host_instance_id IN (
+                            "#,
+                        );
+                        {
+                            let mut ids = reconcile_builder.separated(", ");
+                            for id in &stale_instance_ids {
+                                ids.push_bind(*id);
+                            }
+                        }
+                        reconcile_builder.push(")");
+                        reconcile_builder.build().execute(&mut *conn).await?;
+                    }
+
+                    let legacy_tasks: Vec<(WorkspaceId, redesmyn_ids::RepoId, TaskId)> =
+                        sqlx::query_as(
+                            r#"
+                            SELECT DISTINCT scope_workspace_id, scope_repo_id, task_id
+                            FROM agent_sessions
+                            WHERE scope_kind = 'task'
+                              AND ended_at_ms IS NULL
+                              AND task_id IS NOT NULL
+                              AND runner_host_instance_id IS NULL
+                              AND status IN ('running', 'blocked')
+                              AND updated_at_ms <= ?1
+                            "#,
+                        )
+                        .bind(legacy_cutoff_ms)
+                        .fetch_all(&mut *conn)
+                        .await?;
+                    if !legacy_tasks.is_empty() {
+                        sqlx::query(
+                            r#"
+                            UPDATE agent_sessions
+                            SET
+                                updated_at_ms = ?1,
+                                status = 'error',
+                                ended_at_ms = COALESCE(ended_at_ms, ?2)
+                            WHERE scope_kind = 'task'
+                              AND ended_at_ms IS NULL
+                              AND runner_host_instance_id IS NULL
+                              AND status IN ('running', 'blocked')
+                              AND updated_at_ms <= ?3
+                            "#,
+                        )
+                        .bind(now)
+                        .bind(now)
+                        .bind(legacy_cutoff_ms)
+                        .execute(&mut *conn)
+                        .await?;
+                        affected_tasks.extend(legacy_tasks);
+                    }
+
+                    Ok(affected_tasks)
+                })
+            })
+            .await?;
+
+        let mut seen = HashSet::new();
+        for (workspace_id, repo_id, task_id) in affected_tasks {
+            if !seen.insert((workspace_id, repo_id, task_id)) {
+                continue;
+            }
+            self.append_reconcile_task_command(workspace_id, repo_id, task_id)
                 .await?;
         }
 
+        Ok(())
+    }
+
+    pub async fn unregister_daemon_presence(
+        &self,
+        host_instance_id: HostInstanceId,
+    ) -> Result<(), crate::error::ControlPlaneError> {
+        let now = now_ms();
+        sqlx::query(
+            r#"
+            UPDATE daemon_presence
+            SET
+                last_heartbeat_at_ms = CASE
+                    WHEN last_heartbeat_at_ms < ?1 THEN ?1
+                    ELSE last_heartbeat_at_ms
+                END,
+                disconnected_at_ms = COALESCE(disconnected_at_ms, ?1)
+            WHERE host_instance_id = ?2
+            "#,
+        )
+        .bind(now)
+        .bind(host_instance_id)
+        .execute(&self.pool)
+        .await
+        .map_err(redesmyn_storage::StorageError::from)?;
+
+        Ok(())
+    }
+
+    async fn append_reconcile_task_command(
+        &self,
+        workspace_id: WorkspaceId,
+        repo_id: redesmyn_ids::RepoId,
+        task_id: TaskId,
+    ) -> Result<(), crate::error::ControlPlaneError> {
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "task_id": task_id,
+            "reason": "runner_disconnected",
+        }))
+        .unwrap_or_default();
+
+        let created = self
+            .commands()
+            .create_command(
+                CommandScope::Repo {
+                    workspace_id,
+                    repo_id,
+                },
+                TASK_AGENT_STOP.to_string(),
+                Some(task_id),
+                None,
+                Some("control_plane.reconcile".to_string()),
+                payload,
+            )
+            .await?;
+
+        let _ = self
+            .commands()
+            .append_update(
+                created.command.command_id,
+                StorageCommandState::Failed,
+                Some("Runner disconnected; previous task session was reconciled.".to_string()),
+                None,
+                None,
+                None,
+            )
+            .await?;
+
+        Ok(())
+    }
+
+    async fn assign_session_runner_instance(
+        &self,
+        session_id: SessionId,
+        host_instance_id: HostInstanceId,
+    ) -> Result<(), crate::error::ControlPlaneError> {
+        sqlx::query(
+            r#"
+            UPDATE agent_sessions
+            SET
+                runner_host_instance_id = ?1,
+                runner_host_id = (
+                    SELECT host_id
+                    FROM daemon_presence
+                    WHERE host_instance_id = ?1
+                    LIMIT 1
+                )
+            WHERE session_id = ?2
+            "#,
+        )
+        .bind(host_instance_id)
+        .bind(session_id)
+        .execute(&self.pool)
+        .await
+        .map_err(redesmyn_storage::StorageError::from)?;
         Ok(())
     }
 
@@ -481,6 +809,26 @@ fn map_daemon_command_update(update: DaemonCommandUpdate) -> MappedDaemonCommand
         progress_current,
         progress_total,
         detail,
+    }
+}
+
+fn extract_session_id_for_owner_assignment(kind: &str, payload: &[u8]) -> Option<SessionId> {
+    match kind {
+        TASK_AGENT_START => serde_json::from_slice::<StartTaskAgentSessionCommand>(payload)
+            .ok()
+            .map(|command| command.session_id),
+        SESSION_AGENT_START => serde_json::from_slice::<StartAgentSessionCommand>(payload)
+            .ok()
+            .map(|command| command.session_id),
+        SESSION_AGENT_RESUME_BY_ID_TURN => {
+            serde_json::from_slice::<ResumeByIdTaskAgentTurnCommand>(payload)
+                .ok()
+                .map(|command| command.session_id)
+        }
+        SESSION_AGENT_ATTACH_SESSION => serde_json::from_slice::<AttachTaskAgentSessionCommand>(payload)
+            .ok()
+            .map(|command| command.session_id),
+        _ => None,
     }
 }
 

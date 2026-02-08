@@ -6,6 +6,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+// NOTE: Keep this file touched when adding new SQL migrations so Cargo rebuilds
+// this crate and refreshes the embedded migrator in test binaries.
 static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
 
 use redesmyn_logging::tracing::{Instrument, info, warn};

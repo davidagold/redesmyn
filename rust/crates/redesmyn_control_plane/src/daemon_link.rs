@@ -94,7 +94,15 @@ async fn run_daemon_link(
     }
 
     let (outbound_tx, mut outbound_rx) = mpsc::channel::<DaemonFrame>(64);
-    register_daemon(&control_plane, &hello, accepted, outbound_tx).await;
+    let registered = register_daemon(&control_plane, &hello, accepted, outbound_tx).await;
+    if !registered {
+        tracing::warn!(
+            host_id = %hello.host_id,
+            host_instance_id = %hello.host_instance_id,
+            "daemon link closing because daemon presence registration failed"
+        );
+        return;
+    }
 
     loop {
         if *shutdown_rx.borrow() {
@@ -134,6 +142,17 @@ async fn run_daemon_link(
         .daemons()
         .unregister_connection(hello.host_instance_id)
         .await;
+
+    if let Err(err) = control_plane
+        .unregister_daemon_presence(hello.host_instance_id)
+        .await
+    {
+        tracing::warn!(
+            host_instance_id = %hello.host_instance_id,
+            error = %err,
+            "failed to unregister daemon presence"
+        );
+    }
 }
 
 async fn register_daemon(
@@ -141,11 +160,25 @@ async fn register_daemon(
     hello: &DaemonHello,
     accepted: ProtocolVersion,
     outbound_tx: mpsc::Sender<DaemonFrame>,
-) {
+) -> bool {
+    if let Err(err) = control_plane
+        .register_daemon_presence(hello.host_id, hello.host_instance_id)
+        .await
+    {
+        tracing::warn!(
+            host_id = %hello.host_id,
+            host_instance_id = %hello.host_instance_id,
+            error = %err,
+            "failed to register daemon presence"
+        );
+        return false;
+    }
+
     control_plane
         .daemons()
         .register_connection(hello.host_id, hello.host_instance_id, accepted, outbound_tx)
         .await;
+    true
 }
 
 async fn handle_inbound_frame(
