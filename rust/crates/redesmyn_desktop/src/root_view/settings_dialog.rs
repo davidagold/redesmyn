@@ -222,7 +222,12 @@ impl SettingsDialog {
         self.notice = None;
         self.scroll.set_offset(gpui::point(px(0.0), px(0.0)));
 
-        match self.load_defaults() {
+        let repo_root = {
+            let config = cx.entity().read(cx).model.read(cx).config.clone();
+            super::repo_root_from_desktop_config(config.as_ref()).or_else(|| repo_root_from_cwd().ok())
+        };
+
+        match self.load_defaults(repo_root) {
             Ok((repo_root, repo_config_path, defaults)) => {
                 self.repo_root = Some(repo_root);
                 self.repo_config_path = Some(repo_config_path);
@@ -248,8 +253,12 @@ impl SettingsDialog {
 
     fn load_defaults(
         &self,
+        repo_root: Option<PathBuf>,
     ) -> Result<(PathBuf, PathBuf, OrchestrationDefaults), OrchestrationConfigError> {
-        let repo_root = repo_root_from_cwd()?;
+        let repo_root = match repo_root {
+            Some(root) => root,
+            None => repo_root_from_cwd()?,
+        };
         let repo_config_path = repo_config_path(&repo_root);
         let defaults = load_effective_defaults(&repo_root)?;
         Ok((repo_root, repo_config_path, defaults))

@@ -2,8 +2,10 @@ mod command_palette_overlay;
 mod live_updates;
 mod settings_dialog;
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+use std::future::Future;
 
 use gpui::{
     App, AsyncApp, ClickEvent, Context, Entity, FocusHandle, Focusable, Render, ScrollHandle,
@@ -56,7 +58,7 @@ use crate::command_palette::{
 use crate::control_plane_client::{ControlPlaneClient, ControlPlaneClientError};
 use crate::orchestration_config::{
     CodexApprovalPolicyDefault, CodexReasoningEffortDefault, CodexSandboxPolicyDefault,
-    load_effective_defaults, repo_root_from_cwd,
+    load_effective_defaults,
 };
 use crate::settings_dialog_keys::{CloseSettingsDialog, ToggleSettingsDialog};
 use crate::task_filters::{
@@ -2044,19 +2046,15 @@ fn codex_sandbox_policy_from_default(
     }
 }
 
-fn load_default_session_model_selection() -> Option<SessionModelSelection> {
-    let repo_root = match repo_root_from_cwd() {
-        Ok(repo_root) => repo_root,
-        Err(err) => {
-            redesmyn_logging::tracing::warn!(
-                error = %err,
-                "unable to resolve repo root for session defaults"
-            );
-            return None;
-        }
-    };
+fn repo_root_from_desktop_config(config: &redesmyn_config::RustConfig) -> Option<PathBuf> {
+    redesmyn_config::discover_repo_root_from(&config.control_plane.db.path)
+        .or_else(|| redesmyn_config::discover_repo_root_from(&config.control_plane.api.client_socket_path))
+        .or_else(|| redesmyn_config::discover_repo_root_from(&config.daemon.worktree_root))
+        .or_else(|| redesmyn_config::discover_repo_root_from(&config.daemon.repo_registry_dir))
+}
 
-    let defaults = match load_effective_defaults(&repo_root) {
+fn load_default_session_model_selection(repo_root: &Path) -> Option<SessionModelSelection> {
+    let defaults = match load_effective_defaults(repo_root) {
         Ok(defaults) => defaults,
         Err(err) => {
             redesmyn_logging::tracing::warn!(
@@ -2087,19 +2085,8 @@ fn load_default_session_model_selection() -> Option<SessionModelSelection> {
     })
 }
 
-fn load_task_start_initial_prompt() -> Option<String> {
-    let repo_root = match repo_root_from_cwd() {
-        Ok(repo_root) => repo_root,
-        Err(err) => {
-            redesmyn_logging::tracing::warn!(
-                error = %err,
-                "unable to resolve repo root for task start defaults"
-            );
-            return None;
-        }
-    };
-
-    let defaults = match load_effective_defaults(&repo_root) {
+fn load_task_start_initial_prompt(repo_root: &Path) -> Option<String> {
+    let defaults = match load_effective_defaults(repo_root) {
         Ok(defaults) => defaults,
         Err(err) => {
             redesmyn_logging::tracing::warn!(
@@ -2123,19 +2110,8 @@ fn load_task_start_initial_prompt() -> Option<String> {
         .or_else(|| Some(BUILT_IN_PRELUDE_TEMPLATE.to_string()))
 }
 
-fn load_task_start_codex_approval_policy() -> Option<CodexApprovalPolicy> {
-    let repo_root = match repo_root_from_cwd() {
-        Ok(repo_root) => repo_root,
-        Err(err) => {
-            redesmyn_logging::tracing::warn!(
-                error = %err,
-                "unable to resolve repo root for task start codex approval default"
-            );
-            return None;
-        }
-    };
-
-    let defaults = match load_effective_defaults(&repo_root) {
+fn load_task_start_codex_approval_policy(repo_root: &Path) -> Option<CodexApprovalPolicy> {
+    let defaults = match load_effective_defaults(repo_root) {
         Ok(defaults) => defaults,
         Err(err) => {
             redesmyn_logging::tracing::warn!(
@@ -2150,19 +2126,8 @@ fn load_task_start_codex_approval_policy() -> Option<CodexApprovalPolicy> {
     codex_approval_policy_from_default(defaults.session_defaults.codex.approval_policy)
 }
 
-fn load_task_start_codex_sandbox_policy() -> Option<CodexSandboxPolicy> {
-    let repo_root = match repo_root_from_cwd() {
-        Ok(repo_root) => repo_root,
-        Err(err) => {
-            redesmyn_logging::tracing::warn!(
-                error = %err,
-                "unable to resolve repo root for task start codex sandbox default"
-            );
-            return None;
-        }
-    };
-
-    let defaults = match load_effective_defaults(&repo_root) {
+fn load_task_start_codex_sandbox_policy(repo_root: &Path) -> Option<CodexSandboxPolicy> {
+    let defaults = match load_effective_defaults(repo_root) {
         Ok(defaults) => defaults,
         Err(err) => {
             redesmyn_logging::tracing::warn!(
@@ -2177,28 +2142,79 @@ fn load_task_start_codex_sandbox_policy() -> Option<CodexSandboxPolicy> {
     codex_sandbox_policy_from_default(defaults.session_defaults.codex.sandbox_policy)
 }
 
-async fn apply_default_session_model_selection(
+async fn apply_default_chat_session_policies(
     client: &ControlPlaneClient,
     scope: RepoScope,
     session_id: redesmyn_ids::SessionId,
+    repo_root: Option<PathBuf>,
 ) {
-    let Some(selection) = load_default_session_model_selection() else {
+    let Some(repo_root) = repo_root else {
         return;
     };
 
-    let response = match client.set_session_model(scope, session_id, selection).await {
-        Ok(response) => response,
+    let approval_policy = load_task_start_codex_approval_policy(repo_root.as_path());
+    if let Some(approval_policy) = approval_policy {
+        let scope = scope.clone();
+        apply_default_chat_session_command(
+            client,
+            session_id,
+            "approval_policy",
+            async move {
+                client
+                    .set_session_codex_approval_policy(scope, session_id, Some(approval_policy))
+                    .await
+                    .map(|response| response.command)
+            },
+        )
+        .await;
+    }
+
+    let sandbox_policy = load_task_start_codex_sandbox_policy(repo_root.as_path());
+    if let Some(sandbox_policy) = sandbox_policy {
+        let scope = scope.clone();
+        apply_default_chat_session_command(client, session_id, "sandbox_policy", async move {
+            client
+                .set_session_codex_sandbox_policy(scope, session_id, Some(sandbox_policy))
+                .await
+                .map(|response| response.command)
+        })
+        .await;
+    }
+
+    let Some(selection) = load_default_session_model_selection(repo_root.as_path()) else {
+        return;
+    };
+    apply_default_chat_session_command(client, session_id, "model_selection", async move {
+        client
+            .set_session_model(scope, session_id, selection)
+            .await
+            .map(|response| response.command)
+    })
+    .await;
+}
+
+async fn apply_default_chat_session_command<F>(
+    client: &ControlPlaneClient,
+    session_id: redesmyn_ids::SessionId,
+    setting_name: &'static str,
+    request: F,
+) where
+    F: Future<Output = Result<Option<redesmyn_protocol::client::CommandSummary>, ControlPlaneClientError>>,
+{
+    let command = match request.await {
+        Ok(command) => command,
         Err(err) => {
             redesmyn_logging::tracing::warn!(
                 session_id = %session_id,
+                setting = setting_name,
                 error = %err,
-                "failed to apply configured model defaults to new chat session"
+                "failed to apply configured chat-session defaults"
             );
             return;
         }
     };
 
-    let Some(command) = response.command else {
+    let Some(command) = command else {
         return;
     };
 
@@ -2207,17 +2223,19 @@ async fn apply_default_session_model_selection(
         Ok(summary) => {
             redesmyn_logging::tracing::warn!(
                 session_id = %session_id,
+                setting = setting_name,
                 command_id = %summary.command_id,
                 state = ?summary.state,
-                "default model command did not succeed"
+                "default chat-session setting command did not succeed"
             );
         }
         Err(err) => {
             redesmyn_logging::tracing::warn!(
                 session_id = %session_id,
+                setting = setting_name,
                 command_id = %command.command_id,
                 error = %err,
-                "failed while waiting for default model command"
+                "failed while waiting for default chat-session setting command"
             );
         }
     }
@@ -2231,7 +2249,7 @@ async fn create_chat_session_via_control_plane(
     let title = name_hint.trim();
     let title = (!title.is_empty()).then_some(title.to_string());
 
-    let (client, epic_slug) = cx
+    let (client, epic_slug, repo_root) = cx
         .update(|cx| {
             let Some(root) = root.upgrade() else {
                 return Err(ErrorEnvelope::new(
@@ -2240,11 +2258,12 @@ async fn create_chat_session_via_control_plane(
                 ));
             };
 
-            let (client, epic_slug) = {
+            let (client, epic_slug, repo_root) = {
                 let this = root.read(cx);
                 (
                     this.model.read(cx).chrome_control_plane_client.clone(),
                     this.chrome.selected_epic_slug.clone(),
+                    repo_root_from_desktop_config(&this.model.read(cx).config),
                 )
             };
 
@@ -2254,7 +2273,7 @@ async fn create_chat_session_via_control_plane(
                 this.notify_ui_updated(cx);
             });
 
-            Ok::<_, ErrorEnvelope>((client, epic_slug))
+            Ok::<_, ErrorEnvelope>((client, epic_slug, repo_root))
         })
         .map_err(|_| ErrorEnvelope::new(ErrorCategory::Unavailable, "UI is unavailable."))??;
 
@@ -2286,7 +2305,7 @@ async fn create_chat_session_via_control_plane(
         Ok(resp) => resp,
         Err(err) => return ui_driver_fail(root, cx, control_plane_error_to_envelope(err)),
     };
-    apply_default_session_model_selection(&client, scope, resp.session_id).await;
+    apply_default_chat_session_policies(&client, scope, resp.session_id, repo_root).await;
 
     let _ = cx.update(|cx| {
         if let Some(root) = root.upgrade() {
@@ -3312,6 +3331,7 @@ enum EpicSessionPanePanel {
 struct EpicSessionPaneHost {
     session_view: Entity<SessionView>,
     control_plane_client: Option<ControlPlaneClient>,
+    repo_root: Option<PathBuf>,
     fixture: Option<SessionViewerFixtureEmitter>,
     fallback_session_id: Option<redesmyn_ids::SessionId>,
     selected_epic: Option<redesmyn_protocol::client::EpicSummary>,
@@ -3334,19 +3354,22 @@ struct EpicSessionPaneHost {
 
 impl EpicSessionPaneHost {
     fn new(model: Entity<DesktopModel>, cx: &mut Context<Self>) -> Self {
-        let (session_client, fixture, artifact_store_root) = model.update(cx, |model, _cx| {
-            let artifact_store_root = model
-                .config
-                .daemon
-                .repo_registry_dir
-                .parent()
-                .map(|path| path.to_path_buf());
-            (
-                model.take_control_plane_client(),
-                model.take_session_viewer_fixture(),
-                artifact_store_root,
-            )
-        });
+        let (session_client, fixture, artifact_store_root, repo_root) =
+            model.update(cx, |model, _cx| {
+                let artifact_store_root = model
+                    .config
+                    .daemon
+                    .repo_registry_dir
+                    .parent()
+                    .map(|path| path.to_path_buf());
+                let repo_root = repo_root_from_desktop_config(&model.config);
+                (
+                    model.take_control_plane_client(),
+                    model.take_session_viewer_fixture(),
+                    artifact_store_root,
+                    repo_root,
+                )
+            });
         let control_plane_client = model.read(cx).chrome_control_plane_client.clone();
         let fallback_session_id = fixture.as_ref().map(|fixture| fixture.session_id());
         let session_view = cx.new(|cx| {
@@ -3355,6 +3378,7 @@ impl EpicSessionPaneHost {
         Self {
             session_view,
             control_plane_client,
+            repo_root,
             fixture,
             fallback_session_id,
             selected_epic: None,
@@ -3608,6 +3632,7 @@ impl EpicSessionPaneHost {
         let generation = self.selection_generation;
         let epic_slug = selected_epic.slug.clone();
         let epic_slug_for_task = epic_slug.clone();
+        let repo_root = self.repo_root.clone();
 
         self.create_and_pin.start();
         cx.notify();
@@ -3642,7 +3667,13 @@ impl EpicSessionPaneHost {
 
                     let resp = client.create_chat_session(scope.clone(), None).await?;
                     let session_id = resp.session_id;
-                    apply_default_session_model_selection(&client, scope.clone(), session_id).await;
+                    apply_default_chat_session_policies(
+                        &client,
+                        scope.clone(),
+                        session_id,
+                        repo_root.clone(),
+                    )
+                    .await;
 
                     client
                         .pin_chat_session_to_epic(scope, epic_id, session_id)
@@ -4542,10 +4573,17 @@ impl WorkspacePaneHost {
         });
         let task_session_view =
             cx.new(|cx| SessionView::new(task_session_client, None, artifact_store_root, cx));
-        let task_start_model_selection = load_default_session_model_selection();
-        let task_start_initial_prompt = load_task_start_initial_prompt();
-        let task_start_codex_approval_policy = load_task_start_codex_approval_policy();
-        let task_start_codex_sandbox_policy = load_task_start_codex_sandbox_policy();
+        let repo_root = repo_root_from_desktop_config(&model.read(cx).config);
+        let task_start_model_selection = repo_root
+            .as_deref()
+            .and_then(load_default_session_model_selection);
+        let task_start_initial_prompt = repo_root.as_deref().and_then(load_task_start_initial_prompt);
+        let task_start_codex_approval_policy = repo_root
+            .as_deref()
+            .and_then(load_task_start_codex_approval_policy);
+        let task_start_codex_sandbox_policy = repo_root
+            .as_deref()
+            .and_then(load_task_start_codex_sandbox_policy);
         task_session_view.update(cx, |view, cx| {
             view.set_task_start_model_selection(task_start_model_selection, cx);
             view.set_task_start_initial_prompt(task_start_initial_prompt, cx);

@@ -5,11 +5,13 @@ use redesmyn_protocol::client::{
     CreateChatSessionResponse, EventLogFilter, GetEpicGraphRequest,
     GetEpicPinnedChatSessionRequest, ListAgentModelsRequest, ListChatSessionsRequest,
     ListEpicsRequest, PinChatSessionToEpicRequest, RequestPayload, ResponseResult,
-    SessionModelOption, SessionModelSelection, SetSessionModelRequest, SetSessionModelResponse,
+    SessionModelOption, SessionModelSelection, SetSessionCodexApprovalPolicyRequest,
+    SetSessionCodexApprovalPolicyResponse, SetSessionCodexSandboxPolicyRequest,
+    SetSessionCodexSandboxPolicyResponse, SetSessionModelRequest, SetSessionModelResponse,
     StatusRequest, StatusResponse, SubscriptionEvent, SubscriptionFilter,
     UnpinChatSessionFromEpicRequest, WaitForCommandRequest,
 };
-use redesmyn_protocol::{ProtocolEnvelope, RepoScope};
+use redesmyn_protocol::{CodexApprovalPolicy, CodexSandboxPolicy, ProtocolEnvelope, RepoScope};
 use redesmyn_transport::client::in_proc::InProcEndpoint;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
@@ -257,6 +259,54 @@ impl ControlPlaneClient {
             .await?
         {
             ResponseResult::SetSessionModel(resp) => Ok(resp),
+            ResponseResult::Error(err) => Err(ControlPlaneClientError::Server {
+                message: err.message,
+            }),
+            _ => Err(ControlPlaneClientError::UnexpectedMessage),
+        }
+    }
+
+    pub async fn set_session_codex_approval_policy(
+        &self,
+        scope: RepoScope,
+        session_id: SessionId,
+        approval_policy: Option<CodexApprovalPolicy>,
+    ) -> Result<SetSessionCodexApprovalPolicyResponse, ControlPlaneClientError> {
+        match self
+            .request_scoped(
+                scope,
+                RequestPayload::SetSessionCodexApprovalPolicy(SetSessionCodexApprovalPolicyRequest {
+                    session_id,
+                    approval_policy,
+                }),
+            )
+            .await?
+        {
+            ResponseResult::SetSessionCodexApprovalPolicy(resp) => Ok(resp),
+            ResponseResult::Error(err) => Err(ControlPlaneClientError::Server {
+                message: err.message,
+            }),
+            _ => Err(ControlPlaneClientError::UnexpectedMessage),
+        }
+    }
+
+    pub async fn set_session_codex_sandbox_policy(
+        &self,
+        scope: RepoScope,
+        session_id: SessionId,
+        sandbox_policy: Option<CodexSandboxPolicy>,
+    ) -> Result<SetSessionCodexSandboxPolicyResponse, ControlPlaneClientError> {
+        match self
+            .request_scoped(
+                scope,
+                RequestPayload::SetSessionCodexSandboxPolicy(SetSessionCodexSandboxPolicyRequest {
+                    session_id,
+                    sandbox_policy,
+                }),
+            )
+            .await?
+        {
+            ResponseResult::SetSessionCodexSandboxPolicy(resp) => Ok(resp),
             ResponseResult::Error(err) => Err(ControlPlaneClientError::Server {
                 message: err.message,
             }),
