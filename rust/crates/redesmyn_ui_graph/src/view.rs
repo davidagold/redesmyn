@@ -1654,31 +1654,48 @@ impl GraphView {
         result: Result<ResponseResult, redesmyn_protocol::ErrorEnvelope>,
         cx: &mut Context<Self>,
     ) {
-        let Some(state) = self.quick_actions.get_mut(&task_id) else {
-            return;
+        let completed_successfully = {
+            let Some(state) = self.quick_actions.get_mut(&task_id) else {
+                return;
+            };
+
+            let (action, task_slot) = match kind {
+                TaskQuickActionKind::Start => (&mut state.start, &mut state.start_task),
+                TaskQuickActionKind::Restart => (&mut state.restart, &mut state.restart_task),
+                TaskQuickActionKind::Stop => (&mut state.stop, &mut state.stop_task),
+            };
+            *task_slot = None;
+
+            let message = match result {
+                Ok(ResponseResult::StartAgent(_)) if kind == TaskQuickActionKind::Start => None,
+                Ok(ResponseResult::RestartAgent(_)) if kind == TaskQuickActionKind::Restart => {
+                    None
+                }
+                Ok(ResponseResult::StopAgent(_)) if kind == TaskQuickActionKind::Stop => None,
+                Ok(ResponseResult::Error(err)) => Some(err.message),
+                Err(err) => Some(err.message),
+                Ok(other) => Some(format!("Unexpected response: {other:?}")),
+            };
+
+            if let Some(message) = message {
+                action.fail(message);
+                false
+            } else {
+                action.succeed();
+                action.clear_error();
+                true
+            }
         };
 
-        let (action, task_slot) = match kind {
-            TaskQuickActionKind::Start => (&mut state.start, &mut state.start_task),
-            TaskQuickActionKind::Restart => (&mut state.restart, &mut state.restart_task),
-            TaskQuickActionKind::Stop => (&mut state.stop, &mut state.stop_task),
-        };
-        *task_slot = None;
-
-        let message = match result {
-            Ok(ResponseResult::StartAgent(_)) if kind == TaskQuickActionKind::Start => None,
-            Ok(ResponseResult::RestartAgent(_)) if kind == TaskQuickActionKind::Restart => None,
-            Ok(ResponseResult::StopAgent(_)) if kind == TaskQuickActionKind::Stop => None,
-            Ok(ResponseResult::Error(err)) => Some(err.message),
-            Err(err) => Some(err.message),
-            Ok(other) => Some(format!("Unexpected response: {other:?}")),
-        };
-
-        if let Some(message) = message {
-            action.fail(message);
-        } else {
-            action.succeed();
-            action.clear_error();
+        let bound_task_id = self.task_session_view.read(cx).task_binding_state().task_id;
+        if should_refresh_task_session_after_quick_action(
+            kind,
+            completed_successfully,
+            bound_task_id,
+            task_id,
+        ) {
+            self.task_session_view
+                .update(cx, |view, cx| view.refresh_latest_task_session(cx));
         }
 
         cx.notify();
@@ -3675,6 +3692,17 @@ async fn task_quick_action_request(
         .await
 }
 
+fn should_refresh_task_session_after_quick_action(
+    kind: TaskQuickActionKind,
+    completed_successfully: bool,
+    bound_task_id: Option<TaskId>,
+    target_task_id: TaskId,
+) -> bool {
+    completed_successfully
+        && kind == TaskQuickActionKind::Restart
+        && bound_task_id == Some(target_task_id)
+}
+
 fn collapsed_task_border_color(
     state: TaskState,
     merge_readiness: MergeReadiness,
@@ -4239,5 +4267,43 @@ mod tests {
             .collect();
 
         assert_eq!(targets, vec![a, c]);
+    }
+
+    #[test]
+    fn refreshes_bound_session_only_for_successful_restart() {
+        let bound = redesmyn_ids::TaskId::from_bytes([7; 16]);
+        let other = redesmyn_ids::TaskId::from_bytes([8; 16]);
+
+        assert!(should_refresh_task_session_after_quick_action(
+            TaskQuickActionKind::Restart,
+            true,
+            Some(bound),
+            bound,
+        ));
+
+        assert!(!should_refresh_task_session_after_quick_action(
+            TaskQuickActionKind::Start,
+            true,
+            Some(bound),
+            bound,
+        ));
+        assert!(!should_refresh_task_session_after_quick_action(
+            TaskQuickActionKind::Restart,
+            false,
+            Some(bound),
+            bound,
+        ));
+        assert!(!should_refresh_task_session_after_quick_action(
+            TaskQuickActionKind::Restart,
+            true,
+            Some(other),
+            bound,
+        ));
+        assert!(!should_refresh_task_session_after_quick_action(
+            TaskQuickActionKind::Restart,
+            true,
+            None,
+            bound,
+        ));
     }
 }
