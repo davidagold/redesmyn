@@ -1554,22 +1554,20 @@ async fn handle_request_result(
                 )));
             }
 
-            let durable_selection_override = if matches!(
-                session.status,
-                StorageAgentSessionStatus::Stopped | StorageAgentSessionStatus::Error
-            ) {
-                let snapshot = crate::policy_snapshot::load_session_policy_snapshot(
-                    control_plane.session_events(),
-                    req.session_id,
-                )
-                .await?;
-                Some(SessionModelSelection {
-                    model_id: snapshot.model_id,
-                    reasoning_effort: snapshot.model_reasoning_effort,
-                })
-            } else {
-                None
-            };
+            let snapshot = crate::policy_snapshot::load_session_policy_snapshot(
+                control_plane.session_events(),
+                req.session_id,
+            )
+            .await?;
+            let durable_selection_override =
+                if snapshot.model_id.is_some() || snapshot.model_reasoning_effort.is_some() {
+                    Some(SessionModelSelection {
+                        model_id: snapshot.model_id,
+                        reasoning_effort: snapshot.model_reasoning_effort,
+                    })
+                } else {
+                    None
+                };
 
             let json_payload = match encode_agent_command_payload(&ListSessionModelsCommand {
                 session_id: req.session_id,
