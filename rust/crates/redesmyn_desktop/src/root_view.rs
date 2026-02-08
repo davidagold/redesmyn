@@ -165,6 +165,7 @@ pub struct RootView {
     command_palette: CommandPaletteOverlay,
     agent_sessions_palette: AgentSessionsPaletteOverlay,
     agent_sessions_palette_task: Option<Task<()>>,
+    agent_sessions_palette_archive_task: Option<Task<()>>,
     settings_dialog: SettingsDialog,
     settings_model_catalog_task: Option<Task<()>>,
     chrome: ChromeState,
@@ -280,6 +281,7 @@ impl RootView {
             command_palette,
             agent_sessions_palette,
             agent_sessions_palette_task: None,
+            agent_sessions_palette_archive_task: None,
             settings_dialog,
             settings_model_catalog_task: None,
             chrome: ChromeState::new(),
@@ -557,6 +559,63 @@ impl RootView {
                 self.ui_updates.bump();
             }
         }
+    }
+
+    fn archive_agent_session_palette_chat(
+        &mut self,
+        scope: RepoScope,
+        session_id: SessionId,
+        cx: &mut Context<Self>,
+    ) {
+        if self.agent_sessions_palette_archive_task.is_some()
+            || self.agent_sessions_palette_task.is_some()
+        {
+            return;
+        }
+
+        let Some(client) = self.model.read(cx).chrome_control_plane_client.clone() else {
+            self.agent_sessions_palette
+                .fail_archiving("Control plane client unavailable.", cx);
+            self.ui_updates.bump();
+            return;
+        };
+
+        self.agent_sessions_palette.start_archiving(session_id, cx);
+
+        let tokio = client.tokio().clone();
+        self.agent_sessions_palette_archive_task =
+            Some(cx.spawn(move |weak: WeakEntity<Self>, cx: &mut AsyncApp| {
+                let cx = cx.clone();
+                async move {
+                    let Some(entity) = weak.upgrade() else {
+                        return;
+                    };
+
+                    let task = tokio
+                        .spawn(async move { client.archive_chat_session(scope, session_id).await });
+                    let result = match task.await {
+                        Ok(Ok(())) => Ok(()),
+                        Ok(Err(error)) => Err(format!("Failed to archive chat session: {error}")),
+                        Err(error) => Err(format!("Archive task failed: {error}")),
+                    };
+
+                    let _ = cx.update(|cx| {
+                        entity.update(cx, |this, cx| {
+                            this.agent_sessions_palette_archive_task = None;
+                            match result {
+                                Ok(()) => {
+                                    this.agent_sessions_palette.finish_archiving(cx);
+                                    this.refresh_agent_sessions_palette(cx);
+                                }
+                                Err(error) => {
+                                    this.agent_sessions_palette.fail_archiving(error, cx);
+                                }
+                            }
+                            this.ui_updates.bump();
+                        });
+                    });
+                }
+            }));
     }
 
     fn subscribe_ui_updates(&self) -> watch::Receiver<u64> {
@@ -3433,6 +3492,9 @@ impl Render for RootView {
                                     this.agent_sessions_palette.activate_selected_entry(cx)
                                 {
                                     this.activate_agent_session_palette_entry(selection, cx);
+                                }
+                                if !this.agent_sessions_palette.is_open() {
+                                    window.focus(&this.focus_handle);
                                 }
                                 this.ui_updates.bump();
                                 true
@@ -6890,6 +6952,7 @@ async fn load_agent_session_palette_entries(
             let entry = AgentSessionPaletteEntry {
                 session_id: summary.session_id,
                 kind: AgentSessionKind::Task,
+                repo_scope,
                 repo_group_label,
                 epic_slug: Some(epic_slug.clone()),
                 epic_title: epic_title.clone(),
@@ -7004,6 +7067,7 @@ async fn load_agent_session_palette_entries(
             let entry = AgentSessionPaletteEntry {
                 session_id: chat.session_id,
                 kind: AgentSessionKind::Chat,
+                repo_scope: Some(scope),
                 repo_group_label: repo_scope_display_label(scope, &mut repo_labels),
                 epic_slug,
                 epic_title,

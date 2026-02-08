@@ -6,10 +6,10 @@ use gpui::{
 };
 
 use redesmyn_ids::{SessionId, TaskId};
-use redesmyn_protocol::Timestamp;
+use redesmyn_protocol::{RepoScope, Timestamp};
 use redesmyn_ui::components::{
-    Callout, CalloutKind, IconButton, ProgressPill, ProgressPillKind, ScrollArea, TextInput,
-    TextInputEvent,
+    ButtonKind, Callout, CalloutKind, IconButton, ProgressPill, ProgressPillKind, ScrollArea,
+    TextButton, TextInput, TextInputEvent,
 };
 use redesmyn_ui::styles::UiTheme;
 use redesmyn_ui::utils::theme_for_window;
@@ -43,6 +43,7 @@ pub enum AgentSessionNavigation {
 pub struct AgentSessionPaletteEntry {
     pub session_id: SessionId,
     pub kind: AgentSessionKind,
+    pub repo_scope: Option<RepoScope>,
     pub repo_group_label: String,
     pub epic_slug: Option<String>,
     pub epic_title: Option<String>,
@@ -159,6 +160,7 @@ pub struct AgentSessionsPaletteOverlay {
     selected_index: usize,
     loading: bool,
     action_in_flight: bool,
+    archiving_session_id: Option<SessionId>,
     show_unreachable_entries: bool,
     error: Option<SharedString>,
     entries: Vec<AgentSessionPaletteEntry>,
@@ -175,6 +177,7 @@ impl AgentSessionsPaletteOverlay {
             selected_index: 0,
             loading: false,
             action_in_flight: false,
+            archiving_session_id: None,
             show_unreachable_entries: false,
             error: None,
             entries: Vec::new(),
@@ -200,6 +203,7 @@ impl AgentSessionsPaletteOverlay {
     pub fn start_loading(&mut self, cx: &mut Context<RootView>) {
         self.loading = true;
         self.action_in_flight = false;
+        self.archiving_session_id = None;
         self.error = None;
         self.selected_index = 0;
         cx.notify();
@@ -213,6 +217,7 @@ impl AgentSessionsPaletteOverlay {
         self.entries = entries;
         self.loading = false;
         self.action_in_flight = false;
+        self.archiving_session_id = None;
         self.error = None;
         self.selected_index = 0;
         cx.notify();
@@ -221,6 +226,7 @@ impl AgentSessionsPaletteOverlay {
     pub fn fail_loading(&mut self, message: impl Into<SharedString>, cx: &mut Context<RootView>) {
         self.loading = false;
         self.action_in_flight = false;
+        self.archiving_session_id = None;
         self.error = Some(message.into());
         self.selected_index = 0;
         cx.notify();
@@ -238,7 +244,7 @@ impl AgentSessionsPaletteOverlay {
                 cx.notify();
                 None
             }
-            TextInputEvent::Submitted(_) => self.activate_selected(cx),
+            TextInputEvent::Submitted(_) => None,
             TextInputEvent::PastedImages(_) => None,
         }
     }
@@ -347,6 +353,7 @@ impl AgentSessionsPaletteOverlay {
 
     pub fn complete_activation_success(&mut self, cx: &mut Context<RootView>) {
         self.action_in_flight = false;
+        self.archiving_session_id = None;
         self.dismiss_overlay(cx);
     }
 
@@ -363,9 +370,31 @@ impl AgentSessionsPaletteOverlay {
     pub fn dismiss_overlay(&mut self, cx: &mut Context<RootView>) {
         self.open = false;
         self.action_in_flight = false;
+        self.archiving_session_id = None;
         self.error = None;
         self.selected_index = 0;
         self.input.update(cx, |input, cx| input.set_text("", cx));
+        cx.notify();
+    }
+
+    pub fn start_archiving(&mut self, session_id: SessionId, cx: &mut Context<RootView>) {
+        self.action_in_flight = true;
+        self.archiving_session_id = Some(session_id);
+        self.error = None;
+        cx.notify();
+    }
+
+    pub fn finish_archiving(&mut self, cx: &mut Context<RootView>) {
+        self.action_in_flight = false;
+        self.archiving_session_id = None;
+        self.error = None;
+        cx.notify();
+    }
+
+    pub fn fail_archiving(&mut self, message: impl Into<SharedString>, cx: &mut Context<RootView>) {
+        self.action_in_flight = false;
+        self.archiving_session_id = None;
+        self.error = Some(message.into());
         cx.notify();
     }
 
@@ -387,6 +416,7 @@ impl AgentSessionsPaletteOverlay {
             AgentSessionNavigation::Task { .. } | AgentSessionNavigation::Chat { .. } => {
                 self.error = None;
                 self.action_in_flight = true;
+                self.archiving_session_id = None;
                 cx.notify();
                 Some(entry)
             }
@@ -425,6 +455,7 @@ impl AgentSessionsPaletteOverlay {
         self.selected_index = 0;
         self.error = None;
         self.action_in_flight = false;
+        self.archiving_session_id = None;
         self.input.update(cx, |input, cx| input.set_text("", cx));
         window.focus(&self.input.focus_handle(cx));
         cx.notify();
@@ -439,6 +470,7 @@ impl AgentSessionsPaletteOverlay {
         self.selected_index = 0;
         self.error = None;
         self.action_in_flight = false;
+        self.archiving_session_id = None;
         self.input.update(cx, |input, cx| input.set_text("", cx));
         window.focus(&self.root_focus_handle);
         cx.notify();
@@ -583,8 +615,13 @@ impl AgentSessionsPaletteOverlay {
             right_header = right_header
                 .child(ProgressPill::new("Refreshing sessions…").kind(ProgressPillKind::Accent));
         } else if self.action_in_flight {
-            right_header = right_header
-                .child(ProgressPill::new("Opening session…").kind(ProgressPillKind::Accent));
+            let label = if self.archiving_session_id.is_some() {
+                "Archiving session…"
+            } else {
+                "Opening session…"
+            };
+            right_header =
+                right_header.child(ProgressPill::new(label).kind(ProgressPillKind::Accent));
         }
 
         let palette_header = div()
@@ -657,6 +694,8 @@ impl AgentSessionsPaletteOverlay {
                         row_display_index,
                         true,
                         self.is_blocking_loading() || self.action_in_flight,
+                        self.archiving_session_id,
+                        &root,
                         cx,
                         &theme,
                     ));
@@ -688,6 +727,8 @@ impl AgentSessionsPaletteOverlay {
                         row_display_index,
                         false,
                         self.is_blocking_loading() || self.action_in_flight,
+                        self.archiving_session_id,
+                        &root,
                         cx,
                         &theme,
                     ));
@@ -792,6 +833,8 @@ fn render_entry_row(
     display_index: usize,
     show_repo_prefix: bool,
     globally_disabled: bool,
+    archiving_session_id: Option<SessionId>,
+    root: &Entity<RootView>,
     cx: &mut Context<RootView>,
     theme: &UiTheme,
 ) -> impl IntoElement {
@@ -799,7 +842,7 @@ fn render_entry_row(
         AgentSessionNavigation::Disabled { reason } => Some(reason.clone()),
         AgentSessionNavigation::Task { .. } | AgentSessionNavigation::Chat { .. } => None,
     };
-    let disabled = globally_disabled || disabled_reason.is_some();
+    let navigation_disabled = disabled_reason.is_some();
     let subtitle = if show_repo_prefix {
         let base = entry.subtitle();
         format!("{} • {base}", entry.repo_group_label)
@@ -824,13 +867,55 @@ fn render_entry_row(
                 .flex()
                 .flex_row()
                 .items_center()
-                .justify_start()
+                .justify_between()
+                .gap(theme.spacing.sm)
                 .child(
                     div()
                         .text_sm()
                         .text_color(theme.colors.foreground)
                         .child(entry.primary_label()),
-                ),
+                )
+                .child(div().w(px(100.0)).flex().flex_row().justify_end().child({
+                    let can_archive = entry.kind == AgentSessionKind::Chat
+                        && entry.repo_scope.is_some()
+                        && selected;
+                    let is_archiving =
+                        archiving_session_id.is_some_and(|id| id == entry.session_id);
+                    if can_archive {
+                        let label = if is_archiving {
+                            "Archiving…"
+                        } else {
+                            "Archive"
+                        };
+                        let root = root.clone();
+                        let session_id = entry.session_id;
+                        let repo_scope = entry.repo_scope;
+                        TextButton::new(
+                            (
+                                gpui::ElementId::from(("agent_session_archive", cx.entity_id())),
+                                entry.session_id.to_string(),
+                            ),
+                            label,
+                        )
+                        .kind(ButtonKind::Ghost)
+                        .compact()
+                        .disabled(globally_disabled || is_archiving)
+                        .disabled_reason("Wait for the current action to finish.")
+                        .tooltip("Archive chat")
+                        .on_click(move |_, _, cx| {
+                            if let Some(scope) = repo_scope {
+                                root.update(cx, |this, cx| {
+                                    this.archive_agent_session_palette_chat(scope, session_id, cx);
+                                    this.ui_updates.bump();
+                                });
+                            }
+                            cx.stop_propagation();
+                        })
+                        .into_any_element()
+                    } else {
+                        div().into_any_element()
+                    }
+                })),
         )
         .child(
             div()
@@ -852,8 +937,12 @@ fn render_entry_row(
         }
     }
 
-    if disabled {
-        row = row.opacity(0.55).cursor_not_allowed();
+    if navigation_disabled {
+        row = row.opacity(0.55);
+    }
+
+    if globally_disabled {
+        row = row.cursor_not_allowed();
     } else {
         row = row.on_mouse_move(cx.listener(move |this, _, _, cx| {
             this.agent_sessions_palette
@@ -861,13 +950,22 @@ fn render_entry_row(
             this.ui_updates.bump();
         }));
 
-        let session_id = entry.session_id;
-        row = row
-            .cursor_pointer()
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.activate_agent_session_palette_entry_by_session_id(session_id, cx);
-                this.ui_updates.bump();
-            }));
+        if navigation_disabled {
+            row = row.cursor_default();
+        } else {
+            let session_id = entry.session_id;
+            let root = root.clone();
+            row = row.cursor_pointer().on_click(move |_, window, cx| {
+                let focus = root.read(cx).focus_handle.clone();
+                root.update(cx, |this, cx| {
+                    this.activate_agent_session_palette_entry_by_session_id(session_id, cx);
+                    this.ui_updates.bump();
+                });
+                if !root.read(cx).agent_sessions_palette.is_open() {
+                    window.focus(&focus);
+                }
+            });
+        }
     }
 
     row
