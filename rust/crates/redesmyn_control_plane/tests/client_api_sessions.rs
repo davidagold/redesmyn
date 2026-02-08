@@ -8,7 +8,7 @@ use redesmyn_ids::{
     EpicId, RepoId, RequestId, SessionEventId, SessionId, SubscriptionId, TaskId, WorkspaceId,
 };
 use redesmyn_protocol::client::{
-    AgentMessageConflictAction, ClientFrame, ClientMessage, CloseChatSessionRequest,
+    AgentMessageConflictAction, ArchiveChatSessionRequest, ClientFrame, ClientMessage,
     CreateChatSessionRequest, GetEpicPinnedChatSessionRequest, GetLatestTaskSessionRequest,
     GetSessionEventsRequest, ListChatSessionsRequest, ListTaskSessionsRequest,
     PinChatSessionToEpicRequest, Request, RequestPayload, ResponseResult,
@@ -196,13 +196,15 @@ async fn uds_server_supports_session_query_surfaces() {
         scope_repo_id: repo_id,
         scope_kind: StorageAgentSessionScopeKind::Task,
         task_id: Some(task_id),
+        epic_id: None,
         agent_kind: StorageAgentKind::Codex,
         status: StorageAgentSessionStatus::Running,
         external_session_ref: r#"{"type":"none"}"#.to_owned(),
         title: None,
         started_at_ms: None,
         ended_at_ms: None,
-        closed_at_ms: None,
+        archived_at_ms: None,
+        repo_name: None,
     };
     insert_agent_session(&pool, &task_session)
         .await
@@ -284,6 +286,7 @@ async fn uds_server_supports_session_query_surfaces() {
             request_id: create_chat_session_request_id,
             payload: RequestPayload::CreateChatSession(CreateChatSessionRequest {
                 title: Some("Chat".to_string()),
+                epic_id: None,
             }),
         }),
     ))
@@ -308,8 +311,9 @@ async fn uds_server_supports_session_query_surfaces() {
         ClientMessage::Request(Request {
             request_id: list_chat_sessions_request_id,
             payload: RequestPayload::ListChatSessions(ListChatSessionsRequest {
-                include_closed: false,
+                include_archived: false,
                 limit: 10,
+                epic_id: None,
             }),
         }),
     ))
@@ -415,26 +419,26 @@ async fn uds_server_supports_session_query_surfaces() {
         other => panic!("unexpected response: {other:?}"),
     };
 
-    let close_chat_session_request_id = RequestId::new();
+    let archive_chat_session_request_id = RequestId::new();
     conn.send(ClientFrame::new(
         ProtocolEnvelope::new().with_scope(scope.into()),
         ClientMessage::Request(Request {
-            request_id: close_chat_session_request_id,
-            payload: RequestPayload::CloseChatSession(CloseChatSessionRequest {
+            request_id: archive_chat_session_request_id,
+            payload: RequestPayload::ArchiveChatSession(ArchiveChatSessionRequest {
                 session_id: chat_session_id,
             }),
         }),
     ))
     .await
-    .expect("send close_chat_session");
+    .expect("send archive_chat_session");
 
     let frame = recv_frame(&mut conn).await;
     let ClientMessage::Response(resp) = frame.message else {
         panic!("expected Response, got {:?}", frame.message);
     };
     match resp.result {
-        ResponseResult::CloseChatSession(_) => {
-            assert_eq!(resp.request_id, close_chat_session_request_id);
+        ResponseResult::ArchiveChatSession(_) => {
+            assert_eq!(resp.request_id, archive_chat_session_request_id);
         }
         other => panic!("unexpected response: {other:?}"),
     }
@@ -445,8 +449,9 @@ async fn uds_server_supports_session_query_surfaces() {
         ClientMessage::Request(Request {
             request_id: list_open_chats_request_id,
             payload: RequestPayload::ListChatSessions(ListChatSessionsRequest {
-                include_closed: false,
+                include_archived: false,
                 limit: 10,
+                epic_id: None,
             }),
         }),
     ))
@@ -471,8 +476,9 @@ async fn uds_server_supports_session_query_surfaces() {
         ClientMessage::Request(Request {
             request_id: list_all_chats_request_id,
             payload: RequestPayload::ListChatSessions(ListChatSessionsRequest {
-                include_closed: true,
+                include_archived: true,
                 limit: 10,
+                epic_id: None,
             }),
         }),
     ))

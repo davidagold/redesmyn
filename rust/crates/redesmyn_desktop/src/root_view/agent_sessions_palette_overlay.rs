@@ -789,22 +789,12 @@ fn render_entry_row(
                 .flex()
                 .flex_row()
                 .items_center()
-                .justify_between()
+                .justify_start()
                 .child(
                     div()
                         .text_sm()
                         .text_color(theme.colors.foreground)
                         .child(entry.primary_label()),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.colors.foreground_muted)
-                        .child(if entry.is_active {
-                            format!("{} • Active", entry.kind_label())
-                        } else {
-                            entry.kind_label().to_string()
-                        }),
                 ),
         )
         .child(
@@ -815,12 +805,15 @@ fn render_entry_row(
         );
 
     if let Some(reason) = disabled_reason {
-        row = row.child(
-            div()
-                .text_xs()
-                .text_color(theme.colors.foreground_muted)
-                .child(reason),
-        );
+        let should_render_reason = reason.as_ref() != "No epic binding for this session.";
+        if should_render_reason {
+            row = row.child(
+                div()
+                    .text_xs()
+                    .text_color(theme.colors.foreground_muted)
+                    .child(reason),
+            );
+        }
     }
 
     if disabled {

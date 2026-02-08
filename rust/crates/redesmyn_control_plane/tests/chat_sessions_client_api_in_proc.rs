@@ -4,7 +4,7 @@ use redesmyn_control_plane::client_api::ClientApiCodec;
 use redesmyn_control_plane::{ControlPlane, ControlPlaneDb, ControlPlaneStartOptions};
 use redesmyn_ids::{EpicId, RepoId, RequestId, WorkspaceId};
 use redesmyn_protocol::client::{
-    ClientFrame, ClientMessage, CloseChatSessionRequest, CreateChatSessionRequest,
+    ArchiveChatSessionRequest, ClientFrame, ClientMessage, CreateChatSessionRequest,
     GetEpicPinnedChatSessionRequest, ListChatSessionsRequest, ListEpicsRequest,
     PinChatSessionToEpicRequest, Request, RequestPayload, ResponseResult,
     UnpinChatSessionFromEpicRequest,
@@ -166,6 +166,7 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
         scope,
         RequestPayload::CreateChatSession(CreateChatSessionRequest {
             title: Some("First chat".to_string()),
+            epic_id: None,
         }),
     )
     .await;
@@ -228,8 +229,9 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
         &mut conn,
         scope,
         RequestPayload::ListChatSessions(ListChatSessionsRequest {
-            include_closed: true,
+            include_archived: true,
             limit: 10,
+            epic_id: None,
         }),
     )
     .await;
@@ -238,12 +240,15 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
     };
     assert_eq!(list_pinned.sessions.len(), 1);
     assert_eq!(list_pinned.sessions[0].session_id, first_session_id);
-    assert!(list_pinned.sessions[0].closed_at.is_none());
+    assert!(list_pinned.sessions[0].archived_at.is_none());
 
     let create = request(
         &mut conn,
         scope,
-        RequestPayload::CreateChatSession(CreateChatSessionRequest { title: None }),
+        RequestPayload::CreateChatSession(CreateChatSessionRequest {
+            title: None,
+            epic_id: None,
+        }),
     )
     .await;
     let ResponseResult::CreateChatSession(create) = create else {
@@ -400,13 +405,13 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
     let close = request(
         &mut conn,
         scope,
-        RequestPayload::CloseChatSession(CloseChatSessionRequest {
+        RequestPayload::ArchiveChatSession(ArchiveChatSessionRequest {
             session_id: first_session_id,
         }),
     )
     .await;
-    let ResponseResult::CloseChatSession(_) = close else {
-        panic!("expected CloseChatSession, got {close:?}");
+    let ResponseResult::ArchiveChatSession(_) = close else {
+        panic!("expected ArchiveChatSession, got {close:?}");
     };
 
     let pinned = request(
@@ -426,8 +431,9 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
         &mut conn,
         scope,
         RequestPayload::ListChatSessions(ListChatSessionsRequest {
-            include_closed: false,
+            include_archived: false,
             limit: 100,
+            epic_id: None,
         }),
     )
     .await;
@@ -440,7 +446,7 @@ async fn chat_sessions_and_pins_work_over_in_proc_client_api() {
         list_open
             .sessions
             .iter()
-            .all(|session| session.closed_at.is_none())
+            .all(|session| session.archived_at.is_none())
     );
 
     control_plane.shutdown().await;

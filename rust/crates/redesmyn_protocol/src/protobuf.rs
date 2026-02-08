@@ -2212,8 +2212,8 @@ fn encode_client_method(value: crate::client::ClientMethod) -> i32 {
         crate::client::ClientMethod::CreateChatSession => {
             pbv1::ClientMethod::CreateChatSession as i32
         }
-        crate::client::ClientMethod::CloseChatSession => {
-            pbv1::ClientMethod::CloseChatSession as i32
+        crate::client::ClientMethod::ArchiveChatSession => {
+            pbv1::ClientMethod::ArchiveChatSession as i32
         }
         crate::client::ClientMethod::ListChatSessions => {
             pbv1::ClientMethod::ListChatSessions as i32
@@ -2282,8 +2282,8 @@ fn decode_client_method(value: i32) -> Result<crate::client::ClientMethod, Error
         Ok(pbv1::ClientMethod::CreateChatSession) => {
             Ok(crate::client::ClientMethod::CreateChatSession)
         }
-        Ok(pbv1::ClientMethod::CloseChatSession) => {
-            Ok(crate::client::ClientMethod::CloseChatSession)
+        Ok(pbv1::ClientMethod::ArchiveChatSession) => {
+            Ok(crate::client::ClientMethod::ArchiveChatSession)
         }
         Ok(pbv1::ClientMethod::ListChatSessions) => {
             Ok(crate::client::ClientMethod::ListChatSessions)
@@ -2752,8 +2752,8 @@ impl crate::client::Request {
                 crate::client::RequestPayload::CreateChatSession(req) => {
                     pbv1::request::Payload::CreateChatSession(req.to_protobuf())
                 }
-                crate::client::RequestPayload::CloseChatSession(req) => {
-                    pbv1::request::Payload::CloseChatSession(req.to_protobuf())
+                crate::client::RequestPayload::ArchiveChatSession(req) => {
+                    pbv1::request::Payload::ArchiveChatSession(req.to_protobuf())
                 }
                 crate::client::RequestPayload::ListChatSessions(req) => {
                     pbv1::request::Payload::ListChatSessions(req.to_protobuf())
@@ -2885,17 +2885,17 @@ impl crate::client::Request {
             }
             pbv1::request::Payload::CreateChatSession(req) => {
                 crate::client::RequestPayload::CreateChatSession(
-                    crate::client::CreateChatSessionRequest::from_protobuf(req),
+                    crate::client::CreateChatSessionRequest::try_from_protobuf(req)?,
                 )
             }
-            pbv1::request::Payload::CloseChatSession(req) => {
-                crate::client::RequestPayload::CloseChatSession(
-                    crate::client::CloseChatSessionRequest::try_from_protobuf(req)?,
+            pbv1::request::Payload::ArchiveChatSession(req) => {
+                crate::client::RequestPayload::ArchiveChatSession(
+                    crate::client::ArchiveChatSessionRequest::try_from_protobuf(req)?,
                 )
             }
             pbv1::request::Payload::ListChatSessions(req) => {
                 crate::client::RequestPayload::ListChatSessions(
-                    crate::client::ListChatSessionsRequest::from_protobuf(req),
+                    crate::client::ListChatSessionsRequest::try_from_protobuf(req)?,
                 )
             }
             pbv1::request::Payload::PinChatSessionToEpic(req) => {
@@ -3940,8 +3940,8 @@ impl crate::client::Response {
                 crate::client::ResponseResult::CreateChatSession(resp) => {
                     pbv1::response::Result::CreateChatSession(resp.to_protobuf())
                 }
-                crate::client::ResponseResult::CloseChatSession(resp) => {
-                    pbv1::response::Result::CloseChatSession(resp.to_protobuf())
+                crate::client::ResponseResult::ArchiveChatSession(resp) => {
+                    pbv1::response::Result::ArchiveChatSession(resp.to_protobuf())
                 }
                 crate::client::ResponseResult::ListChatSessions(resp) => {
                     pbv1::response::Result::ListChatSessions(resp.to_protobuf())
@@ -4079,9 +4079,9 @@ impl crate::client::Response {
                     crate::client::CreateChatSessionResponse::try_from_protobuf(resp)?,
                 )
             }
-            pbv1::response::Result::CloseChatSession(resp) => {
-                crate::client::ResponseResult::CloseChatSession(
-                    crate::client::CloseChatSessionResponse::from_protobuf(resp),
+            pbv1::response::Result::ArchiveChatSession(resp) => {
+                crate::client::ResponseResult::ArchiveChatSession(
+                    crate::client::ArchiveChatSessionResponse::from_protobuf(resp),
                 )
             }
             pbv1::response::Result::ListChatSessions(resp) => {
@@ -4893,10 +4893,15 @@ impl crate::client::AgentSessionSummary {
                 .task_id
                 .map(|id| id.to_bytes().to_vec())
                 .unwrap_or_default(),
+            epic_id: self
+                .epic_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
             agent_kind: encode_agent_kind(self.agent_kind),
             status: encode_agent_session_status(self.status),
             title: self.title.clone().unwrap_or_default(),
-            closed_at: self.closed_at.map(encode_timestamp),
+            archived_at: self.archived_at.map(encode_timestamp),
+            repo_name: self.repo_name.clone().unwrap_or_default(),
             created_at: self.created_at.map(encode_timestamp),
             updated_at: self.updated_at.map(encode_timestamp),
             ended_at: self.ended_at.map(encode_timestamp),
@@ -4908,13 +4913,15 @@ impl crate::client::AgentSessionSummary {
             session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
             scope_kind: decode_agent_session_scope_kind(proto.scope_kind)?,
             task_id: decode_optional_ulid::<TaskId>("task_id", &proto.task_id)?,
+            epic_id: decode_optional_ulid::<EpicId>("epic_id", &proto.epic_id)?,
             agent_kind: decode_agent_kind(proto.agent_kind)?,
             status: decode_agent_session_status(proto.status)?,
             title: normalize_nonempty_string(proto.title),
-            closed_at: proto
-                .closed_at
-                .map(|ts| decode_timestamp("closed_at", ts))
+            archived_at: proto
+                .archived_at
+                .map(|ts| decode_timestamp("archived_at", ts))
                 .transpose()?,
+            repo_name: normalize_nonempty_string(proto.repo_name),
             created_at: proto
                 .created_at
                 .map(|ts| decode_timestamp("created_at", ts))
@@ -4984,14 +4991,18 @@ impl crate::client::CreateChatSessionRequest {
     pub fn to_protobuf(&self) -> pbv1::CreateChatSessionRequest {
         pbv1::CreateChatSessionRequest {
             title: self.title.clone().unwrap_or_default(),
+            epic_id: self
+                .epic_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
         }
     }
 
-    #[must_use]
-    pub fn from_protobuf(proto: pbv1::CreateChatSessionRequest) -> Self {
-        Self {
+    pub fn try_from_protobuf(proto: pbv1::CreateChatSessionRequest) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
             title: normalize_nonempty_string(proto.title),
-        }
+            epic_id: decode_optional_ulid::<EpicId>("epic_id", &proto.epic_id)?,
+        })
     }
 }
 
@@ -5012,29 +5023,31 @@ impl crate::client::CreateChatSessionResponse {
     }
 }
 
-impl crate::client::CloseChatSessionRequest {
+impl crate::client::ArchiveChatSessionRequest {
     #[must_use]
-    pub fn to_protobuf(&self) -> pbv1::CloseChatSessionRequest {
-        pbv1::CloseChatSessionRequest {
+    pub fn to_protobuf(&self) -> pbv1::ArchiveChatSessionRequest {
+        pbv1::ArchiveChatSessionRequest {
             session_id: self.session_id.to_bytes().to_vec(),
         }
     }
 
-    pub fn try_from_protobuf(proto: pbv1::CloseChatSessionRequest) -> Result<Self, ErrorEnvelope> {
+    pub fn try_from_protobuf(
+        proto: pbv1::ArchiveChatSessionRequest,
+    ) -> Result<Self, ErrorEnvelope> {
         Ok(Self {
             session_id: decode_required_ulid::<SessionId>("session_id", &proto.session_id)?,
         })
     }
 }
 
-impl crate::client::CloseChatSessionResponse {
+impl crate::client::ArchiveChatSessionResponse {
     #[must_use]
-    pub fn to_protobuf(&self) -> pbv1::CloseChatSessionResponse {
-        pbv1::CloseChatSessionResponse {}
+    pub fn to_protobuf(&self) -> pbv1::ArchiveChatSessionResponse {
+        pbv1::ArchiveChatSessionResponse {}
     }
 
     #[must_use]
-    pub fn from_protobuf(_proto: pbv1::CloseChatSessionResponse) -> Self {
+    pub fn from_protobuf(_proto: pbv1::ArchiveChatSessionResponse) -> Self {
         Self {}
     }
 }
@@ -5043,17 +5056,21 @@ impl crate::client::ListChatSessionsRequest {
     #[must_use]
     pub fn to_protobuf(&self) -> pbv1::ListChatSessionsRequest {
         pbv1::ListChatSessionsRequest {
-            include_closed: self.include_closed,
+            include_archived: self.include_archived,
             limit: self.limit,
+            epic_id: self
+                .epic_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
         }
     }
 
-    #[must_use]
-    pub fn from_protobuf(proto: pbv1::ListChatSessionsRequest) -> Self {
-        Self {
-            include_closed: proto.include_closed,
+    pub fn try_from_protobuf(proto: pbv1::ListChatSessionsRequest) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            include_archived: proto.include_archived,
             limit: proto.limit,
-        }
+            epic_id: decode_optional_ulid::<EpicId>("epic_id", &proto.epic_id)?,
+        })
     }
 }
 
@@ -5367,8 +5384,8 @@ fn encode_ui_driver_method(value: crate::ui_driver::UiDriverMethod) -> i32 {
         crate::ui_driver::UiDriverMethod::CreateChatSession => {
             pbv1::UiDriverMethod::CreateChatSession as i32
         }
-        crate::ui_driver::UiDriverMethod::CloseChatSession => {
-            pbv1::UiDriverMethod::CloseChatSession as i32
+        crate::ui_driver::UiDriverMethod::ArchiveChatSession => {
+            pbv1::UiDriverMethod::ArchiveChatSession as i32
         }
         crate::ui_driver::UiDriverMethod::PinChatSession => {
             pbv1::UiDriverMethod::PinChatSession as i32
@@ -5439,8 +5456,8 @@ fn decode_ui_driver_method(value: i32) -> Result<crate::ui_driver::UiDriverMetho
         Ok(pbv1::UiDriverMethod::CreateChatSession) => {
             Ok(crate::ui_driver::UiDriverMethod::CreateChatSession)
         }
-        Ok(pbv1::UiDriverMethod::CloseChatSession) => {
-            Ok(crate::ui_driver::UiDriverMethod::CloseChatSession)
+        Ok(pbv1::UiDriverMethod::ArchiveChatSession) => {
+            Ok(crate::ui_driver::UiDriverMethod::ArchiveChatSession)
         }
         Ok(pbv1::UiDriverMethod::PinChatSession) => {
             Ok(crate::ui_driver::UiDriverMethod::PinChatSession)
@@ -5667,8 +5684,8 @@ impl crate::ui_driver::UiDriverRequest {
                 crate::ui_driver::UiDriverRequestPayload::CreateChatSession(req) => {
                     pbv1::ui_driver_request::Payload::CreateChatSession(req.to_protobuf())
                 }
-                crate::ui_driver::UiDriverRequestPayload::CloseChatSession(req) => {
-                    pbv1::ui_driver_request::Payload::CloseChatSession(req.to_protobuf())
+                crate::ui_driver::UiDriverRequestPayload::ArchiveChatSession(req) => {
+                    pbv1::ui_driver_request::Payload::ArchiveChatSession(req.to_protobuf())
                 }
                 crate::ui_driver::UiDriverRequestPayload::PinChatSession(req) => {
                     pbv1::ui_driver_request::Payload::PinChatSession(req.to_protobuf())
@@ -5773,9 +5790,9 @@ impl crate::ui_driver::UiDriverRequest {
                     crate::ui_driver::CreateChatSessionRequest::from_protobuf(req),
                 )
             }
-            pbv1::ui_driver_request::Payload::CloseChatSession(req) => {
-                crate::ui_driver::UiDriverRequestPayload::CloseChatSession(
-                    crate::ui_driver::CloseChatSessionRequest::try_from_protobuf(req)?,
+            pbv1::ui_driver_request::Payload::ArchiveChatSession(req) => {
+                crate::ui_driver::UiDriverRequestPayload::ArchiveChatSession(
+                    crate::ui_driver::ArchiveChatSessionRequest::try_from_protobuf(req)?,
                 )
             }
             pbv1::ui_driver_request::Payload::PinChatSession(req) => {
@@ -5900,8 +5917,8 @@ impl crate::ui_driver::UiDriverResponse {
                 crate::ui_driver::UiDriverResponseResult::CreateChatSession(resp) => {
                     pbv1::ui_driver_response::Result::CreateChatSession(resp.to_protobuf())
                 }
-                crate::ui_driver::UiDriverResponseResult::CloseChatSession(resp) => {
-                    pbv1::ui_driver_response::Result::CloseChatSession(resp.to_protobuf())
+                crate::ui_driver::UiDriverResponseResult::ArchiveChatSession(resp) => {
+                    pbv1::ui_driver_response::Result::ArchiveChatSession(resp.to_protobuf())
                 }
                 crate::ui_driver::UiDriverResponseResult::PinChatSession(resp) => {
                     pbv1::ui_driver_response::Result::PinChatSession(resp.to_protobuf())
@@ -6009,9 +6026,9 @@ impl crate::ui_driver::UiDriverResponse {
                     crate::ui_driver::CreateChatSessionResponse::try_from_protobuf(resp)?,
                 )
             }
-            pbv1::ui_driver_response::Result::CloseChatSession(resp) => {
-                crate::ui_driver::UiDriverResponseResult::CloseChatSession(
-                    crate::ui_driver::CloseChatSessionResponse::from_protobuf(resp),
+            pbv1::ui_driver_response::Result::ArchiveChatSession(resp) => {
+                crate::ui_driver::UiDriverResponseResult::ArchiveChatSession(
+                    crate::ui_driver::ArchiveChatSessionResponse::from_protobuf(resp),
                 )
             }
             pbv1::ui_driver_response::Result::PinChatSession(resp) => {
@@ -6457,16 +6474,16 @@ impl crate::ui_driver::CreateChatSessionResponse {
     }
 }
 
-impl crate::ui_driver::CloseChatSessionRequest {
+impl crate::ui_driver::ArchiveChatSessionRequest {
     #[must_use]
-    pub fn to_protobuf(&self) -> pbv1::UiDriverCloseChatSessionRequest {
-        pbv1::UiDriverCloseChatSessionRequest {
+    pub fn to_protobuf(&self) -> pbv1::UiDriverArchiveChatSessionRequest {
+        pbv1::UiDriverArchiveChatSessionRequest {
             session_id: self.session_id.to_bytes().to_vec(),
         }
     }
 
     pub fn try_from_protobuf(
-        proto: pbv1::UiDriverCloseChatSessionRequest,
+        proto: pbv1::UiDriverArchiveChatSessionRequest,
     ) -> Result<Self, ErrorEnvelope> {
         Ok(Self {
             session_id: decode_required_ulid("session_id", &proto.session_id)?,
@@ -6474,14 +6491,14 @@ impl crate::ui_driver::CloseChatSessionRequest {
     }
 }
 
-impl crate::ui_driver::CloseChatSessionResponse {
+impl crate::ui_driver::ArchiveChatSessionResponse {
     #[must_use]
-    pub fn to_protobuf(&self) -> pbv1::UiDriverCloseChatSessionResponse {
-        pbv1::UiDriverCloseChatSessionResponse {}
+    pub fn to_protobuf(&self) -> pbv1::UiDriverArchiveChatSessionResponse {
+        pbv1::UiDriverArchiveChatSessionResponse {}
     }
 
     #[must_use]
-    pub fn from_protobuf(_proto: pbv1::UiDriverCloseChatSessionResponse) -> Self {
+    pub fn from_protobuf(_proto: pbv1::UiDriverArchiveChatSessionResponse) -> Self {
         Self {}
     }
 }

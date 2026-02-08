@@ -55,6 +55,7 @@ async fn daemon_link_persists_session_event_batches() {
         control_plane.pool(),
         workspace_id,
         repo_id,
+        None,
         StorageAgentKind::Codex,
         None,
     )

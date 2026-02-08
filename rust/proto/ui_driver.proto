@@ -41,7 +41,7 @@ enum UiDriverMethod {
   UI_DRIVER_METHOD_SET_SETTINGS_DIALOG_SECTION = 25;
   // User-managed chats (Domain 5).
   UI_DRIVER_METHOD_CREATE_CHAT_SESSION = 9;
-  UI_DRIVER_METHOD_CLOSE_CHAT_SESSION = 10;
+  UI_DRIVER_METHOD_ARCHIVE_CHAT_SESSION = 10;
   UI_DRIVER_METHOD_PIN_CHAT_SESSION = 11;
   UI_DRIVER_METHOD_UNPIN_CHAT_SESSION = 12;
   // Refresh the current view/graph (Domain 5).
@@ -81,7 +81,7 @@ message UiDriverRequest {
     SetSettingsDialogOpenRequest set_settings_dialog_open = 33;
     SetSettingsDialogSectionRequest set_settings_dialog_section = 34;
     UiDriverCreateChatSessionRequest create_chat_session = 18;
-    UiDriverCloseChatSessionRequest close_chat_session = 19;
+    UiDriverArchiveChatSessionRequest archive_chat_session = 19;
     PinChatSessionRequest pin_chat_session = 20;
     UnpinChatSessionRequest unpin_chat_session = 21;
     TriggerRefreshRequest trigger_refresh = 22;
@@ -123,7 +123,7 @@ message UiDriverResponse {
     SetSettingsDialogOpenResponse set_settings_dialog_open = 33;
     SetSettingsDialogSectionResponse set_settings_dialog_section = 34;
     UiDriverCreateChatSessionResponse create_chat_session = 18;
-    UiDriverCloseChatSessionResponse close_chat_session = 19;
+    UiDriverArchiveChatSessionResponse archive_chat_session = 19;
     PinChatSessionResponse pin_chat_session = 20;
     UnpinChatSessionResponse unpin_chat_session = 21;
     TriggerRefreshResponse trigger_refresh = 22;
@@ -234,12 +234,12 @@ message UiDriverCreateChatSessionResponse {
   bytes session_id = 1;
 }
 
-message UiDriverCloseChatSessionRequest {
+message UiDriverArchiveChatSessionRequest {
   // SessionId (ULID bytes, length = 16).
   bytes session_id = 1;
 }
 
-message UiDriverCloseChatSessionResponse {}
+message UiDriverArchiveChatSessionResponse {}
 
 message PinChatSessionRequest {
   // SessionId (ULID bytes, length = 16).

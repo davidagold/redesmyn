@@ -59,13 +59,15 @@ async fn insert_repo_and_chat_session(control_plane: &ControlPlane, session_id: 
             scope_repo_id: repo_id,
             scope_kind: StorageAgentSessionScopeKind::Chat,
             task_id: None,
+            epic_id: None,
             agent_kind: StorageAgentKind::Shell,
             status: StorageAgentSessionStatus::Stopped,
             external_session_ref: r#"{"type":"none"}"#.to_owned(),
             title: None,
             started_at_ms: None,
             ended_at_ms: None,
-            closed_at_ms: None,
+            archived_at_ms: None,
+            repo_name: None,
         },
     )
     .await

@@ -47,7 +47,7 @@ enum ClientMethod {
   CLIENT_METHOD_WAIT_FOR_IDLE = 12;
   CLIENT_METHOD_LIST_TASK_SESSIONS = 13;
   CLIENT_METHOD_CREATE_CHAT_SESSION = 14;
-  CLIENT_METHOD_CLOSE_CHAT_SESSION = 15;
+  CLIENT_METHOD_ARCHIVE_CHAT_SESSION = 15;
   CLIENT_METHOD_LIST_CHAT_SESSIONS = 16;
   CLIENT_METHOD_PIN_CHAT_SESSION_TO_EPIC = 17;
   CLIENT_METHOD_UNPIN_CHAT_SESSION_FROM_EPIC = 18;
@@ -92,7 +92,7 @@ message Request {
     WaitForIdleRequest wait_for_idle = 21;
     ListTaskSessionsRequest list_task_sessions = 30;
     CreateChatSessionRequest create_chat_session = 31;
-    CloseChatSessionRequest close_chat_session = 32;
+    ArchiveChatSessionRequest archive_chat_session = 32;
     ListChatSessionsRequest list_chat_sessions = 33;
     PinChatSessionToEpicRequest pin_chat_session_to_epic = 34;
     UnpinChatSessionFromEpicRequest unpin_chat_session_from_epic = 35;
@@ -139,7 +139,7 @@ message Response {
     WaitForIdleResponse wait_for_idle = 21;
     ListTaskSessionsResponse list_task_sessions = 30;
     CreateChatSessionResponse create_chat_session = 31;
-    CloseChatSessionResponse close_chat_session = 32;
+    ArchiveChatSessionResponse archive_chat_session = 32;
     ListChatSessionsResponse list_chat_sessions = 33;
     PinChatSessionToEpicResponse pin_chat_session_to_epic = 34;
     UnpinChatSessionFromEpicResponse unpin_chat_session_from_epic = 35;
@@ -705,11 +705,15 @@ message AgentSessionSummary {
   bytes task_id = 3;
 
   AgentKind agent_kind = 4;
+  // EpicId (ULID bytes, length = 16). Optional for chat sessions.
+  bytes epic_id = 5;
   AgentSessionStatus status = 6;
 
   // Optional, chat-focused metadata (T-47).
   string title = 10;
-  google.protobuf.Timestamp closed_at = 11;
+  google.protobuf.Timestamp archived_at = 11;
+  // Optional repository display name for grouping surfaces.
+  string repo_name = 12;
 
   // General timestamps (informational).
   google.protobuf.Timestamp created_at = 20;
@@ -732,6 +736,8 @@ message ListTaskSessionsResponse {
 message CreateChatSessionRequest {
   // Optional title (empty string = none).
   string title = 1;
+  // Optional EpicId (ULID bytes, length = 16). Empty when not epic-bound.
+  bytes epic_id = 2;
 }
 
 message CreateChatSessionResponse {
@@ -739,16 +745,18 @@ message CreateChatSessionResponse {
   bytes session_id = 1;
 }
 
-message CloseChatSessionRequest {
+message ArchiveChatSessionRequest {
   // SessionId (ULID bytes, length = 16).
   bytes session_id = 1;
 }
 
-message CloseChatSessionResponse {}
+message ArchiveChatSessionResponse {}
 
 message ListChatSessionsRequest {
-  bool include_closed = 1;
+  bool include_archived = 1;
   uint32 limit = 2;
+  // Optional EpicId (ULID bytes, length = 16) filter.
+  bytes epic_id = 3;
 }
 
 message ListChatSessionsResponse {

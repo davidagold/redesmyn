@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{OnceLock, RwLock};
 use std::time::Duration;
 
 use crate::ControlPlane;
@@ -23,7 +24,7 @@ use redesmyn_protocol::agent_commands::{
 };
 use redesmyn_protocol::client::{
     AgentKind, AgentMessageConflictAction, AgentSessionScopeKind, AgentSessionStatus,
-    AgentSessionSummary, ClientFrame, ClientMessage, CloseChatSessionResponse, CommandState,
+    AgentSessionSummary, ArchiveChatSessionResponse, ClientFrame, ClientMessage, CommandState,
     CommandSummary, CommandUpdateSummary, CreateChatSessionResponse, CreateCommandResponse,
     DaemonPresenceSummary, EpicGraph, EpicSummary, Event, EventLogEvent, EventWaitFilter,
     GetCommandResponse, GetEpicGraphResponse, GetEpicPinnedChatSessionResponse,
@@ -55,6 +56,27 @@ use redesmyn_storage::sessions::AgentSessionRecord;
 
 const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(10);
 const DEFAULT_IDLE_QUIESCENCE: Duration = Duration::from_millis(200);
+const OPENAI_CHAT_TITLE_ENDPOINT: &str = "https://api.openai.com/v1/chat/completions";
+const OPENAI_CHAT_TITLE_MODEL: &str = "gpt-4o-mini";
+const OPENAI_API_KEY_ENV: &str = "OPENAI_API_KEY";
+const REDESMYN_OPENAI_API_KEY_ENV: &str = "REDESMYN_RUST__CONTROL_PLANE__OPENAI_API_KEY";
+const CHAT_TITLE_SOURCE_MAX_CHARS: usize = 2_000;
+const CHAT_TITLE_MAX_CHARS: usize = 96;
+static OPENAI_API_KEY_OVERRIDE: OnceLock<RwLock<Option<String>>> = OnceLock::new();
+
+fn openai_api_key_override_store() -> &'static RwLock<Option<String>> {
+    OPENAI_API_KEY_OVERRIDE.get_or_init(|| RwLock::new(None))
+}
+
+pub fn set_openai_api_key_override(api_key: Option<String>) {
+    let normalized = api_key
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let mut guard = openai_api_key_override_store()
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *guard = normalized;
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientApiCodec {
@@ -755,12 +777,6 @@ async fn handle_request_result(
 
             let (session_id, scope) = match (session.scope_kind, session.task_id) {
                 (StorageAgentSessionScopeKind::Chat, _) => {
-                    if session.closed_at_ms.is_some() {
-                        return Ok(ResponseResult::Error(ErrorEnvelope::new(
-                            ErrorCategory::InvalidRequest,
-                            "Chat session is closed.",
-                        )));
-                    }
                     if send.on_conflict == AgentMessageConflictAction::StopSessionAndStartNew {
                         return Ok(ResponseResult::Error(ErrorEnvelope::new(
                             ErrorCategory::InvalidRequest,
@@ -962,6 +978,13 @@ async fn handle_request_result(
                 .session_events()
                 .append_session_event(&event)
                 .await?;
+
+            maybe_spawn_chat_title_generation(
+                control_plane.pool().clone(),
+                &session,
+                text,
+                has_text,
+            );
 
             let current =
                 redesmyn_storage::sessions::get_agent_session(control_plane.pool(), session_id)
@@ -2125,6 +2148,23 @@ async fn handle_request_result(
                 Err(err) => return Ok(ResponseResult::Error(err)),
             };
 
+            if let Some(epic_id) = create.epic_id {
+                let epic_exists = redesmyn_storage::sessions::epic_exists_in_repo(
+                    control_plane.pool(),
+                    workspace_id,
+                    repo_id,
+                    epic_id,
+                )
+                .await?;
+                if !epic_exists {
+                    let detail = ErrorDetail::from([("epic_id".to_string(), epic_id.to_string())]);
+                    return Ok(ResponseResult::Error(
+                        ErrorEnvelope::new(ErrorCategory::NotFound, "Epic not found.")
+                            .with_detail(detail),
+                    ));
+                }
+            }
+
             // TODO: Plumb agent kind from the request (or client identity).
             // For now we default to Codex so chat sessions can stream structured events
             // back into the durable session log.
@@ -2132,6 +2172,7 @@ async fn handle_request_result(
                 control_plane.pool(),
                 workspace_id,
                 repo_id,
+                create.epic_id,
                 StorageAgentKind::Codex,
                 create.title.as_deref(),
             )
@@ -2141,7 +2182,7 @@ async fn handle_request_result(
                 CreateChatSessionResponse { session_id },
             ))
         }
-        redesmyn_protocol::client::RequestPayload::CloseChatSession(close) => {
+        redesmyn_protocol::client::RequestPayload::ArchiveChatSession(archive) => {
             let (workspace_id, repo_id) = match require_repo_scope_ids(envelope) {
                 Ok(ids) => ids,
                 Err(err) => return Ok(ResponseResult::Error(err)),
@@ -2149,12 +2190,12 @@ async fn handle_request_result(
 
             let session = redesmyn_storage::sessions::get_agent_session(
                 control_plane.pool(),
-                close.session_id,
+                archive.session_id,
             )
             .await?;
             let Some(session) = session else {
                 let detail =
-                    ErrorDetail::from([("session_id".to_string(), close.session_id.to_string())]);
+                    ErrorDetail::from([("session_id".to_string(), archive.session_id.to_string())]);
                 return Ok(ResponseResult::Error(
                     ErrorEnvelope::new(ErrorCategory::NotFound, "Session not found.")
                         .with_detail(detail),
@@ -2174,11 +2215,14 @@ async fn handle_request_result(
                 )));
             }
 
-            redesmyn_storage::sessions::close_chat_session(control_plane.pool(), close.session_id)
-                .await?;
+            redesmyn_storage::sessions::archive_chat_session(
+                control_plane.pool(),
+                archive.session_id,
+            )
+            .await?;
 
-            Ok(ResponseResult::CloseChatSession(
-                CloseChatSessionResponse {},
+            Ok(ResponseResult::ArchiveChatSession(
+                ArchiveChatSessionResponse {},
             ))
         }
         redesmyn_protocol::client::RequestPayload::ListChatSessions(list) => {
@@ -2207,11 +2251,29 @@ async fn handle_request_result(
                 Err(err) => return Ok(ResponseResult::Error(err)),
             };
 
+            if let Some(epic_id) = list.epic_id {
+                let epic_exists = redesmyn_storage::sessions::epic_exists_in_repo(
+                    control_plane.pool(),
+                    workspace_id,
+                    repo_id,
+                    epic_id,
+                )
+                .await?;
+                if !epic_exists {
+                    let detail = ErrorDetail::from([("epic_id".to_string(), epic_id.to_string())]);
+                    return Ok(ResponseResult::Error(
+                        ErrorEnvelope::new(ErrorCategory::NotFound, "Epic not found.")
+                            .with_detail(detail),
+                    ));
+                }
+            }
+
             let sessions = redesmyn_storage::sessions::list_chat_sessions(
                 control_plane.pool(),
                 workspace_id,
                 repo_id,
-                list.include_closed,
+                list.epic_id,
+                list.include_archived,
                 list.limit,
             )
             .await?;
@@ -2457,6 +2519,206 @@ fn validate_image_attachments(
     Ok(())
 }
 
+#[derive(Debug, serde::Serialize)]
+struct OpenAiChatTitleRequest {
+    model: &'static str,
+    temperature: f32,
+    max_tokens: u16,
+    messages: Vec<OpenAiChatTitleMessage>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct OpenAiChatTitleMessage {
+    role: &'static str,
+    content: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct OpenAiChatTitleResponse {
+    #[serde(default)]
+    choices: Vec<OpenAiChatTitleChoice>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct OpenAiChatTitleChoice {
+    message: OpenAiChatTitleAssistantMessage,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct OpenAiChatTitleAssistantMessage {
+    content: Option<String>,
+}
+
+fn maybe_spawn_chat_title_generation(
+    pool: sqlx::SqlitePool,
+    session: &AgentSessionRecord,
+    text: &str,
+    has_text: bool,
+) {
+    if session.scope_kind != StorageAgentSessionScopeKind::Chat || !has_text {
+        return;
+    }
+
+    if session
+        .title
+        .as_deref()
+        .is_some_and(|title| !title.trim().is_empty())
+    {
+        return;
+    }
+
+    let Some(api_key) = openai_api_key_from_env() else {
+        return;
+    };
+
+    let prompt = text.trim();
+    if prompt.is_empty() {
+        return;
+    }
+
+    let prompt: String = prompt.chars().take(CHAT_TITLE_SOURCE_MAX_CHARS).collect();
+    let session_id = session.session_id;
+
+    tokio::spawn(async move {
+        let generated = match generate_chat_title_via_openai(&api_key, &prompt).await {
+            Ok(title) => title,
+            Err(error) => {
+                tracing::warn!(
+                    session_id = %session_id,
+                    error = %error,
+                    "failed to generate chat title"
+                );
+                return;
+            }
+        };
+
+        let Some(title) = generated else {
+            return;
+        };
+
+        match redesmyn_storage::sessions::set_session_title_if_missing(&pool, session_id, &title)
+            .await
+        {
+            Ok(false) => {}
+            Ok(true) => {
+                tracing::debug!(session_id = %session_id, "generated chat title");
+            }
+            Err(error) => {
+                tracing::warn!(
+                    session_id = %session_id,
+                    error = %error,
+                    "failed to persist generated chat title"
+                );
+            }
+        }
+    });
+}
+
+fn openai_api_key_from_env() -> Option<String> {
+    fn non_empty_env(key: &str) -> Option<String> {
+        std::env::var(key)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    }
+
+    let override_value = openai_api_key_override_store()
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+
+    override_value
+        .or_else(|| non_empty_env(REDESMYN_OPENAI_API_KEY_ENV))
+        .or_else(|| non_empty_env(OPENAI_API_KEY_ENV))
+}
+
+async fn generate_chat_title_via_openai(
+    api_key: &str,
+    prompt: &str,
+) -> Result<Option<String>, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(8))
+        .build()
+        .map_err(|error| format!("failed to initialize HTTP client: {error}"))?;
+
+    let request = OpenAiChatTitleRequest {
+        model: OPENAI_CHAT_TITLE_MODEL,
+        temperature: 0.2,
+        max_tokens: 20,
+        messages: vec![
+            OpenAiChatTitleMessage {
+                role: "system",
+                content: "Generate a concise chat session title (max 8 words). Return only the title, with no quotes or prefixes.".to_string(),
+            },
+            OpenAiChatTitleMessage {
+                role: "user",
+                content: prompt.to_string(),
+            },
+        ],
+    };
+
+    let response = client
+        .post(OPENAI_CHAT_TITLE_ENDPOINT)
+        .bearer_auth(api_key)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|error| format!("request failed: {error}"))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        let body_preview: String = body.chars().take(240).collect();
+        return Err(format!("OpenAI returned {status}: {body_preview}"));
+    }
+
+    let payload: OpenAiChatTitleResponse = response
+        .json()
+        .await
+        .map_err(|error| format!("invalid response payload: {error}"))?;
+
+    Ok(payload
+        .choices
+        .into_iter()
+        .next()
+        .and_then(|choice| choice.message.content)
+        .and_then(|content| normalize_chat_title_candidate(&content)))
+}
+
+fn normalize_chat_title_candidate(raw: &str) -> Option<String> {
+    let mut title = raw
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("")
+        .trim()
+        .trim_matches(|ch| matches!(ch, '"' | '\'' | '`'))
+        .to_string();
+
+    let lower = title.to_ascii_lowercase();
+    for prefix in ["title:", "session title:", "chat title:"] {
+        if lower.starts_with(prefix) {
+            title = title[prefix.len()..].trim().to_string();
+            break;
+        }
+    }
+
+    title = title.split_whitespace().collect::<Vec<_>>().join(" ");
+    title = title
+        .trim_end_matches(|ch: char| ch.is_ascii_punctuation())
+        .to_string();
+
+    if title.is_empty() {
+        return None;
+    }
+
+    if title.chars().count() > CHAT_TITLE_MAX_CHARS {
+        title = title.chars().take(CHAT_TITLE_MAX_CHARS).collect();
+        title = title.trim().to_string();
+    }
+
+    if title.is_empty() { None } else { Some(title) }
+}
+
 fn agent_session_summary_from_record(record: AgentSessionRecord) -> AgentSessionSummary {
     let scope_kind = match record.scope_kind {
         StorageAgentSessionScopeKind::Task => AgentSessionScopeKind::Task,
@@ -2476,10 +2738,12 @@ fn agent_session_summary_from_record(record: AgentSessionRecord) -> AgentSession
         session_id: record.session_id,
         scope_kind,
         task_id: record.task_id,
+        epic_id: record.epic_id,
         agent_kind,
         status,
         title: record.title,
-        closed_at: record.closed_at_ms.map(timestamp_from_ms),
+        archived_at: record.archived_at_ms.map(timestamp_from_ms),
+        repo_name: record.repo_name,
         created_at: Some(timestamp_from_ms(record.created_at_ms)),
         updated_at: Some(timestamp_from_ms(record.updated_at_ms)),
         ended_at: record.ended_at_ms.map(timestamp_from_ms),

@@ -47,6 +47,7 @@ async fn session_event_append_inserts_artifacts() {
         control_plane.pool(),
         workspace_id,
         repo_id,
+        None,
         StorageAgentKind::Codex,
         None,
     )

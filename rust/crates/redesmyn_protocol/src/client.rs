@@ -60,7 +60,7 @@ pub enum ClientMethod {
     WaitForIdle,
     ListTaskSessions,
     CreateChatSession,
-    CloseChatSession,
+    ArchiveChatSession,
     ListChatSessions,
     PinChatSessionToEpic,
     UnpinChatSessionFromEpic,
@@ -110,7 +110,7 @@ pub enum RequestPayload {
     WaitForIdle(WaitForIdleRequest),
     ListTaskSessions(ListTaskSessionsRequest),
     CreateChatSession(CreateChatSessionRequest),
-    CloseChatSession(CloseChatSessionRequest),
+    ArchiveChatSession(ArchiveChatSessionRequest),
     ListChatSessions(ListChatSessionsRequest),
     PinChatSessionToEpic(PinChatSessionToEpicRequest),
     UnpinChatSessionFromEpic(UnpinChatSessionFromEpicRequest),
@@ -147,7 +147,7 @@ impl RequestPayload {
             Self::WaitForIdle(_) => ClientMethod::WaitForIdle,
             Self::ListTaskSessions(_) => ClientMethod::ListTaskSessions,
             Self::CreateChatSession(_) => ClientMethod::CreateChatSession,
-            Self::CloseChatSession(_) => ClientMethod::CloseChatSession,
+            Self::ArchiveChatSession(_) => ClientMethod::ArchiveChatSession,
             Self::ListChatSessions(_) => ClientMethod::ListChatSessions,
             Self::PinChatSessionToEpic(_) => ClientMethod::PinChatSessionToEpic,
             Self::UnpinChatSessionFromEpic(_) => ClientMethod::UnpinChatSessionFromEpic,
@@ -209,7 +209,7 @@ pub enum ResponseResult {
     WaitForIdle(WaitForIdleResponse),
     ListTaskSessions(ListTaskSessionsResponse),
     CreateChatSession(CreateChatSessionResponse),
-    CloseChatSession(CloseChatSessionResponse),
+    ArchiveChatSession(ArchiveChatSessionResponse),
     ListChatSessions(ListChatSessionsResponse),
     PinChatSessionToEpic(PinChatSessionToEpicResponse),
     UnpinChatSessionFromEpic(UnpinChatSessionFromEpicResponse),
@@ -861,12 +861,16 @@ pub struct AgentSessionSummary {
     pub scope_kind: AgentSessionScopeKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_id: Option<TaskId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epic_id: Option<EpicId>,
     pub agent_kind: AgentKind,
     pub status: AgentSessionStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub closed_at: Option<Timestamp>,
+    pub archived_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<Timestamp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -893,6 +897,8 @@ pub struct ListTaskSessionsResponse {
 pub struct CreateChatSessionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epic_id: Option<EpicId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -901,18 +907,20 @@ pub struct CreateChatSessionResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct CloseChatSessionRequest {
+pub struct ArchiveChatSessionRequest {
     pub session_id: SessionId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct CloseChatSessionResponse {}
+pub struct ArchiveChatSessionResponse {}
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ListChatSessionsRequest {
     #[serde(default)]
-    pub include_closed: bool,
+    pub include_archived: bool,
     pub limit: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epic_id: Option<EpicId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

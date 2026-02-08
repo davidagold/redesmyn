@@ -1,7 +1,7 @@
 use redesmyn_client_api::Client;
 use redesmyn_ids::{EpicId, EventId, SessionId, SubscriptionId};
 use redesmyn_protocol::client::{
-    AgentKind, CloseChatSessionRequest, CommandState, CommandSummary, CreateChatSessionRequest,
+    AgentKind, ArchiveChatSessionRequest, CommandState, CommandSummary, CreateChatSessionRequest,
     CreateChatSessionResponse, EventLogFilter, GetEpicGraphRequest,
     GetEpicPinnedChatSessionRequest, ListAgentModelsRequest, ListChatSessionsRequest,
     ListEpicsRequest, PinChatSessionToEpicRequest, RequestPayload, ResponseResult,
@@ -115,12 +115,13 @@ impl ControlPlaneClient {
     pub async fn create_chat_session(
         &self,
         scope: RepoScope,
+        epic_id: Option<EpicId>,
         title: Option<String>,
     ) -> Result<CreateChatSessionResponse, ControlPlaneClientError> {
         match self
             .request_scoped(
                 scope,
-                RequestPayload::CreateChatSession(CreateChatSessionRequest { title }),
+                RequestPayload::CreateChatSession(CreateChatSessionRequest { title, epic_id }),
             )
             .await?
         {
@@ -135,15 +136,17 @@ impl ControlPlaneClient {
     pub async fn list_chat_sessions(
         &self,
         scope: RepoScope,
-        include_closed: bool,
+        epic_id: Option<EpicId>,
+        include_archived: bool,
         limit: u32,
     ) -> Result<Vec<redesmyn_protocol::client::AgentSessionSummary>, ControlPlaneClientError> {
         match self
             .request_scoped(
                 scope,
                 RequestPayload::ListChatSessions(ListChatSessionsRequest {
-                    include_closed,
+                    include_archived,
                     limit,
+                    epic_id,
                 }),
             )
             .await?
@@ -156,7 +159,7 @@ impl ControlPlaneClient {
         }
     }
 
-    pub async fn close_chat_session(
+    pub async fn archive_chat_session(
         &self,
         scope: RepoScope,
         session_id: SessionId,
@@ -164,11 +167,11 @@ impl ControlPlaneClient {
         match self
             .request_scoped(
                 scope,
-                RequestPayload::CloseChatSession(CloseChatSessionRequest { session_id }),
+                RequestPayload::ArchiveChatSession(ArchiveChatSessionRequest { session_id }),
             )
             .await?
         {
-            ResponseResult::CloseChatSession(_) => Ok(()),
+            ResponseResult::ArchiveChatSession(_) => Ok(()),
             ResponseResult::Error(err) => Err(ControlPlaneClientError::Server {
                 message: err.message,
             }),

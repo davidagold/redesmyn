@@ -272,6 +272,13 @@ enum TaskDescriptionState {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AgentStatusDotVisualKey {
+    task_state: TaskState,
+    agent_status: AgentStatus,
+    continuable: bool,
+}
+
 pub struct GraphView {
     focus_handle: FocusHandle,
     scroll_focus_enabled: bool,
@@ -307,6 +314,9 @@ pub struct GraphView {
     bulk_start: BulkCommandState,
     quick_actions: HashMap<TaskId, TaskQuickActionState>,
     quick_action_opacity: TransitionMap<TaskId>,
+    collapsed_agent_dot_key: HashMap<TaskId, AgentStatusDotVisualKey>,
+    collapsed_agent_dot_previous_key: HashMap<TaskId, AgentStatusDotVisualKey>,
+    collapsed_agent_dot_crossfade: TransitionMap<TaskId>,
     collapsed_title_cache: HashMap<TaskId, CollapsedTitleCacheEntry>,
     collapsed_markdown_cache:
         BoundedCache<redesmyn_ids::SessionEventId, MarkdownInlineSingleLineContent>,
@@ -380,6 +390,9 @@ impl GraphView {
             bulk_start: BulkCommandState::default(),
             quick_actions: HashMap::new(),
             quick_action_opacity: TransitionMap::new(),
+            collapsed_agent_dot_key: HashMap::new(),
+            collapsed_agent_dot_previous_key: HashMap::new(),
+            collapsed_agent_dot_crossfade: TransitionMap::new(),
             collapsed_title_cache: HashMap::new(),
             collapsed_markdown_cache: BoundedCache::new(512),
             _subscriptions: subscriptions,
@@ -484,10 +497,46 @@ impl GraphView {
         self.pan_drag = None;
         self.edge_label_cache.borrow_mut().clear();
         let canonical = self.full_scene.as_ref().unwrap_or(&self.scene);
+        let collapsed_dot_keys: Vec<(TaskId, AgentStatusDotVisualKey)> = canonical
+            .nodes()
+            .filter_map(|node| {
+                let GraphNodeId::Task(task_id) = node.id else {
+                    return None;
+                };
+                Some((
+                    task_id,
+                    AgentStatusDotVisualKey {
+                        task_state: node.state,
+                        agent_status: node.agent_status,
+                        continuable: node.latest_session.is_some(),
+                    },
+                ))
+            })
+            .collect();
         self.quick_action_opacity
             .retain(|task_id| canonical.node(GraphNodeId::Task(*task_id)).is_some());
+        self.collapsed_agent_dot_crossfade
+            .retain(|task_id| canonical.node(GraphNodeId::Task(*task_id)).is_some());
+        self.collapsed_agent_dot_key
+            .retain(|task_id, _| canonical.node(GraphNodeId::Task(*task_id)).is_some());
+        self.collapsed_agent_dot_previous_key
+            .retain(|task_id, _| canonical.node(GraphNodeId::Task(*task_id)).is_some());
         self.collapsed_title_cache
             .retain(|task_id, _| canonical.node(GraphNodeId::Task(*task_id)).is_some());
+        for (task_id, next_key) in collapsed_dot_keys {
+            match self.collapsed_agent_dot_key.insert(task_id, next_key) {
+                Some(previous_key) if previous_key != next_key => {
+                    self.collapsed_agent_dot_previous_key
+                        .insert(task_id, previous_key);
+                    self.collapsed_agent_dot_crossfade.remove(&task_id);
+                }
+                Some(_) => {}
+                None => {
+                    self.collapsed_agent_dot_previous_key.remove(&task_id);
+                    self.collapsed_agent_dot_crossfade.remove(&task_id);
+                }
+            }
+        }
         let referenced_session_events: HashSet<redesmyn_ids::SessionEventId> = self
             .scene
             .nodes()
@@ -2760,6 +2809,32 @@ impl Render for GraphView {
                             .insert(session.session_event_id, content.clone());
                         Some(content)
                     });
+                    let current_agent_dot_key = AgentStatusDotVisualKey {
+                        task_state: state,
+                        agent_status: node.agent_status,
+                        continuable: latest_session.as_ref().is_some(),
+                    };
+                    self.collapsed_agent_dot_key
+                        .entry(task_id)
+                        .or_insert(current_agent_dot_key);
+                    let previous_agent_dot_key =
+                        self.collapsed_agent_dot_previous_key.get(&task_id).copied();
+                    let agent_dot_crossfade_duration =
+                        ui_test_mode_animation_duration(theme.animation.fast);
+                    let agent_dot_crossfade_progress = if previous_agent_dot_key.is_some() {
+                        self.collapsed_agent_dot_crossfade.value_for_render(
+                            task_id,
+                            1.0,
+                            agent_dot_crossfade_duration,
+                            window,
+                        )
+                    } else {
+                        1.0
+                    };
+                    if previous_agent_dot_key.is_some() && agent_dot_crossfade_progress >= 0.999 {
+                        self.collapsed_agent_dot_previous_key.remove(&task_id);
+                        self.collapsed_agent_dot_crossfade.remove(&task_id);
+                    }
 
                     let mut collapsed_content = div()
                         .absolute()
@@ -2832,10 +2907,10 @@ impl Render for GraphView {
                                                         ),
                                                 ),
                                         )
-                                        .child(agent_status_dot(
-                                            state,
-                                            node.agent_status,
-                                            latest_session.as_ref().is_some(),
+                                        .child(collapsed_agent_status_dot_crossfade(
+                                            current_agent_dot_key,
+                                            previous_agent_dot_key,
+                                            agent_dot_crossfade_progress,
                                             &theme,
                                             zoom,
                                         )),
@@ -3730,22 +3805,38 @@ fn agent_status_dot(
     theme: &redesmyn_ui::styles::UiTheme,
     zoom: f32,
 ) -> gpui::Div {
+    agent_status_dot_from_key(
+        AgentStatusDotVisualKey {
+            task_state,
+            agent_status,
+            continuable,
+        },
+        theme,
+        zoom,
+    )
+}
+
+fn agent_status_dot_from_key(
+    key: AgentStatusDotVisualKey,
+    theme: &redesmyn_ui::styles::UiTheme,
+    zoom: f32,
+) -> gpui::Div {
     let size = px(12.0 * zoom);
     let radius = px(999.0);
     let transparent = theme.colors.surface.opacity(0.0);
 
-    let (border, bg) = match task_state {
+    let (border, bg) = match key.task_state {
         TaskState::Blocked => (theme.colors.warning, theme.colors.warning),
         TaskState::Done => {
             let muted = theme.colors.foreground_muted.opacity(0.40);
             (muted, muted)
         }
-        _ => match agent_status {
+        _ => match key.agent_status {
             AgentStatus::Unknown => (theme.colors.foreground_muted.opacity(0.60), transparent),
             AgentStatus::Running => (theme.colors.success, theme.colors.success),
             AgentStatus::Blocked => (theme.colors.warning, theme.colors.warning),
             AgentStatus::Error => (theme.colors.danger, theme.colors.danger),
-            AgentStatus::Stopped if continuable => (theme.colors.info, transparent),
+            AgentStatus::Stopped if key.continuable => (theme.colors.info, transparent),
             AgentStatus::Stopped => (theme.colors.foreground_muted.opacity(0.60), transparent),
         },
     };
@@ -3756,6 +3847,40 @@ fn agent_status_dot(
         .border_1()
         .border_color(border)
         .bg(bg)
+}
+
+fn collapsed_agent_status_dot_crossfade(
+    current: AgentStatusDotVisualKey,
+    previous: Option<AgentStatusDotVisualKey>,
+    crossfade_progress: f32,
+    theme: &redesmyn_ui::styles::UiTheme,
+    zoom: f32,
+) -> gpui::Div {
+    let dot_size = px(12.0 * zoom);
+    let current_opacity = crossfade_progress.clamp(0.0, 1.0);
+    let previous_opacity = (1.0 - current_opacity).clamp(0.0, 1.0);
+
+    let mut layer = div().relative().size(dot_size);
+
+    if let Some(previous) = previous
+        && previous_opacity > 0.01
+    {
+        layer = layer.child(
+            div()
+                .absolute()
+                .inset_0()
+                .opacity(previous_opacity)
+                .child(agent_status_dot_from_key(previous, theme, zoom)),
+        );
+    }
+
+    layer.child(
+        div()
+            .absolute()
+            .inset_0()
+            .opacity(current_opacity)
+            .child(agent_status_dot_from_key(current, theme, zoom)),
+    )
 }
 
 fn status_badge(label: impl Into<gpui::SharedString>, kind: BadgeKind) -> impl IntoElement {

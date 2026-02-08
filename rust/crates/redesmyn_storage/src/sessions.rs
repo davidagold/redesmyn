@@ -26,6 +26,7 @@ type AgentSessionRow = (
     RepoId,
     String,
     Option<TaskId>,
+    Option<EpicId>,
     String,
     String,
     String,
@@ -33,6 +34,7 @@ type AgentSessionRow = (
     Option<i64>,
     Option<i64>,
     Option<i64>,
+    Option<String>,
 );
 
 fn decode_agent_session_row(
@@ -44,13 +46,15 @@ fn decode_agent_session_row(
         scope_repo_id,
         scope_kind,
         task_id,
+        epic_id,
         agent_kind,
         status,
         external_session_ref,
         title,
         started_at_ms,
         ended_at_ms,
-        closed_at_ms,
+        archived_at_ms,
+        repo_name,
     ): AgentSessionRow,
 ) -> Result<AgentSessionRecord, StorageError> {
     let scope_kind = match scope_kind.as_str() {
@@ -94,13 +98,15 @@ fn decode_agent_session_row(
         scope_repo_id,
         scope_kind,
         task_id,
+        epic_id,
         agent_kind,
         status,
         external_session_ref,
         title,
         started_at_ms,
         ended_at_ms,
-        closed_at_ms,
+        archived_at_ms,
+        repo_name,
     })
 }
 
@@ -113,13 +119,15 @@ pub struct AgentSessionRecord {
     pub scope_repo_id: RepoId,
     pub scope_kind: AgentSessionScopeKind,
     pub task_id: Option<TaskId>,
+    pub epic_id: Option<EpicId>,
     pub agent_kind: AgentKind,
     pub status: AgentSessionStatus,
     pub external_session_ref: String,
     pub title: Option<String>,
     pub started_at_ms: Option<i64>,
     pub ended_at_ms: Option<i64>,
-    pub closed_at_ms: Option<i64>,
+    pub archived_at_ms: Option<i64>,
+    pub repo_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -211,15 +219,16 @@ where
             scope_repo_id,
             scope_kind,
             task_id,
+            epic_id,
             agent_kind,
             status,
             external_session_ref,
             title,
             started_at_ms,
             ended_at_ms,
-            closed_at_ms
+            archived_at_ms
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
         "#,
     )
     .bind(session.session_id)
@@ -229,13 +238,14 @@ where
     .bind(session.scope_repo_id)
     .bind(session.scope_kind.as_str())
     .bind(session.task_id)
+    .bind(session.epic_id)
     .bind(session.agent_kind.as_str())
     .bind(session.status.as_str())
     .bind(&session.external_session_ref)
     .bind(&session.title)
     .bind(session.started_at_ms)
     .bind(session.ended_at_ms)
-    .bind(session.closed_at_ms)
+    .bind(session.archived_at_ms)
     .execute(executor)
     .await?;
 
@@ -252,22 +262,29 @@ where
     let row: Option<AgentSessionRow> = sqlx::query_as(
         r#"
         SELECT
-            session_id,
-            created_at_ms,
-            updated_at_ms,
-            scope_workspace_id,
-            scope_repo_id,
-            scope_kind,
-            task_id,
-            agent_kind,
-            status,
-            external_session_ref,
-            title,
-            started_at_ms,
-            ended_at_ms,
-            closed_at_ms
-        FROM agent_sessions
-        WHERE session_id = ?1
+            sessions.session_id,
+            sessions.created_at_ms,
+            sessions.updated_at_ms,
+            sessions.scope_workspace_id,
+            sessions.scope_repo_id,
+            sessions.scope_kind,
+            sessions.task_id,
+            sessions.epic_id,
+            sessions.agent_kind,
+            sessions.status,
+            sessions.external_session_ref,
+            sessions.title,
+            sessions.started_at_ms,
+            sessions.ended_at_ms,
+            sessions.archived_at_ms,
+            CASE
+                WHEN repositories.title IS NOT NULL AND TRIM(repositories.title) <> '' THEN repositories.title
+                WHEN repositories.slug IS NOT NULL AND TRIM(repositories.slug) <> '' THEN repositories.slug
+                ELSE NULL
+            END AS repo_name
+        FROM agent_sessions AS sessions
+        LEFT JOIN repositories ON repositories.id = sessions.scope_repo_id
+        WHERE sessions.session_id = ?1
         "#,
     )
     .bind(session_id)
@@ -281,6 +298,7 @@ pub async fn create_chat_session<'e, E>(
     executor: E,
     workspace_id: WorkspaceId,
     repo_id: RepoId,
+    epic_id: Option<EpicId>,
     agent_kind: AgentKind,
     title: Option<&str>,
 ) -> Result<SessionId, StorageError>
@@ -299,13 +317,15 @@ where
             scope_repo_id: repo_id,
             scope_kind: AgentSessionScopeKind::Chat,
             task_id: None,
+            epic_id,
             agent_kind,
             status: AgentSessionStatus::Stopped,
             external_session_ref: r#"{"type":"none"}"#.to_owned(),
             title: title.map(ToOwned::to_owned),
             started_at_ms: None,
             ended_at_ms: None,
-            closed_at_ms: None,
+            archived_at_ms: None,
+            repo_name: None,
         };
 
         insert_agent_session(executor, &session).await?;
@@ -338,13 +358,15 @@ where
             scope_repo_id: repo_id,
             scope_kind: AgentSessionScopeKind::Task,
             task_id: Some(task_id),
+            epic_id: None,
             agent_kind,
             status: AgentSessionStatus::Stopped,
             external_session_ref: r#"{"type":"none"}"#.to_owned(),
             title: title.map(ToOwned::to_owned),
             started_at_ms: None,
             ended_at_ms: None,
-            closed_at_ms: None,
+            archived_at_ms: None,
+            repo_name: None,
         };
 
         insert_agent_session(executor, &session).await?;
@@ -369,23 +391,30 @@ where
     let rows: Vec<AgentSessionRow> = sqlx::query_as(
         r#"
         SELECT
-            session_id,
-            created_at_ms,
-            updated_at_ms,
-            scope_workspace_id,
-            scope_repo_id,
-            scope_kind,
-            task_id,
-            agent_kind,
-            status,
-            external_session_ref,
-            title,
-            started_at_ms,
-            ended_at_ms,
-            closed_at_ms
-        FROM agent_sessions
-        WHERE scope_kind = 'task' AND task_id = ?1
-        ORDER BY created_at_ms DESC, session_id DESC
+            sessions.session_id,
+            sessions.created_at_ms,
+            sessions.updated_at_ms,
+            sessions.scope_workspace_id,
+            sessions.scope_repo_id,
+            sessions.scope_kind,
+            sessions.task_id,
+            sessions.epic_id,
+            sessions.agent_kind,
+            sessions.status,
+            sessions.external_session_ref,
+            sessions.title,
+            sessions.started_at_ms,
+            sessions.ended_at_ms,
+            sessions.archived_at_ms,
+            CASE
+                WHEN repositories.title IS NOT NULL AND TRIM(repositories.title) <> '' THEN repositories.title
+                WHEN repositories.slug IS NOT NULL AND TRIM(repositories.slug) <> '' THEN repositories.slug
+                ELSE NULL
+            END AS repo_name
+        FROM agent_sessions AS sessions
+        LEFT JOIN repositories ON repositories.id = sessions.scope_repo_id
+        WHERE sessions.scope_kind = 'task' AND sessions.task_id = ?1
+        ORDER BY sessions.created_at_ms DESC, sessions.session_id DESC
         LIMIT ?2
         "#,
     )
@@ -401,83 +430,65 @@ pub async fn list_chat_sessions<'e, E>(
     executor: E,
     workspace_id: WorkspaceId,
     repo_id: RepoId,
-    include_closed: bool,
+    epic_id: Option<EpicId>,
+    include_archived: bool,
     limit: u32,
 ) -> Result<Vec<AgentSessionRecord>, StorageError>
 where
     E: Executor<'e, Database = Sqlite>,
 {
-    let rows: Vec<AgentSessionRow> = if include_closed {
-        sqlx::query_as(
-            r#"
-            SELECT
-                session_id,
-                created_at_ms,
-                updated_at_ms,
-                scope_workspace_id,
-                scope_repo_id,
-                scope_kind,
-                task_id,
-                agent_kind,
-                status,
-                external_session_ref,
-                title,
-                started_at_ms,
-                ended_at_ms,
-                closed_at_ms
-            FROM agent_sessions
-            WHERE
-                scope_kind = 'chat'
-                AND scope_workspace_id = ?1
-                AND scope_repo_id = ?2
-            ORDER BY created_at_ms DESC, session_id DESC
-            LIMIT ?3
-            "#,
-        )
-        .bind(workspace_id)
-        .bind(repo_id)
-        .bind(i64::from(limit))
-        .fetch_all(executor)
-        .await?
-    } else {
-        sqlx::query_as(
-            r#"
-            SELECT
-                session_id,
-                created_at_ms,
-                updated_at_ms,
-                scope_workspace_id,
-                scope_repo_id,
-                scope_kind,
-                task_id,
-                agent_kind,
-                status,
-                external_session_ref,
-                title,
-                started_at_ms,
-                ended_at_ms,
-                closed_at_ms
-            FROM agent_sessions
-            WHERE
-                scope_kind = 'chat'
-                AND scope_workspace_id = ?1
-                AND scope_repo_id = ?2
-                AND closed_at_ms IS NULL
-            ORDER BY created_at_ms DESC, session_id DESC
-            LIMIT ?3
-            "#,
-        )
-        .bind(workspace_id)
-        .bind(repo_id)
-        .bind(i64::from(limit))
-        .fetch_all(executor)
-        .await?
-    };
+    let mut query = QueryBuilder::<Sqlite>::new(
+        r#"
+        SELECT
+            sessions.session_id,
+            sessions.created_at_ms,
+            sessions.updated_at_ms,
+            sessions.scope_workspace_id,
+            sessions.scope_repo_id,
+            sessions.scope_kind,
+            sessions.task_id,
+            sessions.epic_id,
+            sessions.agent_kind,
+            sessions.status,
+            sessions.external_session_ref,
+            sessions.title,
+            sessions.started_at_ms,
+            sessions.ended_at_ms,
+            sessions.archived_at_ms,
+            CASE
+                WHEN repositories.title IS NOT NULL AND TRIM(repositories.title) <> '' THEN repositories.title
+                WHEN repositories.slug IS NOT NULL AND TRIM(repositories.slug) <> '' THEN repositories.slug
+                ELSE NULL
+            END AS repo_name
+        FROM agent_sessions AS sessions
+        LEFT JOIN repositories ON repositories.id = sessions.scope_repo_id
+        WHERE
+            sessions.scope_kind = 'chat'
+            AND sessions.scope_workspace_id =
+        "#,
+    );
+    query.push_bind(workspace_id);
+    query.push(" AND sessions.scope_repo_id = ");
+    query.push_bind(repo_id);
+
+    if let Some(epic_id) = epic_id {
+        query.push(" AND sessions.epic_id = ");
+        query.push_bind(epic_id);
+    }
+
+    if !include_archived {
+        query.push(" AND sessions.archived_at_ms IS NULL");
+    }
+
+    query.push(" ORDER BY sessions.created_at_ms DESC, sessions.session_id DESC LIMIT ");
+    query.push_bind(i64::from(limit));
+
+    let rows: Vec<AgentSessionRow> = query.build_query_as().fetch_all(executor).await?;
 
     rows.into_iter().map(decode_agent_session_row).collect()
 }
 
-pub async fn close_chat_session<'e, E>(
+pub async fn archive_chat_session<'e, E>(
     executor: E,
     session_id: SessionId,
 ) -> Result<(), StorageError>
@@ -491,9 +502,7 @@ where
             UPDATE agent_sessions
             SET
                 updated_at_ms = ?1,
-                status = 'stopped',
-                closed_at_ms = COALESCE(closed_at_ms, ?1),
-                ended_at_ms = COALESCE(ended_at_ms, ?1)
+                archived_at_ms = COALESCE(archived_at_ms, ?1)
             WHERE session_id = ?2 AND scope_kind = 'chat'
             "#,
         )
@@ -510,8 +519,35 @@ where
 
         Ok(())
     }
-    .instrument(debug_span!("storage.close_chat_session", session_id = %session_id))
+    .instrument(debug_span!("storage.archive_chat_session", session_id = %session_id))
     .await
+}
+
+pub async fn set_session_title_if_missing<'e, E>(
+    executor: E,
+    session_id: SessionId,
+    title: &str,
+) -> Result<bool, StorageError>
+where
+    E: Executor<'e, Database = Sqlite>,
+{
+    let now_ms = now_ms();
+    let result = sqlx::query(
+        r#"
+        UPDATE agent_sessions
+        SET
+            updated_at_ms = ?1,
+            title = ?2
+        WHERE session_id = ?3 AND title IS NULL
+        "#,
+    )
+    .bind(now_ms)
+    .bind(title)
+    .bind(session_id)
+    .execute(executor)
+    .await?;
+
+    Ok(result.rows_affected() > 0)
 }
 
 pub async fn update_agent_session_status<'e, E>(
@@ -646,18 +682,20 @@ where
     let created_at_ms = event.created_at_ms.unwrap_or_else(now_ms);
 
     async {
-        let (workspace_id, repo_id, scope_kind, task_id): (
+        let (workspace_id, repo_id, scope_kind, task_id, epic_id): (
             WorkspaceId,
             RepoId,
             String,
             Option<TaskId>,
+            Option<EpicId>,
         ) = sqlx::query_as(
             r#"
                 SELECT
                     scope_workspace_id,
                     scope_repo_id,
                     scope_kind,
-                    task_id
+                    task_id,
+                    epic_id
                 FROM agent_sessions
                 WHERE session_id = ?1
                 "#,
@@ -670,7 +708,13 @@ where
         })?;
 
         let (scope_kind, epic_id, task_id) = match scope_kind.as_str() {
-            "chat" => ("repo", None::<EpicId>, None::<TaskId>),
+            "chat" => {
+                if let Some(epic_id) = epic_id {
+                    ("epic", Some(epic_id), None::<TaskId>)
+                } else {
+                    ("repo", None::<EpicId>, None::<TaskId>)
+                }
+            }
             "task" => {
                 let task_id = task_id.ok_or_else(|| StorageError::InvalidData {
                     message: format!("task session missing task_id: {session_id}"),

@@ -10,7 +10,8 @@ use redesmyn_protocol::prelude::BUILT_IN_PRELUDE_TEMPLATE;
 
 use redesmyn_ui::UiContext;
 use redesmyn_ui::components::{
-    ButtonKind, Callout, CalloutKind, IconButton, ScrollArea, TextArea, TextButton, TextInputEvent,
+    ButtonKind, Callout, CalloutKind, IconButton, ScrollArea, TextArea, TextButton, TextInput,
+    TextInputEvent,
 };
 use redesmyn_ui::settings::ThemePreference;
 use redesmyn_ui::utils::{
@@ -48,6 +49,7 @@ pub struct SettingsDialog {
     codex_model_options_loading: bool,
     default_prelude_open: bool,
     prelude_input: Entity<TextArea>,
+    openai_api_key_input: Entity<TextInput>,
     save: UserActionState,
     notice: Option<SharedString>,
 }
@@ -60,6 +62,7 @@ impl SettingsDialog {
                 .min_rows(4)
                 .max_rows(12)
         });
+        let openai_api_key_input = cx.new(|cx| TextInput::new(cx).placeholder("Optional (sk-...)"));
 
         Self {
             root_focus_handle,
@@ -75,6 +78,7 @@ impl SettingsDialog {
             codex_model_options_loading: false,
             default_prelude_open: false,
             prelude_input,
+            openai_api_key_input,
             save: UserActionState::default(),
             notice: None,
         }
@@ -82,6 +86,10 @@ impl SettingsDialog {
 
     pub fn prelude_input_entity(&self) -> Entity<TextArea> {
         self.prelude_input.clone()
+    }
+
+    pub fn openai_api_key_input_entity(&self) -> Entity<TextInput> {
+        self.openai_api_key_input.clone()
     }
 
     pub fn set_codex_model_options(&mut self, mut options: Vec<SessionModelOption>) {
@@ -154,6 +162,22 @@ impl SettingsDialog {
         };
 
         self.draft.harness.prelude = (!value.trim().is_empty()).then(|| value.to_string());
+        self.notice = None;
+        self.save.clear_error();
+        cx.notify();
+    }
+
+    pub fn handle_openai_api_key_input_event(
+        &mut self,
+        event: TextInputEvent,
+        cx: &mut Context<RootView>,
+    ) {
+        let value = match event {
+            TextInputEvent::Changed(value) | TextInputEvent::Submitted(value) => value,
+            TextInputEvent::PastedImages(_) => return,
+        };
+
+        self.draft.openai.api_key = (!value.trim().is_empty()).then(|| value.to_string());
         self.notice = None;
         self.save.clear_error();
         cx.notify();
@@ -246,6 +270,9 @@ impl SettingsDialog {
         let prelude = self.draft.harness.prelude.clone().unwrap_or_default();
         self.prelude_input
             .update(cx, move |input, cx| input.set_text(prelude, cx));
+        let api_key = self.draft.openai.api_key.clone().unwrap_or_default();
+        self.openai_api_key_input
+            .update(cx, move |input, cx| input.set_text(api_key, cx));
 
         window.focus(&self.root_focus_handle);
         cx.notify();
@@ -732,6 +759,7 @@ impl SettingsDialog {
 
         let mut body = div().flex().flex_col().gap(theme.spacing.lg);
         let agent_section = self.agent_section_agent(root, window, cx);
+        let integrations_section = self.agent_section_integrations(window, cx);
         let prelude_section = self.agent_section_prelude(root, window, cx);
 
         body = body
@@ -742,6 +770,7 @@ impl SettingsDialog {
                     .child("Agents"),
             )
             .child(self.section_card("Agent", agent_section, window, cx))
+            .child(self.section_card("Integrations", integrations_section, window, cx))
             .child(self.section_card("Prelude", prelude_section, window, cx));
 
         body.into_any_element()
@@ -1281,6 +1310,33 @@ impl SettingsDialog {
             .into_any_element()
     }
 
+    fn agent_section_integrations(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<RootView>,
+    ) -> AnyElement {
+        let theme = theme_for_window(window, cx);
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(theme.spacing.sm)
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.colors.foreground_muted)
+                    .child("OpenAI API key"),
+            )
+            .child(self.openai_api_key_input.clone())
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.colors.foreground_muted)
+                    .child("Used for automatic chat title generation. Saved to repo config as [openai].api_key."),
+            )
+            .into_any_element()
+    }
+
     fn prelude_delivery_settings(
         &mut self,
         root: &Entity<RootView>,
@@ -1602,6 +1658,9 @@ impl SettingsDialog {
         let prelude = self.draft.harness.prelude.clone().unwrap_or_default();
         self.prelude_input
             .update(cx, move |input, cx| input.set_text(prelude, cx));
+        let api_key = self.draft.openai.api_key.clone().unwrap_or_default();
+        self.openai_api_key_input
+            .update(cx, move |input, cx| input.set_text(api_key, cx));
 
         cx.notify();
     }
@@ -1628,9 +1687,13 @@ impl SettingsDialog {
                 if let Some(root) = root.upgrade() {
                     let _ = root.update(&mut cx, |this, cx| match result {
                         Ok(()) => {
+                            let openai_api_key = desired.openai.api_key.clone();
                             this.settings_dialog.baseline = desired;
                             this.settings_dialog.save.succeed();
                             this.settings_dialog.notice = Some("Saved".into());
+                            redesmyn_control_plane::client_api::set_openai_api_key_override(
+                                openai_api_key,
+                            );
                             cx.notify();
                         }
                         Err(err) => {

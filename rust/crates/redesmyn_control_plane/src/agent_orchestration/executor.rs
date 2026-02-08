@@ -76,13 +76,15 @@ async fn insert_task_session(
             scope_repo_id: repo_id,
             scope_kind: StorageAgentSessionScopeKind::Task,
             task_id: Some(task_id),
+            epic_id: None,
             agent_kind: storage_kind,
             status: StorageAgentSessionStatus::Running,
             external_session_ref,
             title: None,
             started_at_ms: Some(now_ms),
             ended_at_ms: None,
-            closed_at_ms: None,
+            archived_at_ms: None,
+            repo_name: None,
         },
     )
     .await

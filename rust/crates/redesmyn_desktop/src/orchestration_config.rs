@@ -312,6 +312,7 @@ pub struct OrchestrationDefaults {
     pub sandbox_type: SandboxType,
     pub sandbox_network: SandboxNetworkMode,
     pub session_defaults: SessionDefaults,
+    pub openai: OpenAiDefaults,
 }
 
 impl Default for OrchestrationDefaults {
@@ -321,8 +322,14 @@ impl Default for OrchestrationDefaults {
             sandbox_type: SandboxType::None,
             sandbox_network: SandboxNetworkMode::Allow,
             session_defaults: SessionDefaults::default(),
+            openai: OpenAiDefaults::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct OpenAiDefaults {
+    pub api_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -341,6 +348,7 @@ struct PartialOrchestrationDefaults {
     sandbox_type: Option<SandboxType>,
     sandbox_network: Option<SandboxNetworkMode>,
     session_defaults: PartialSessionDefaults,
+    openai: PartialOpenAiDefaults,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -354,6 +362,11 @@ struct PartialCodexSessionDefaults {
     sandbox_policy: Option<CodexSandboxPolicyDefault>,
     model: Option<Option<CodexModelName>>,
     reasoning_effort: Option<CodexReasoningEffortDefault>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct PartialOpenAiDefaults {
+    api_key: Option<Option<String>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -525,6 +538,18 @@ fn parse_partial_from_doc(doc: &DocumentMut) -> PartialOrchestrationDefaults {
         }
     }
 
+    if let Some(openai) = doc.get("openai").and_then(|item| item.as_table())
+        && openai.contains_key("api_key")
+    {
+        partial.openai.api_key = Some(
+            openai
+                .get("api_key")
+                .and_then(|item| item.as_str())
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
+        );
+    }
+
     partial
 }
 
@@ -566,6 +591,9 @@ fn apply_partial(defaults: &mut OrchestrationDefaults, partial: PartialOrchestra
     }
     if let Some(reasoning_effort) = partial.session_defaults.codex.reasoning_effort {
         defaults.session_defaults.codex.reasoning_effort = reasoning_effort;
+    }
+    if let Some(api_key) = partial.openai.api_key {
+        defaults.openai.api_key = api_key;
     }
 }
 
@@ -676,6 +704,22 @@ fn write_defaults_to_path(
         }
         other => {
             codex["reasoning_effort"] = value(other.as_str());
+        }
+    }
+
+    let openai = ensure_table(&mut doc, "openai");
+    match defaults
+        .openai
+        .api_key
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        Some(api_key) => {
+            openai["api_key"] = value(api_key);
+        }
+        None => {
+            openai.remove("api_key");
         }
     }
 

@@ -36,7 +36,7 @@ pub enum UiDriverMethod {
     SetSettingsDialogOpen,
     SetSettingsDialogSection,
     CreateChatSession,
-    CloseChatSession,
+    ArchiveChatSession,
     PinChatSession,
     UnpinChatSession,
     TriggerRefresh,
@@ -80,7 +80,7 @@ pub enum UiDriverRequestPayload {
     SetSettingsDialogOpen(SetSettingsDialogOpenRequest),
     SetSettingsDialogSection(SetSettingsDialogSectionRequest),
     CreateChatSession(CreateChatSessionRequest),
-    CloseChatSession(CloseChatSessionRequest),
+    ArchiveChatSession(ArchiveChatSessionRequest),
     PinChatSession(PinChatSessionRequest),
     UnpinChatSession(UnpinChatSessionRequest),
     TriggerRefresh(TriggerRefreshRequest),
@@ -111,7 +111,7 @@ impl UiDriverRequestPayload {
             Self::SetSettingsDialogOpen(_) => UiDriverMethod::SetSettingsDialogOpen,
             Self::SetSettingsDialogSection(_) => UiDriverMethod::SetSettingsDialogSection,
             Self::CreateChatSession(_) => UiDriverMethod::CreateChatSession,
-            Self::CloseChatSession(_) => UiDriverMethod::CloseChatSession,
+            Self::ArchiveChatSession(_) => UiDriverMethod::ArchiveChatSession,
             Self::PinChatSession(_) => UiDriverMethod::PinChatSession,
             Self::UnpinChatSession(_) => UiDriverMethod::UnpinChatSession,
             Self::TriggerRefresh(_) => UiDriverMethod::TriggerRefresh,
@@ -167,7 +167,7 @@ pub enum UiDriverResponseResult {
     SetSettingsDialogOpen(SetSettingsDialogOpenResponse),
     SetSettingsDialogSection(SetSettingsDialogSectionResponse),
     CreateChatSession(CreateChatSessionResponse),
-    CloseChatSession(CloseChatSessionResponse),
+    ArchiveChatSession(ArchiveChatSessionResponse),
     PinChatSession(PinChatSessionResponse),
     UnpinChatSession(UnpinChatSessionResponse),
     TriggerRefresh(TriggerRefreshResponse),
@@ -299,12 +299,12 @@ pub struct CreateChatSessionResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct CloseChatSessionRequest {
+pub struct ArchiveChatSessionRequest {
     pub session_id: SessionId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct CloseChatSessionResponse {}
+pub struct ArchiveChatSessionResponse {}
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PinChatSessionRequest {

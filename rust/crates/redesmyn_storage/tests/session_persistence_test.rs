@@ -80,10 +80,16 @@ async fn persists_session_events_with_pagination_and_kind_filter() {
     insert_repo(&pool, repo_id, workspace_id).await;
     insert_epic(&pool, epic_id, repo_id).await;
 
-    let session_id =
-        create_chat_session(&pool, workspace_id, repo_id, AgentKind::Codex, Some("Chat"))
-            .await
-            .unwrap();
+    let session_id = create_chat_session(
+        &pool,
+        workspace_id,
+        repo_id,
+        None,
+        AgentKind::Codex,
+        Some("Chat"),
+    )
+    .await
+    .unwrap();
 
     pin_chat_session_to_epic(&pool, epic_id, session_id)
         .await

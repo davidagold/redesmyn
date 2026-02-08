@@ -564,13 +564,15 @@ async fn ensure_session_viewer_fixture_agent_session(
         scope_repo_id: repo_id,
         scope_kind: AgentSessionScopeKind::Chat,
         task_id: None,
+        epic_id: None,
         agent_kind: AgentKind::Codex,
         status: AgentSessionStatus::Stopped,
         external_session_ref: r#"{"type":"none"}"#.to_owned(),
         title: Some("Fixture session".to_owned()),
         started_at_ms: Some(now_ms),
         ended_at_ms: None,
-        closed_at_ms: None,
+        archived_at_ms: None,
+        repo_name: None,
     };
 
     insert_agent_session(pool, &session).await?;

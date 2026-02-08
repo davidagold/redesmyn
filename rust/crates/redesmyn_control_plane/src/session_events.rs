@@ -555,15 +555,16 @@ async fn ensure_task_agent_session_row(
             scope_repo_id,
             scope_kind,
             task_id,
+            epic_id,
             agent_kind,
             status,
             external_session_ref,
             title,
             started_at_ms,
             ended_at_ms,
-            closed_at_ms
+            archived_at_ms
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
         "#,
     )
     .bind(event.session_id)
@@ -573,6 +574,7 @@ async fn ensure_task_agent_session_row(
     .bind(repo_id)
     .bind(StorageAgentSessionScopeKind::Task.as_str())
     .bind(task_id)
+    .bind(Option::<EpicId>::None)
     .bind(agent_kind.as_str())
     .bind(status.as_str())
     .bind(external_session_ref)
