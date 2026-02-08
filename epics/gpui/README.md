@@ -52,6 +52,12 @@ Embedding both in the desktop app is an implementation detail:
 - “Remote daemon” uses a **network transport**.
 - The control plane speaks only to a **transport trait**, never daemon internals.
 
+Practical rule (avoid “local mode” drift):
+
+- The canonical cross-boundary message schema lives in `rust/crates/redesmyn_protocol` (generated from `.proto`).
+- All daemon↔control-plane communication (in-proc or remote) is expressed in terms of these typed message enums/structs.
+- In-proc transports may pass typed messages directly for speed, but we also support an optional “codec loopback” mode (encode→decode) to exercise the on-wire codec in embedded dev/tests without changing application architecture.
+
 ### 3.2 Serialization strategy (long-term view)
 
 We optimize for performance while preserving debuggability:
@@ -105,6 +111,51 @@ Priorities:
 - performance and simplicity,
 - deterministic behavior,
 - smooth relayout when task cards expand/collapse.
+
+### 3.6 Database strategy (split-codebase period)
+
+During the port we keep the legacy Python/Alembic DB intact and introduce a separate Rust/sqlx DB:
+
+- Legacy DB (Python/Alembic): `<repo>/.redesmyn/redesmyn.sqlite3`
+- Rust DB (control plane, `sqlx`): `<repo>/.redesmyn/redesmyn_rust.sqlite3`
+
+Rationale:
+
+- avoids table/schema collisions during the port,
+- allows Rust to evolve toward ULID/BLOB keys + binary payloads without constraints,
+- keeps migration ownership unambiguous (one migrator per DB),
+- preserves the legacy DB as a backup/forensics artifact.
+
+Import/cutover tooling is explicitly designed and tested (see T-67).
+
+### 3.7 GPUI state architecture (Presentation Model; explicit + testable)
+
+We adopt the “good part” of MVVM (Presentation Model) while avoiding the most failure-prone part (implicit two-way binding magic).
+
+**Layering**
+
+- **Domain state** lives in the headless control plane (event log + read models + APIs). The desktop UI must treat this boundary as remote even when embedded in one process.
+- **Presentation state** lives in GPUI-owned entities/models and exists *because we have a UI*: selection, focus, pan/zoom camera, filters, expanded/collapsed node sizes, diff view options, pagination cursors, in-flight actions, and errors.
+- **Views** are thin projections: `render()` maps presentation state → element tree.
+
+**Flow**
+
+- **Unidirectional data flow**:
+  - control plane events/queries → reduce into presentation state → render,
+  - user actions → commands → visible in-flight state → results/errors → reduce → render.
+- Avoid re-entrancy/event spaghetti: side effects happen in event handlers/tasks; state mutation happens in explicit update contexts; notifications are treated as “deliver after update” (batchy), not “live-wired bindings”.
+
+**Seams for parallelism**
+
+- Prefer multiple small, feature-scoped presentation models (e.g. `GraphSceneState`, `SessionFeedState`, `DetailsPanelState`) over a single “god viewmodel”.
+- Keep rendering/layout/IO separable by construction:
+  - layout engines and view-model reducers should be unit-testable without GPUI,
+  - GPUI views should depend only on typed view-models + shared UI primitives.
+
+**Determinism + AI-first testability**
+
+- Use stable IDs/keys and deterministic ordering rules so semantic UI snapshots can assert state reliably (see T-48/T-58/T-66).
+- Do not depend on implicit “binding-driven” synchronization; all updates must be explicit and observable.
 
 ## 4) Domain map (top-level workstreams)
 
@@ -175,6 +226,7 @@ Sequencing intent:
 - `epics/gpui/tasks/T-20/README.md`: Client API server over UDS (requests + subscriptions).
 - `epics/gpui/tasks/T-21/README.md`: Epic graph query model + projection.
 - `epics/gpui/tasks/T-22/README.md`: Control plane integration test harness (mock daemon + real repo modes).
+- `epics/gpui/tasks/T-67/README.md`: Legacy DB → Rust DB import + cutover tooling.
 
 Sequencing intent:
 
@@ -210,9 +262,18 @@ This domain ports/redesigns agent execution around **durable structured session 
 - “send message” conflict handling semantics,
 - interrupt semantics.
 
+Architecture note (important):
+
+- The control plane and UI/CLI never “run Codex/Claude” directly. They issue typed commands and consume `SessionEvent`s.
+- Daemon-side runners are implementations of a **runtime interface** (start/stop/interrupt/send-turn) with multiple internal runtime kinds:
+  - `StructuredExec` (per-turn subprocess spawn; stdout parsing), and
+  - `AppServer` (long-lived server; request/response + notifications).
+- This seam is what lets us transition Codex from exec-mode to app-server mode quickly: swap the daemon runner implementation without rewriting
+  control-plane semantics or UI components.
+
 Tasks:
 
-- `epics/gpui/tasks/T-32/README.md`: Agent kind taxonomy + interface mode inference + resume-by-id turn builder (Shell naming).
+- `epics/gpui/tasks/T-32/README.md`: Agent taxonomy + interface inference + turn builders (structured exec + app-server).
 - `epics/gpui/tasks/T-33/README.md`: Codex structured parser → session events (pure state machine + tests).
 - `epics/gpui/tasks/T-34/README.md`: Claude Code structured parser → session events (pure state machine + tests).
 - `epics/gpui/tasks/T-35/README.md`: Daemon exec-session supervisor (process lifecycle + event streaming + backpressure).
@@ -220,6 +281,8 @@ Tasks:
 - `epics/gpui/tasks/T-37/README.md`: Daemon Codex runner (structured) (exec-based; output-last-message capture).
 - `epics/gpui/tasks/T-38/README.md`: Daemon Claude Code runner (structured) (exec-based).
 - `epics/gpui/tasks/T-39/README.md`: Daemon app-server agent runtime skeleton.
+- `epics/gpui/tasks/T-68/README.md`: Codex app-server runner (daemon) (JSON-RPC over stdio; protocol v2).
+- `epics/gpui/tasks/T-76/README.md`: Codex app-server protocol conformance harness (fixtures + drift detection).
 - `epics/gpui/tasks/T-40/README.md`: Control plane session persistence + query surfaces (sqlx).
 - `epics/gpui/tasks/T-41/README.md`: Control plane agent commands + “send message” semantics (conflicts/resume/interrupt) + API methods.
 - `epics/gpui/tasks/T-42/README.md`: End-to-end agent session integration tests (mock agents, determinism, persistence).
@@ -241,11 +304,13 @@ Layout direction:
 - A persistently visible, collapsible **left session pane** scoped to the selected epic.
 - A graph-first right pane.
 - “Overseer” is developer shorthand only; the UI does not introduce a new user-facing construct.
+- Zed is the primary reference implementation for GPUI ergonomics/perf; implement patterns from scratch (see T-44).
+- GPUI engineering notes/gotchas: `epics/gpui/GPUI_ENGINEERING_NOTES.md`.
 
 Tasks:
 
 - `epics/gpui/tasks/T-43/README.md`: GPUI desktop app bootstrap + lifecycle (embed control plane + daemon modules).
-- `epics/gpui/tasks/T-44/README.md`: GPUI UI foundations (theme, tokens, gpui-component survey, shared widgets).
+- `epics/gpui/tasks/T-44/README.md`: GPUI UI foundations (theme, tokens, shared widgets).
 - `epics/gpui/tasks/T-45/README.md`: Main split layout (left session pane + right workspace; resizable + collapsible).
 - `epics/gpui/tasks/T-46/README.md`: Epic header + chrome (epic selector, status, refresh, settings/command entrypoints).
 - `epics/gpui/tasks/T-47/README.md`: User-managed chat sessions + epic pins (no “overseer” naming).
@@ -276,9 +341,12 @@ Tasks:
 - `epics/gpui/tasks/T-50/README.md`: Graph scene + renderer scaffolding (GPUI canvas, camera, hit-testing).
 - `epics/gpui/tasks/T-51/README.md`: Deterministic layout engine v1 (variable node sizes; expand/collapse relayout).
 - `epics/gpui/tasks/T-52/README.md`: Task node view (compact/expanded; measurement; selection affordances).
+- `epics/gpui/tasks/T-77/README.md`: Collapsed task card parity (header/title/preview/status).
 - `epics/gpui/tasks/T-53/README.md`: Edge routing + rendering (orthogonal edges; hover/selection; LOD labels).
-- `epics/gpui/tasks/T-54/README.md`: Viewport behaviors (fit-to-view, pan-to-selection, focus mode path).
-- `epics/gpui/tasks/T-55/README.md`: Details panel (drawer) + selection model integration.
+- `epics/gpui/tasks/T-69/README.md`: Graph node virtualization + LOD (viewport culling; node render modes).
+- `epics/gpui/tasks/T-78/README.md`: GPU backpressure for pan/zoom (cap frames-in-flight memory spikes).
+- `epics/gpui/tasks/T-54/README.md`: Viewport behaviors (fit-to-view, pan-to-selection).
+- `epics/gpui/tasks/T-55/README.md`: Expanded task card: details + selection integration (no sidebar drawer).
 - `epics/gpui/tasks/T-56/README.md`: Bulk selection + action bar (multi-select UX).
 - `epics/gpui/tasks/T-57/README.md`: Trunk timeline column (commit marks; base alignment; optional but planned).
 - `epics/gpui/tasks/T-58/README.md`: Graph testability surfaces (extend UI driver + semantic snapshot for graph).
@@ -287,6 +355,7 @@ Sequencing intent:
 
 - Land renderer + layout foundations early (T-50, T-51).
 - Build node/edge rendering and viewport behaviors in parallel (T-52..T-54).
+- Add node virtualization/LOD once the node view/measurement loop is stable (T-69).
 - Integrate details and bulk actions after selection/interaction are stable (T-55, T-56).
 - Keep trunk timeline optional so it doesn’t block core graph parity (T-57).
 
@@ -312,6 +381,7 @@ Tasks:
 - `epics/gpui/tasks/T-61/README.md`: SessionView virtualized feed + scroll behaviors.
 - `epics/gpui/tasks/T-62/README.md`: Session composer + conflict/confirm UX (preserve v0 semantics).
 - `epics/gpui/tasks/T-63/README.md`: Left pane pinned chat session viewer (no “overseer” naming).
-- `epics/gpui/tasks/T-64/README.md`: Task details session view (latest session only).
+- `epics/gpui/tasks/T-64/README.md`: Expanded task card: latest session view (latest session only).
 - `epics/gpui/tasks/T-65/README.md`: Interactive (tmux) session placeholder UX (attach/copy; no terminal emulator in port).
 - `epics/gpui/tasks/T-66/README.md`: Session viewer AI-testability (UI driver actions + semantic snapshot + tests).
+- `epics/gpui/tasks/T-70/README.md`: Desktop fixture mode for SessionView (seeded DB + demo events).

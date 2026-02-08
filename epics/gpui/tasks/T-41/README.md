@@ -39,6 +39,14 @@ Implement agent orchestration as **control-plane-owned business logic** exposed 
 
 The control plane persists command lifecycles (T-19) and routes execution to the daemon via the daemon stream protocol (T-11), while persisting session events (T-40).
 
+Architecture note (important):
+
+- The control plane defines *what* we are trying to do (“send this prompt”, “interrupt”, “stop session”, “resume existing conversation when possible”).
+- The daemon runner defines *how* that is satisfied for a given `(AgentProvider, AgentRuntimeKind)`:
+  - StructuredExec: argv shaping + subprocess supervision + stdout parsing (T-35/T-37/T-38).
+  - AppServer: request/response + notifications (T-39/T-68).
+- Command payloads should therefore avoid embedding provider-specific argv/protocol details; keep them stable-id + intent oriented.
+
 ## Requirements
 
 ### 1) Define command kinds + payloads
@@ -99,6 +107,12 @@ Ensure that, as part of these flows:
 - user messages and assistant messages become durable session events (T-14),
 - and are persisted (T-40),
 - while delta/chunk events are not persisted.
+
+Delivery path (important):
+
+- The daemon must emit `SessionEvent` batches over the daemon stream protocol as `DaemonMessage::SessionEventBatch`.
+- The control plane ingests those frames and persists events via the `SessionEvents` store, which also publishes them to session event subscriptions.
+- The daemon must not write to the control plane DB directly (remote-daemon readiness; separation by construction).
 
 Also ensure we follow the “session == conversation; turns are events” rule:
 

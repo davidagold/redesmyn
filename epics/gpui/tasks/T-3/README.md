@@ -1,7 +1,7 @@
 ---
 epic: gpui
 branch:
-  suggested: rn/gpui/T-3-error-conventions
+  suggested: rn/gpui/T-3-errorresult-conventions
 rn:
   parent: T-1
 ---

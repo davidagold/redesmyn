@@ -109,8 +109,7 @@ Define a minimal invalidation story:
 
 - layout is recomputed when:
   - topology changes,
-  - node sizes change,
-  - or focus mode changes (subset layout; see T-54).
+  - node sizes change.
 
 The layout engine itself remains pure; the UI decides when to call it.
 
@@ -136,4 +135,3 @@ The layout engine itself remains pure; the UI decides when to call it.
   - `dashboard/src/components/graph/flowLayout.ts` (DFS traversal layout).
 - Config constants (web today):
   - `dashboard/src/components/graph/graphConfig.ts` (node sizes + spacing).
-

@@ -28,17 +28,22 @@ Create the daemon-side **app-server agent runtime skeleton**:
 
 without fully implementing a specific external protocol yet.
 
+Interface note (important):
+
+- The app-server skeleton must align with the same high-level session runtime surface consumed by the control plane (T-41) as the StructuredExec runners
+  (T-37/T-38). The control plane should not need “app-server special cases”.
+- Provider-specific protocol details (e.g., Codex app-server JSON-RPC) live in the provider runner (T-68), built on this skeleton.
+
 ## Requirements
 
 ### 1) Agent runtime taxonomy
 
-Introduce an explicit runtime kind (names illustrative):
+Use the shared taxonomy from T-32:
 
-- `AgentRuntimeKind::ShellTmux`
-- `AgentRuntimeKind::Exec`
-- `AgentRuntimeKind::AppServer`
+- `AgentProvider` (Codex/ClaudeCode/Shell) is the “who/what implementation family”.
+- `AgentRuntimeKind` (ShellTmux/StructuredExec/AppServer) is the “how we talk to it / contract”.
 
-This is separate from agent brand/kind (Codex/Claude/etc).
+The app-server skeleton in this ticket is for `AgentRuntimeKind::AppServer` and must remain provider-agnostic.
 
 ### 2) Minimal skeleton capabilities
 
@@ -51,6 +56,11 @@ Define the minimal interfaces needed for future work:
   - messages,
   - tool invocations/results,
   - artifacts.
+
+Delivery path (important):
+
+- The daemon delivers structured session events to the control plane over the daemon stream protocol as `DaemonMessage::SessionEventBatch`.
+- The daemon does not persist session events directly to the control plane DB.
 
 ### 3) Transport constraints
 
@@ -80,4 +90,3 @@ Define the minimal interfaces needed for future work:
 
 - Motivation (external; not implemented in Redesmyn today):
   - `codex-rs/app-server` (linked by project notes as the direction for “app-server” agents).
-

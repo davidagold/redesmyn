@@ -43,6 +43,8 @@ This ticket focuses on architecture and scaffolding; the layout algorithm and ri
 
 ## Requirements
 
+Architecture note: follow the GPUI state architecture policy in `epics/gpui/README.md` §3.7 (Presentation Model; explicit + testable). In particular: keep domain/business state in the control plane; treat `GraphScene` and camera/selection state as UI presentation models; keep IO out of `render()`.
+
 ### 1) Crate/module structure
 
 Create a dedicated Rust module/crate for the graph UI (names illustrative):
@@ -122,4 +124,3 @@ Even in scaffolding, establish the UI pattern:
   - `dashboard/src/components/graph/graphConfig.ts` (camera + perf constants; fit/pan policies).
 - Graph data shape (web today):
   - `dashboard/src/lib/graph-utils.ts` (EpicGraph-derived types).
-

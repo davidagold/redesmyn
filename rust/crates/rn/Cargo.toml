@@ -5,8 +5,26 @@ license.workspace = true
 rust-version.workspace = true
 version.workspace = true
 publish = false
+autobins = false
+default-run = "rn-rs"
+
+[[bin]]
+name = "rn-rs"
+path = "src/main.rs"
 
 [dependencies]
+clap.workspace = true
+prost.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml_edit.workspace = true
+
+tokio = { workspace = true, features = ["rt", "time"] }
+
 redesmyn_config.workspace = true
+redesmyn_client_api = { workspace = true, features = ["uds"] }
 redesmyn_logging.workspace = true
 redesmyn_protocol.workspace = true
+redesmyn_ids.workspace = true
+redesmyn_storage.workspace = true
+redesmyn_transport.workspace = true

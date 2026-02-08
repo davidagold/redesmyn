@@ -14,7 +14,7 @@ Redesmyn’s concurrency model depends on worktrees:
 
 - each task maps to a branch + worktree,
 - git operations must be safe across multiple worktrees,
-- and the daemon must be the single writer that creates/mutates worktrees (subject to lease).
+- and the daemon must be the single writer that creates/mutates worktrees (enforced by repo instance exclusivity; see T-24).
 
 If worktree behavior is implicit and scattered, we risk:
 
@@ -59,11 +59,12 @@ Enforce:
 - branch exists and points to expected ref when required,
 - no destructive actions without explicit command intent.
 
-### 3) Lease enforcement
+### 3) Repo instance exclusivity
 
 Worktree-creating/removing operations are mutating:
 
-- must require primary lease (T-25).
+- must require repo attachment + repo instance exclusivity (attach lock; T-24).
+- do not require a repo-scope primary lease (T-25); they are strictly local to a repo instance.
 
 ### 4) Telemetry hooks
 
@@ -84,7 +85,7 @@ Provide structured “worktree health” data for the observation loop (T-28) an
 
 ## Dependencies / sequencing
 
-- Depends on git backend abstraction (T-26) and lease enforcement (T-25) for mutating ops.
+- Depends on git backend abstraction (T-26) and repo attachment/exclusivity (T-24) for mutating ops.
 - Used later by agent runtime (Domain 4) and merge/restack execution (T-30).
 
 ## Reference implementation (today; worktree orientation only)

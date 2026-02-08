@@ -81,6 +81,13 @@ Conversation invariants (see `epics/harness-interface-v0/tasks/T-15/README.md`):
   - `session_id` (ULID BLOB(16))
   - index by `session_id` for “list epics pinned to this chat”
 
+Constraint preference:
+
+- Prefer DB-level constraints over app-layer revalidation:
+  - `scope_kind = task` implies `task_id IS NOT NULL` (and `scope_kind = chat` implies `task_id IS NULL`).
+  - Enforce repo/workspace scope pairing via composite foreign keys where practical (see T-17).
+  - Enforce pin/session references via foreign keys (pins should not point at missing epics/sessions).
+
 ### 2) Durability policy: no deltas in DB
 
 Persist:

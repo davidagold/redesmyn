@@ -3,9 +3,7 @@ epic: gpui
 branch:
   suggested: rn/gpui/T-45-gpui-main-split-layout
 rn:
-  parent: T-43
-  after:
-    - T-44
+  parent: T-44
 ---
 
 # T-45 Main split layout (left session pane + right workspace; resizable + collapsible) (Domain 5)
@@ -79,4 +77,3 @@ We keep this as an explicit future UX improvement.
 - Root layout (web today):
   - `dashboard/src/components/layout/RootLayout.tsx` (currently renders `Sidebar` + `Outlet`).
   - `dashboard/src/components/layout/Sidebar.tsx` (we remove this entire concept in desktop).
-

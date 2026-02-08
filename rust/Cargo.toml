@@ -5,33 +5,58 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 license = "Apache-2.0"
-rust-version = "1.85"
+rust-version = "1.88"
 version = "0.1.0"
 
 [workspace.dependencies]
 # Workspace crates (prefer `workspace = true` in members).
 redesmyn_config = { path = "crates/redesmyn_config" }
+redesmyn_client_api = { path = "crates/redesmyn_client_api" }
 redesmyn_control_plane = { path = "crates/redesmyn_control_plane" }
 redesmyn_daemon = { path = "crates/redesmyn_daemon" }
 redesmyn_domain = { path = "crates/redesmyn_domain" }
 redesmyn_exec = { path = "crates/redesmyn_exec" }
+redesmyn_errors = { path = "crates/redesmyn_errors" }
 redesmyn_git = { path = "crates/redesmyn_git" }
 redesmyn_ids = { path = "crates/redesmyn_ids" }
+redesmyn_graph_layout = { path = "crates/redesmyn_graph_layout" }
 redesmyn_logging = { path = "crates/redesmyn_logging" }
+redesmyn_markdown = { path = "crates/redesmyn_markdown" }
 redesmyn_protocol = { path = "crates/redesmyn_protocol" }
+redesmyn_session_view_model = { path = "crates/redesmyn_session_view_model" }
 redesmyn_storage = { path = "crates/redesmyn_storage" }
 redesmyn_transport = { path = "crates/redesmyn_transport" }
+redesmyn_ui = { path = "crates/redesmyn_ui" }
+redesmyn_ui_graph = { path = "crates/redesmyn_ui_graph" }
+redesmyn_ui_session = { path = "crates/redesmyn_ui_session" }
 
 # External dependencies (pinned versions; member crates should use `workspace = true`).
 clap = { version = "4.5.54", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 config = "0.14.1"
 dotenvy = "0.15.7"
+# `runtime_shaders` avoids requiring the Metal toolchain at build time on macOS.
+gpui = { version = "0.2.2", default-features = false, features = ["font-kit", "macos-blade", "runtime_shaders"] }
+libc = "0.2.180"
+prost = "0.14.3"
+prost-build = "0.14.3"
+prost-types = "0.14.3"
+protoc-bin-vendored = "3.2.0"
+pulldown-cmark = { version = "0.13.0", default-features = false }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
+serde_yaml = "0.9.34"
 sqlx = { version = "0.8.6", default-features = false }
 tempfile = "3.24.0"
 thiserror = "2.0.17"
+time = { version = "0.3.45", features = ["formatting", "parsing", "serde"] }
+toml_edit = "0.23.10"
 tokio = { version = "1.49.0", default-features = false }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
 ulid = "1.2.1"
+unicode-segmentation = "1.12.0"
+
+[patch.crates-io]
+# Temporary: zune-jpeg 0.5.x fails to compile on aarch64 due to missing `unsafe`
+# around NEON intrinsics. We vendor a tiny fix so GPUI can build on Apple Silicon.
+zune-jpeg = { path = "vendor/zune-jpeg" }

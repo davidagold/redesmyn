@@ -63,6 +63,10 @@ The client library should:
 - hide framing/codec details,
 - expose typed request methods,
 - support subscriptions and wait primitives.
+- make client subscriptions explicitly event-driven via a shared “subscription runner” that:
+  - runs a background receive loop and demuxes `Response` vs subscription `Event` frames,
+  - maintains per-subscription cursor state (e.g. `after_event_id` / cursor tuples) for resume,
+  - handles lag/resync + reconnect (or surfaces an explicit, actionable “resync required” result).
 
 ### 4) Error handling
 
@@ -81,6 +85,7 @@ The client library should:
 
 - A local client can talk to the control plane over UDS and perform the initial method set.
 - Subscriptions are stable and do not require polling.
+- The client library includes a tested subscription runner with cursor bookkeeping + resync/reconnect behavior.
 - Tests are deterministic and do not use `sleep` for correctness.
 
 - Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).

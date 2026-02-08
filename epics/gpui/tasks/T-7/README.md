@@ -1,7 +1,7 @@
 ---
 epic: gpui
 branch:
-  suggested: rn/gpui/T-7-transport-codecs
+  suggested: rn/gpui/T-7-transport
 rn:
   parent: T-2
 ---
@@ -33,6 +33,13 @@ Introduce a typed transport abstraction and codec plan that supports:
 - JSON as an opt-in dev/diagnostic mode with good tooling.
 
 ## Requirements
+
+### 0) Canonical protocol types
+
+Define a single canonical cross-boundary message schema:
+
+- Rust types live in `rust/crates/redesmyn_protocol` (generated from `.proto` in Domain 1).
+- Transports move typed protocol messages (envelopes + payloads), not ad-hoc JSON dicts.
 
 ### 1) Transport traits
 
@@ -66,6 +73,11 @@ Provide an in-proc transport implementation suitable for the desktop app:
 - a clean lifecycle (start/stop, backpressure),
 - testable in isolation.
 
+Also support an optional “codec loopback” mode:
+
+- send path: encode via Protobuf/JSON → decode back into typed messages → deliver,
+- so embedded dev/tests can exercise the on-wire codec without requiring a network daemon.
+
 ### 4) Wiretap/observability hooks
 
 Add minimal tooling hooks:
@@ -86,6 +98,7 @@ Add minimal tooling hooks:
 - Default network codec: **Protobuf**.
 - Debug codec: **JSON** (opt-in).
 - In-proc: typed messages, no serialization.
+  - Optional: codec loopback mode for embedded dev/tests.
 
 - Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
 

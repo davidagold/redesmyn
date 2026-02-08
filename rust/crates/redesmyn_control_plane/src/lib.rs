@@ -1,3 +1,28 @@
 //! Control plane API layer.
 //!
 //! This crate intentionally does not depend on repo execution crates like `redesmyn_git`.
+
+mod agent_orchestration;
+mod command;
+mod daemon_link;
+mod daemon_router;
+mod local_sync;
+mod policy_snapshot;
+mod session_events_projection;
+mod task_manager;
+mod turn_state;
+
+pub mod client_api;
+pub mod demo;
+pub mod error;
+pub mod event_log;
+pub mod session_events;
+
+mod control_plane;
+
+pub use control_plane::{
+    ControlPlane, ControlPlaneDb, ControlPlaneHandle, ControlPlaneInitError,
+    ControlPlaneStartError, ControlPlaneStartOptions,
+};
+
+pub use daemon_link::DaemonLinkHandle;

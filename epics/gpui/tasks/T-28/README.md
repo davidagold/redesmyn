@@ -54,7 +54,7 @@ Emit compact, typed events (no blobs), such as:
 
 - `git.commit` (new commit observed on a task branch)
 - `worktree.health` (worktree status changes)
-- `repo.executor_status` (lease/primary + attachment status changes)
+- `repo.executor_status` (attachment + repo instance exclusivity status; lease/primary when applicable)
 
 For unknown/new event types, include an `UnknownEvent` fallback (T-11/T-14).
 
@@ -96,7 +96,7 @@ Provide deterministic tests that:
 ## Dependencies / sequencing
 
 - Depends on git backend abstraction (T-26) and repo attachment (T-24).
-- Integrates with lease status (T-25) and worktree health (T-27).
+- Integrates with worktree health (T-27) and, when enabled for the operation, lease/primary status (T-25).
 - Consumed by control-plane ingestion and projections (Domain 2).
 
 ## Reference implementation (today; observation/telemetry orientation only)

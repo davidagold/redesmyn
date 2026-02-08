@@ -61,6 +61,27 @@ Implement daemon attach rules:
 - attach is idempotent: attaching an already-attached repo is a no-op (but refreshes status).
 - detach is idempotent.
 
+### 2.1) Repo instance exclusivity (one daemon per repo instance)
+
+The daemon must assume it is the **only writer** for a given repo *instance* (a particular working tree /
+`.git` directory on a host).
+
+On attach, the daemon must:
+
+- acquire an OS-level file lock rooted in the repo instance (e.g. a lock file under `.git/` or `.redesmyn/`),
+- hold the lock for the full lifetime of the attachment,
+- and refuse to attach if the lock is already held.
+
+Notes:
+
+- A lease/primary model is **not** a substitute for this lock: two daemons touching the same `.git` directory can
+  corrupt state even if only one believes it is “primary”.
+- This enables a lease-less v0 deployment model where multiple daemons can operate in parallel as long as each
+  operates on its *own* repo instance (separate clones/worktrees on separate hosts).
+
+Attach failure due to lock contention must return a structured, actionable error (e.g. `repo_instance_busy`)
+that includes enough detail for UI/CLI guidance (lock path and, if available, the last known owner identity).
+
 ### 3) Registration flow
 
 Define how new repos enter the registry:
@@ -98,6 +119,7 @@ Provide tests that:
 - Daemon can attach a repo by stable identity with no filesystem path crossing the daemon/control-plane boundary.
 - Identity mismatch is detected and produces a structured, actionable error.
 - Attach/detach is idempotent and safe.
+- Repo instance exclusivity is enforced: a second daemon cannot attach the same repo instance concurrently.
 - Tests are deterministic and cheap to run.
 
 - Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).

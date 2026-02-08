@@ -1,7 +1,7 @@
 ---
 epic: gpui
 branch:
-  suggested: rn/gpui/T-10-protobuf-schema-codegen
+  suggested: rn/gpui/T-10-protobuf-schemas
 rn:
   parent: T-9
 ---

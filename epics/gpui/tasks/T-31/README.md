@@ -51,7 +51,8 @@ Observation and execution must be controllable without sleeps:
 At minimum, cover:
 
 - repo registry registration + attach/detach
-- lease enforcement rejection
+- repo instance exclusivity rejection (attach lock; T-24)
+- lease/primary enforcement rejection (T-25; only for primary-required operations)
 - observation emits expected events
 - merge/restack plan generation
 - merge execution success path

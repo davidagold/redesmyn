@@ -46,6 +46,8 @@ Rules:
 - Persist first, then publish (so subscribers can resync by querying the DB).
 - Events are compact; large data is referenced via artifacts (T-14).
 - Unknown event types are supported (forward compatibility).
+- Prefer relying on DB-level constraints for scope consistency (see T-17) so the append path cannot
+  create “impossible” scoped rows (e.g. mismatched workspace/repo ids).
 
 ### 2) Subscription hub
 

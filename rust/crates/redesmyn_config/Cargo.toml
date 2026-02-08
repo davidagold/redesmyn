@@ -7,4 +7,10 @@ version.workspace = true
 publish = false
 
 [dependencies]
+config.workspace = true
+dotenvy.workspace = true
+serde.workspace = true
+thiserror.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true

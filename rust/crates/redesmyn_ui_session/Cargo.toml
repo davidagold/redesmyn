@@ -1,0 +1,23 @@
+[package]
+name = "redesmyn_ui_session"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+gpui.workspace = true
+redesmyn_client_api.workspace = true
+redesmyn_ids.workspace = true
+redesmyn_logging.workspace = true
+redesmyn_markdown.workspace = true
+redesmyn_protocol.workspace = true
+redesmyn_session_view_model.workspace = true
+redesmyn_transport.workspace = true
+redesmyn_ui.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "sync"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gpui = { workspace = true, features = ["wayland", "x11"] }

@@ -1,0 +1,829 @@
+syntax = "proto3";
+
+package redesmyn.protocol.v1;
+
+import "artifacts.proto";
+import "envelope.proto";
+import "daemon.proto";
+import "google/protobuf/timestamp.proto";
+
+// Client ↔ control plane API messages (T-12).
+//
+// This file exists to establish schema ownership + build-time codegen (T-10).
+// The concrete request/response/subscription contracts are defined in T-12.
+
+// A single client ↔ control plane protocol frame.
+//
+// Wire semantics:
+// - `envelope.msg_id` is the globally unique per-frame dedupe key.
+// - `Request.request_id` and `Subscribe.subscription_id` are logical ids used for
+//   multiplexing correlation on a single connection.
+message ClientFrame {
+  ProtocolEnvelope envelope = 1;
+
+  oneof message {
+    Request request = 2;
+    Response response = 3;
+    Subscribe subscribe = 4;
+    Event event = 5;
+    Unsubscribe unsubscribe = 6;
+  }
+}
+
+// Canonical client API methods (initial minimal set; additive).
+enum ClientMethod {
+  CLIENT_METHOD_UNSPECIFIED = 0;
+  CLIENT_METHOD_HEALTH = 1;
+  CLIENT_METHOD_STATUS = 2;
+  CLIENT_METHOD_LIST_EPICS = 3;
+  CLIENT_METHOD_GET_EPIC_GRAPH = 4;
+  CLIENT_METHOD_GET_SESSION_EVENTS = 5;
+  CLIENT_METHOD_GET_LATEST_TASK_SESSION = 6;
+  CLIENT_METHOD_GET_EPIC_PINNED_CHAT_SESSION = 7;
+  CLIENT_METHOD_CREATE_COMMAND = 8;
+  CLIENT_METHOD_GET_COMMAND = 9;
+  CLIENT_METHOD_WAIT_FOR_COMMAND = 10;
+  CLIENT_METHOD_WAIT_FOR_EVENT = 11;
+  CLIENT_METHOD_WAIT_FOR_IDLE = 12;
+  CLIENT_METHOD_LIST_TASK_SESSIONS = 13;
+  CLIENT_METHOD_CREATE_CHAT_SESSION = 14;
+  CLIENT_METHOD_CLOSE_CHAT_SESSION = 15;
+  CLIENT_METHOD_LIST_CHAT_SESSIONS = 16;
+  CLIENT_METHOD_PIN_CHAT_SESSION_TO_EPIC = 17;
+  CLIENT_METHOD_UNPIN_CHAT_SESSION_FROM_EPIC = 18;
+  CLIENT_METHOD_SEND_SESSION_MESSAGE = 19;
+  CLIENT_METHOD_START_AGENT = 20;
+  CLIENT_METHOD_STOP_AGENT = 21;
+  CLIENT_METHOD_RESTART_AGENT = 22;
+  CLIENT_METHOD_SEND_TASK_AGENT_MESSAGE = 23;
+  CLIENT_METHOD_ATTACH_AGENT_SESSION = 24;
+  CLIENT_METHOD_SET_SESSION_PERMISSIONS_MODE = 25;
+  CLIENT_METHOD_RESPOND_PERMISSION_REQUEST = 26;
+  CLIENT_METHOD_SET_SESSION_CODEX_APPROVAL_POLICY = 27;
+  CLIENT_METHOD_SET_SESSION_CODEX_SANDBOX_POLICY = 28;
+  CLIENT_METHOD_LIST_SESSION_MODELS = 29;
+  CLIENT_METHOD_SET_SESSION_MODEL = 30;
+  CLIENT_METHOD_LIST_AGENT_MODELS = 31;
+}
+
+// Request for a control-plane method.
+message Request {
+  // RequestId (ULID bytes, length = 16).
+  bytes request_id = 1;
+  ClientMethod method = 2;
+
+  oneof payload {
+    HealthRequest health = 10;
+    StatusRequest status = 11;
+    ListEpicsRequest list_epics = 12;
+    GetEpicGraphRequest get_epic_graph = 13;
+    GetSessionEventsRequest get_session_events = 14;
+    GetLatestTaskSessionRequest get_latest_task_session = 15;
+    GetEpicPinnedChatSessionRequest get_epic_pinned_chat_session = 16;
+    StartAgentRequest start_agent = 23;
+    StopAgentRequest stop_agent = 24;
+    RestartAgentRequest restart_agent = 25;
+    SendTaskAgentMessageRequest send_task_agent_message = 26;
+    AttachAgentSessionRequest attach_agent_session = 27;
+    CreateCommandRequest create_command = 17;
+    GetCommandRequest get_command = 18;
+    WaitForCommandRequest wait_for_command = 19;
+    WaitForEventRequest wait_for_event = 20;
+    WaitForIdleRequest wait_for_idle = 21;
+    ListTaskSessionsRequest list_task_sessions = 30;
+    CreateChatSessionRequest create_chat_session = 31;
+    CloseChatSessionRequest close_chat_session = 32;
+    ListChatSessionsRequest list_chat_sessions = 33;
+    PinChatSessionToEpicRequest pin_chat_session_to_epic = 34;
+    UnpinChatSessionFromEpicRequest unpin_chat_session_from_epic = 35;
+    SendSessionMessageRequest send_session_message = 36;
+    SetSessionPermissionsModeRequest set_session_permissions_mode = 37;
+    RespondPermissionRequestRequest respond_permission_request = 38;
+    SetSessionCodexApprovalPolicyRequest set_session_codex_approval_policy = 39;
+    SetSessionCodexSandboxPolicyRequest set_session_codex_sandbox_policy = 40;
+    ListSessionModelsRequest list_session_models = 41;
+    SetSessionModelRequest set_session_model = 42;
+    ListAgentModelsRequest list_agent_models = 43;
+  }
+}
+
+enum ResponseStatus {
+  RESPONSE_STATUS_UNSPECIFIED = 0;
+  RESPONSE_STATUS_OK = 1;
+  RESPONSE_STATUS_ERROR = 2;
+}
+
+// Response to a request (correlate via `request_id`).
+message Response {
+  // RequestId (ULID bytes, length = 16).
+  bytes request_id = 1;
+  ResponseStatus status = 2;
+
+  oneof result {
+    HealthResponse health = 10;
+    StatusResponse status_response = 11;
+    ListEpicsResponse list_epics = 12;
+    GetEpicGraphResponse get_epic_graph = 13;
+    GetSessionEventsResponse get_session_events = 14;
+    GetLatestTaskSessionResponse get_latest_task_session = 15;
+    GetEpicPinnedChatSessionResponse get_epic_pinned_chat_session = 16;
+    StartAgentResponse start_agent = 23;
+    StopAgentResponse stop_agent = 24;
+    RestartAgentResponse restart_agent = 25;
+    SendTaskAgentMessageResponse send_task_agent_message = 26;
+    AttachAgentSessionResponse attach_agent_session = 27;
+    CreateCommandResponse create_command = 17;
+    GetCommandResponse get_command = 18;
+    WaitForCommandResponse wait_for_command = 19;
+    WaitForEventResponse wait_for_event = 20;
+    WaitForIdleResponse wait_for_idle = 21;
+    ListTaskSessionsResponse list_task_sessions = 30;
+    CreateChatSessionResponse create_chat_session = 31;
+    CloseChatSessionResponse close_chat_session = 32;
+    ListChatSessionsResponse list_chat_sessions = 33;
+    PinChatSessionToEpicResponse pin_chat_session_to_epic = 34;
+    UnpinChatSessionFromEpicResponse unpin_chat_session_from_epic = 35;
+    SendSessionMessageResponse send_session_message = 36;
+    SetSessionPermissionsModeResponse set_session_permissions_mode = 37;
+    RespondPermissionRequestResponse respond_permission_request = 38;
+    SetSessionCodexApprovalPolicyResponse set_session_codex_approval_policy = 39;
+    SetSessionCodexSandboxPolicyResponse set_session_codex_sandbox_policy = 40;
+    ListSessionModelsResponse list_session_models = 41;
+    SetSessionModelResponse set_session_model = 42;
+    ListAgentModelsResponse list_agent_models = 43;
+    ErrorEnvelope error = 100;
+  }
+}
+
+// Stable conflict actions for sending a message to an agent session (T-41/T-62).
+enum AgentMessageConflictAction {
+  AGENT_MESSAGE_CONFLICT_ACTION_UNSPECIFIED = 0;
+  AGENT_MESSAGE_CONFLICT_ACTION_FAIL = 1;
+  AGENT_MESSAGE_CONFLICT_ACTION_INTERRUPT_TURN = 2;
+  AGENT_MESSAGE_CONFLICT_ACTION_STOP_SESSION_AND_START_NEW = 3;
+}
+
+message SendSessionMessageRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+  string message = 2;
+  AgentMessageConflictAction on_conflict = 3;
+  repeated ImageAttachment image_attachments = 4;
+}
+
+message SendSessionMessageResponse {
+  SessionEvent event = 1;
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 2;
+  // Optional command lifecycle for this send (T-41).
+  CommandSummary command = 3;
+}
+
+message SetSessionPermissionsModeRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+  PermissionsMode mode = 2;
+}
+
+message SetSessionPermissionsModeResponse {
+  // Optional command lifecycle for this update.
+  CommandSummary command = 1;
+}
+
+message SetSessionCodexApprovalPolicyRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+  // Unspecified means "use the provider default".
+  CodexApprovalPolicy approval_policy = 2;
+}
+
+message SetSessionCodexApprovalPolicyResponse {
+  // Optional command lifecycle for this update.
+  CommandSummary command = 1;
+}
+
+message SetSessionCodexSandboxPolicyRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+  // Unset means "use the provider default".
+  CodexSandboxPolicy sandbox_policy = 2;
+}
+
+message SetSessionCodexSandboxPolicyResponse {
+  // Optional command lifecycle for this update.
+  CommandSummary command = 1;
+}
+
+enum ModelReasoningEffort {
+  MODEL_REASONING_EFFORT_UNSPECIFIED = 0;
+  MODEL_REASONING_EFFORT_MINIMAL = 1;
+  MODEL_REASONING_EFFORT_LOW = 2;
+  MODEL_REASONING_EFFORT_MEDIUM = 3;
+  MODEL_REASONING_EFFORT_HIGH = 4;
+  MODEL_REASONING_EFFORT_XHIGH = 5;
+}
+
+message SessionModelOption {
+  // Stable model id from agent runtime.
+  string model_id = 1;
+  // Human-friendly model name for menus.
+  string display_name = 2;
+  // Compact model description for hints/tooltips.
+  string description = 3;
+  // Runtime-reported default model for this session/agent.
+  bool is_default = 4;
+  // Runtime-native model key (best-effort).
+  string provider_model = 5;
+  // Default reasoning effort for this model, if known.
+  ModelReasoningEffort default_reasoning_effort = 6;
+  // Reasoning effort options supported by this model.
+  repeated ModelReasoningEffort supported_reasoning_efforts = 7;
+}
+
+message SessionModelSelection {
+  // Empty means "use runtime default model".
+  string model_id = 1;
+  // Unspecified means "use model default reasoning effort".
+  ModelReasoningEffort reasoning_effort = 2;
+}
+
+message ListSessionModelsRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+}
+
+message ListAgentModelsRequest {
+  AgentKind agent_kind = 1;
+}
+
+message ListAgentModelsResponse {
+  repeated SessionModelOption options = 1;
+}
+
+message ListSessionModelsResponse {
+  repeated SessionModelOption options = 1;
+  // Current effective selection for this session.
+  SessionModelSelection selection = 2;
+}
+
+message SetSessionModelRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+  // Empty model_id uses runtime default model; unspecified reasoning uses model default effort.
+  SessionModelSelection selection = 2;
+}
+
+message SetSessionModelResponse {
+  // Optional command lifecycle for this update.
+  CommandSummary command = 1;
+}
+
+message RespondPermissionRequestRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+  string request_id = 2;
+  PermissionDecision decision = 3;
+}
+
+message RespondPermissionRequestResponse {
+  // Optional command lifecycle for this decision.
+  CommandSummary command = 1;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  // Minimal liveness signal.
+  bool ok = 1;
+}
+
+message StatusRequest {}
+
+message StatusResponse {
+  // Protocol version accepted after negotiation.
+  ProtocolVersion accepted_protocol = 1;
+  // Human-facing server name (e.g. "redesmyn-control-plane").
+  string server_name = 2;
+  // Optional build/version identifier (best-effort).
+  string server_version = 3;
+}
+
+message ListEpicsRequest {}
+
+message EpicSummary {
+  string slug = 1;
+  string name = 2;
+  // EpicId (ULID bytes, length = 16). Empty => none.
+  //
+  // Optional for back-compat with older servers. Newer servers should always
+  // populate this field.
+  bytes epic_id = 3;
+}
+
+message ListEpicsResponse {
+  repeated EpicSummary epics = 1;
+}
+
+message GetEpicGraphRequest {
+  // For early integration, epic identity is a stable slug from the repo.
+  string epic_slug = 1;
+}
+
+// Task state for graph rendering. Additive changes are allowed.
+enum TaskState {
+  TASK_STATE_UNSPECIFIED = 0;
+  TASK_STATE_TODO = 1;
+  TASK_STATE_IN_PROGRESS = 2;
+  TASK_STATE_BLOCKED = 3;
+  TASK_STATE_DONE = 4;
+}
+
+// Merge readiness for a task branch. Additive changes are allowed.
+enum MergeReadiness {
+  MERGE_READINESS_UNSPECIFIED = 0;
+  MERGE_READINESS_UNKNOWN = 1;
+  MERGE_READINESS_READY = 2;
+  MERGE_READINESS_BLOCKED = 3;
+}
+
+message EpicTaskNode {
+  string task_slug = 1;
+  string title = 2;
+
+  // Stable identifiers (ULID bytes, length = 16).
+  bytes task_id = 10;
+  bytes parent_task_id = 11;
+
+  TaskState state = 12;
+  string branch_name = 13;
+  MergeReadiness merge_readiness = 14;
+}
+
+message EpicTaskEdge {
+  string from_task_slug = 1;
+  string to_task_slug = 2;
+
+  // Stable identifiers (ULID bytes, length = 16).
+  bytes from_task_id = 10;
+  bytes to_task_id = 11;
+}
+
+message CommandUpdateSummary {
+  // CommandUpdateId (ULID bytes, length = 16).
+  bytes update_id = 1;
+  google.protobuf.Timestamp created_at = 2;
+  CommandState state = 3;
+  string message = 4;
+  optional uint64 progress_current = 5;
+  optional uint64 progress_total = 6;
+}
+
+message CommandSummary {
+  // CommandId (ULID bytes, length = 16).
+  bytes command_id = 1;
+  google.protobuf.Timestamp created_at = 2;
+  google.protobuf.Timestamp updated_at = 3;
+  string kind = 4;
+  CommandState state = 5;
+  // TaskId (ULID bytes, length = 16).
+  bytes target_task_id = 6;
+  CommandUpdateSummary last_update = 7;
+}
+
+message DaemonPresenceSummary {
+  // HostInstanceId (ULID bytes, length = 16).
+  bytes host_instance_id = 1;
+  // HostId (ULID bytes, length = 16).
+  bytes host_id = 2;
+  string hostname = 3;
+  google.protobuf.Timestamp connected_at = 4;
+  google.protobuf.Timestamp last_heartbeat_at = 5;
+  google.protobuf.Timestamp disconnected_at = 6;
+}
+
+message SessionSummary {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+  // SessionEventId (ULID bytes, length = 16).
+  bytes session_event_id = 2;
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 3;
+  google.protobuf.Timestamp last_event_at = 4;
+  string kind = 5;
+  string turn_id = 6;
+  string message_preview = 7;
+}
+
+// Minimal, typed graph representation (schema will evolve; additive changes only).
+message EpicGraph {
+  string epic_slug = 1;
+  repeated EpicTaskNode nodes = 2;
+  repeated EpicTaskEdge edges = 3;
+
+  // EpicId (ULID bytes, length = 16).
+  bytes epic_id = 10;
+  string epic_title = 11;
+  // RepoScope identifiers (ULID bytes, length = 16).
+  bytes workspace_id = 12;
+  bytes repo_id = 13;
+
+  repeated CommandSummary command_summaries = 20;
+  repeated DaemonPresenceSummary daemon_presences = 21;
+  repeated SessionSummary session_summaries = 22;
+
+  // EventId (ULID bytes, length = 16). Snapshot cursor for subscriptions.
+  bytes as_of_event_id = 30;
+}
+
+message GetEpicGraphResponse {
+  EpicGraph graph = 1;
+}
+
+// Stable cursor for session event pagination/subscriptions.
+//
+// Ordering: `(created_at, session_event_id)` tuple.
+message SessionEventCursor {
+  google.protobuf.Timestamp created_at = 1;
+  // SessionEventId (ULID bytes, length = 16).
+  bytes session_event_id = 2;
+}
+
+enum SessionEventKindFilter {
+  SESSION_EVENT_KIND_FILTER_UNSPECIFIED = 0;
+  SESSION_EVENT_KIND_FILTER_SESSION_STARTED = 1;
+  SESSION_EVENT_KIND_FILTER_SESSION_ENDED = 2;
+  SESSION_EVENT_KIND_FILTER_TURN_STARTED = 3;
+  SESSION_EVENT_KIND_FILTER_TURN_COMPLETED = 4;
+  SESSION_EVENT_KIND_FILTER_USER_MESSAGE = 5;
+  SESSION_EVENT_KIND_FILTER_ASSISTANT_MESSAGE = 6;
+  SESSION_EVENT_KIND_FILTER_TOOL_INVOCATION = 7;
+  SESSION_EVENT_KIND_FILTER_TOOL_RESULT = 8;
+  SESSION_EVENT_KIND_FILTER_STATUS_UPDATE = 9;
+  SESSION_EVENT_KIND_FILTER_ARTIFACT_EMITTED = 10;
+  SESSION_EVENT_KIND_FILTER_ASSISTANT_REASONING = 11;
+  SESSION_EVENT_KIND_FILTER_PERMISSIONS_MODE_CHANGED = 12;
+  SESSION_EVENT_KIND_FILTER_PERMISSION_REQUESTED = 13;
+  SESSION_EVENT_KIND_FILTER_PERMISSION_DECIDED = 14;
+  SESSION_EVENT_KIND_FILTER_CODEX_APPROVAL_POLICY_CHANGED = 15;
+  SESSION_EVENT_KIND_FILTER_CODEX_SANDBOX_POLICY_CHANGED = 16;
+  SESSION_EVENT_KIND_FILTER_SESSION_MODEL_CHANGED = 17;
+}
+
+message GetSessionEventsRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+
+  // If set, return events strictly older than this cursor.
+  SessionEventCursor before = 2;
+
+  // Maximum number of events to return.
+  uint32 limit = 3;
+
+  // Optional kind filter (empty => no filtering).
+  repeated SessionEventKindFilter kinds = 4;
+}
+
+message GetSessionEventsResponse {
+  repeated SessionEvent events = 1;
+  // Cursor to request the next older page (absent => end of history).
+  SessionEventCursor next_cursor = 2;
+}
+
+message GetLatestTaskSessionRequest {
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 1;
+}
+
+message GetLatestTaskSessionResponse {
+  // SessionId (ULID bytes, length = 16). Empty => none.
+  bytes session_id = 1;
+}
+
+message GetEpicPinnedChatSessionRequest {
+  // EpicId (ULID bytes, length = 16).
+  bytes epic_id = 1;
+}
+
+message GetEpicPinnedChatSessionResponse {
+  // SessionId (ULID bytes, length = 16). Empty => none.
+  bytes session_id = 1;
+}
+
+// Agent orchestration (T-41).
+
+enum TaskAgentMessageDelivery {
+  TASK_AGENT_MESSAGE_DELIVERY_UNSPECIFIED = 0;
+  TASK_AGENT_MESSAGE_DELIVERY_STRUCTURED_STARTED = 1;
+  TASK_AGENT_MESSAGE_DELIVERY_STRUCTURED_RESUMED = 2;
+  TASK_AGENT_MESSAGE_DELIVERY_INTERACTIVE_STARTED = 3;
+  TASK_AGENT_MESSAGE_DELIVERY_INTERACTIVE_SENT = 4;
+}
+
+enum TaskAgentMessageConversationContinuity {
+  TASK_AGENT_MESSAGE_CONVERSATION_CONTINUITY_UNSPECIFIED = 0;
+  TASK_AGENT_MESSAGE_CONVERSATION_CONTINUITY_KEPT = 1;
+  TASK_AGENT_MESSAGE_CONVERSATION_CONTINUITY_BROKEN = 2;
+}
+
+message StartAgentRequest {
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 1;
+  AgentKind agent_kind = 2;
+  optional string initial_prompt = 4;
+  AgentMessageConflictAction on_conflict = 5;
+  // Optional model + reasoning to apply before the first turn.
+  SessionModelSelection session_model_selection = 6;
+  // Optional Codex session defaults to apply before the first turn.
+  // Unspecified means "use the provider default".
+  CodexApprovalPolicy codex_approval_policy = 7;
+  // Unset means "use the provider default".
+  CodexSandboxPolicy codex_sandbox_policy = 8;
+}
+
+message StartAgentResponse {
+  CommandSummary command = 1;
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 2;
+}
+
+message StopAgentRequest {
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 1;
+}
+
+message StopAgentResponse {
+  CommandSummary command = 1;
+  // SessionId (ULID bytes, length = 16).
+  repeated bytes ended_session_ids = 2;
+}
+
+message RestartAgentRequest {
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 1;
+  AgentKind agent_kind = 2;
+  optional string initial_prompt = 4;
+}
+
+message RestartAgentResponse {
+  CommandSummary command = 1;
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 2;
+}
+
+message SendTaskAgentMessageRequest {
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 1;
+  string message = 2;
+  AgentMessageConflictAction on_conflict = 3;
+  optional bool interrupt = 4;
+  AgentKind agent_kind = 5;
+}
+
+message SendTaskAgentMessageResponse {
+  CommandSummary command = 1;
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 2;
+  TaskAgentMessageDelivery delivery = 4;
+  TaskAgentMessageConversationContinuity conversation_continuity = 5;
+  repeated string warnings = 6;
+}
+
+message AttachAgentSessionRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+}
+
+message AttachAgentSessionResponse {
+  CommandSummary command = 1;
+}
+
+// Command lifecycle requests for deterministic automation (T-15).
+message CreateCommandRequest {
+  string kind = 1;
+  // TaskId (ULID bytes, length = 16).
+  bytes target_task_id = 2;
+  optional string idempotency_key = 3;
+  optional string created_by = 4;
+  // Optional JSON payload bytes for daemon-executed commands.
+  optional bytes json_payload = 5;
+}
+
+message CreateCommandResponse {
+  CommandSummary command = 1;
+}
+
+message GetCommandRequest {
+  // CommandId (ULID bytes, length = 16).
+  bytes command_id = 1;
+}
+
+message GetCommandResponse {
+  CommandSummary command = 1;
+}
+
+// Wait until a command reaches one of the requested terminal states.
+message WaitForCommandRequest {
+  // CommandId (ULID bytes, length = 16).
+  bytes command_id = 1;
+  // If empty, defaults to all terminal states (succeeded/failed/canceled).
+  repeated CommandState terminal_states = 2;
+  // Timeout in milliseconds; if 0, a server default is used.
+  uint64 timeout_ms = 3;
+}
+
+message WaitForCommandResponse {
+  CommandSummary command = 1;
+}
+
+// Wait until an event matching the filter is observed.
+message WaitForEventRequest {
+  EventWaitFilter filter = 1;
+  // Timeout in milliseconds; if 0, a server default is used.
+  uint64 timeout_ms = 2;
+}
+
+message EventWaitFilter {
+  // If set, only match events whose `event_type` starts with this prefix.
+  string event_type_prefix = 1;
+  // EventId (ULID bytes, length = 16). If set, only match events after this id (exclusive).
+  bytes after_event_id = 2;
+}
+
+message WaitForEventResponse {
+  EventLogEvent event_log = 1;
+}
+
+// Wait until the server is "idle" for a quiescence window.
+message WaitForIdleRequest {
+  // Optional scope. If unset/empty, wait for global idleness.
+  Scope scope = 1;
+  // Timeout in milliseconds; if 0, a server default is used.
+  uint64 timeout_ms = 2;
+  // Quiescence window in milliseconds; if 0, a server default is used.
+  uint64 quiescence_ms = 3;
+}
+
+message WaitForIdleResponse {}
+
+// Session/query surfaces (T-40).
+
+enum AgentKind {
+  AGENT_KIND_UNSPECIFIED = 0;
+  AGENT_KIND_CODEX = 1;
+  AGENT_KIND_CLAUDE_CODE = 2;
+  AGENT_KIND_SHELL = 3;
+}
+
+enum AgentSessionScopeKind {
+  AGENT_SESSION_SCOPE_KIND_UNSPECIFIED = 0;
+  AGENT_SESSION_SCOPE_KIND_TASK = 1;
+  AGENT_SESSION_SCOPE_KIND_CHAT = 2;
+}
+
+enum AgentSessionStatus {
+  AGENT_SESSION_STATUS_UNSPECIFIED = 0;
+  AGENT_SESSION_STATUS_RUNNING = 1;
+  AGENT_SESSION_STATUS_BLOCKED = 2;
+  AGENT_SESSION_STATUS_STOPPED = 3;
+  AGENT_SESSION_STATUS_ERROR = 4;
+}
+
+message AgentSessionSummary {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+  AgentSessionScopeKind scope_kind = 2;
+
+  // TaskId (ULID bytes, length = 16). Empty for chat sessions.
+  bytes task_id = 3;
+
+  AgentKind agent_kind = 4;
+  AgentSessionStatus status = 6;
+
+  // Optional, chat-focused metadata (T-47).
+  string title = 10;
+  google.protobuf.Timestamp closed_at = 11;
+
+  // General timestamps (informational).
+  google.protobuf.Timestamp created_at = 20;
+  google.protobuf.Timestamp updated_at = 21;
+  google.protobuf.Timestamp ended_at = 22;
+}
+
+message ListTaskSessionsRequest {
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 1;
+  uint32 limit = 2;
+}
+
+message ListTaskSessionsResponse {
+  repeated AgentSessionSummary sessions = 1;
+  // SessionId (ULID bytes, length = 16). Empty when no active session exists.
+  bytes active_session_id = 2;
+}
+
+message CreateChatSessionRequest {
+  // Optional title (empty string = none).
+  string title = 1;
+}
+
+message CreateChatSessionResponse {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+}
+
+message CloseChatSessionRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+}
+
+message CloseChatSessionResponse {}
+
+message ListChatSessionsRequest {
+  bool include_closed = 1;
+  uint32 limit = 2;
+}
+
+message ListChatSessionsResponse {
+  repeated AgentSessionSummary sessions = 1;
+}
+
+message PinChatSessionToEpicRequest {
+  // EpicId (ULID bytes, length = 16).
+  bytes epic_id = 1;
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 2;
+}
+
+message PinChatSessionToEpicResponse {}
+
+message UnpinChatSessionFromEpicRequest {
+  // EpicId (ULID bytes, length = 16).
+  bytes epic_id = 1;
+}
+
+message UnpinChatSessionFromEpicResponse {}
+
+// Subscription topic for server-pushed streams.
+enum SubscriptionTopic {
+  SUBSCRIPTION_TOPIC_UNSPECIFIED = 0;
+  SUBSCRIPTION_TOPIC_EVENT_LOG = 1;
+  SUBSCRIPTION_TOPIC_SESSION_EVENTS = 2;
+}
+
+// Subscribe to a server stream (correlate events via `subscription_id`).
+message Subscribe {
+  // SubscriptionId (ULID bytes, length = 16).
+  bytes subscription_id = 1;
+  SubscriptionTopic topic = 2;
+
+  oneof filter {
+    EventLogFilter event_log = 10;
+    SessionEventsFilter session_events = 11;
+  }
+}
+
+message Unsubscribe {
+  // SubscriptionId (ULID bytes, length = 16).
+  bytes subscription_id = 1;
+}
+
+message Subscribed {
+  SubscriptionTopic topic = 1;
+}
+
+message EventLogFilter {
+  // EventId (ULID bytes, length = 16). If set, start after this id (exclusive).
+  bytes after_event_id = 1;
+}
+
+message EventLogEvent {
+  // EventId (ULID bytes, length = 16).
+  bytes event_id = 1;
+  // Wall-clock timestamp (informational).
+  google.protobuf.Timestamp occurred_at = 2;
+  // Stable event type identifier (e.g. "agent.turn_completed").
+  string event_type = 3;
+  // Best-effort JSON payload for diagnostics/legacy rendering.
+  bytes json_payload = 4;
+}
+
+message SessionEventsFilter {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+  // If set, start after this cursor (exclusive).
+  SessionEventCursor after = 2;
+}
+
+// Server-pushed event for a subscription.
+message Event {
+  // SubscriptionId (ULID bytes, length = 16).
+  bytes subscription_id = 1;
+
+  oneof event {
+    Subscribed subscribed = 10;
+    EventLogEvent event_log = 11;
+    SessionEvent session_event = 12;
+    SessionLiveEvent session_live_event = 13;
+    ErrorEnvelope error = 100;
+  }
+}

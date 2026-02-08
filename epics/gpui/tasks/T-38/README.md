@@ -28,6 +28,12 @@ Implement the daemon-side Claude Code runner built on:
 - Claude parser (T-34),
 - and resume-by-id utilities (T-32).
 
+Interface note (important):
+
+- This runner is a **daemon-side implementation** behind the shared “agent session runtime” surface consumed by the control plane (T-41).
+- Claude-specific behavior (argv shaping, stream-json parsing, session-id capture) must live *inside* this runner/substrate. The control plane must not
+  build Claude argv directly.
+
 This runner does not require tmux.
 
 ## Requirements
@@ -88,4 +94,3 @@ Do not require Claude installed:
 - Resume-by-id turns (Python today):
   - `redesmyn/agent_turn_transport.py`
   - `tests/test_agent_turn_transport.py`
-

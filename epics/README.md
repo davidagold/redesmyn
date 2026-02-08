@@ -15,6 +15,8 @@ By default, prefer git history + PRs + Linear/GitHub metadata as the changelog. 
 - `epics/gpui/README.md`
 - `epics/graph-viz/README.md`
 - `epics/agent-orchestration/README.md`
+- `epics/director-v0/README.md`
+- `epics/remote-execution-v0/README.md`
 - `epics/harness-interface-v0/README.md`
 - `epics/ui-v0/README.md`
 - `epics/messages-commands/README.md`
@@ -23,5 +25,6 @@ By default, prefer git history + PRs + Linear/GitHub metadata as the changelog. 
 - `epics/linear-integration/README.md`
 - `epics/github-integration/README.md`
 - `epics/tests-v0/README.md`
+- `epics/ui-driver-v1/README.md`
 - `epics/v0-launch/README.md`
 - `epics/backlog/README.md`

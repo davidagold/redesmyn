@@ -7,4 +7,5 @@ version.workspace = true
 publish = false
 
 [dependencies]
-
+tracing.workspace = true
+tracing-subscriber.workspace = true

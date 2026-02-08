@@ -52,9 +52,16 @@ Render at minimum:
 
 Support:
 
-- collapsed (default) vs expanded (shows more detail, e.g. README preview or status),
+- collapsed (default) vs expanded (large “task inspector” surface),
 - expansion triggers a node size change and requests a relayout (T-51),
 - smooth animation for size/position transitions (layout animation can live in T-54).
+
+Expanded content direction:
+
+- the expanded card is the single home for “expanded task” UI (no separate sidebar drawer),
+- and it is designed to host:
+  - a SessionView slot (chat/history/composer) and
+  - a structured details surface (T-55/T-64).
 
 ### 3) Selection affordances
 
@@ -100,4 +107,3 @@ Even if we stub actions, define the pattern:
 - Graph node wrappers (web today):
   - `dashboard/src/components/graph/FlowBranchNode.tsx`
   - `dashboard/src/components/graph/TrunkNode.tsx`
-

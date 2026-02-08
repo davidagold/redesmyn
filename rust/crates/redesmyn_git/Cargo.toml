@@ -7,6 +7,11 @@ version.workspace = true
 publish = false
 
 [dependencies]
-redesmyn_domain.workspace = true
-redesmyn_ids.workspace = true
+redesmyn_logging.workspace = true
 redesmyn_protocol.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util", "process", "sync", "time"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "test-util", "time"] }

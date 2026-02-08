@@ -56,16 +56,21 @@ Notes:
 
 ### 2) Scope model (future-proof, minimal now)
 
-Define `Scope` as an enum/oneof:
+Define routing scope as an enum/oneof, carried in the envelope as `scope: Option<Scope>`:
 
-- `None` (no scope)
 - `Repo { workspace_id: WorkspaceId, repo_id: RepoId }`
 
 Rules:
 
-- Repo-scoped messages must include `Scope::Repo`.
-- Non-repo-scoped messages may omit scope (`None`) and are routed at the connection level.
+- Repo-scoped messages must include `Some(Scope::Repo { ... })`.
+- Non-repo-scoped messages must omit scope (`None`) and are routed at the connection level.
 - We intentionally leave room for future scope kinds (e.g. workspace-level) without breaking the envelope.
+
+Persistence note (Domain 2):
+
+- When scope is stored in DB tables as `(workspace_id, repo_id)`, treat it as a single logical
+  identity and prefer composite foreign keys (vs separate FKs) so “mismatched pairs” cannot be
+  persisted (see T-17).
 
 ### 3) Versioning rules
 

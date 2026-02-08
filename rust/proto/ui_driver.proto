@@ -1,0 +1,466 @@
+syntax = "proto3";
+
+package redesmyn.protocol.v1;
+
+import "envelope.proto";
+import "google/protobuf/timestamp.proto";
+
+// Desktop UI automation driver + semantic UI snapshot contract (T-15).
+//
+// This is intentionally local-only and is designed for deterministic AI/CI testing.
+//
+// Design goals:
+// - High-level actions (no coordinate clicks).
+// - Stable semantic UI snapshot for assertions.
+// - Structured errors and versioned framing.
+
+// A single UI driver protocol frame.
+message UiDriverFrame {
+  ProtocolEnvelope envelope = 1;
+
+  oneof message {
+    UiDriverRequest request = 2;
+    UiDriverResponse response = 3;
+  }
+}
+
+// Canonical UI driver methods (initial minimal set; additive).
+enum UiDriverMethod {
+  UI_DRIVER_METHOD_UNSPECIFIED = 0;
+  UI_DRIVER_METHOD_GET_SNAPSHOT = 1;
+  UI_DRIVER_METHOD_OPEN_EPIC = 2;
+  UI_DRIVER_METHOD_SELECT_TASK = 3;
+  UI_DRIVER_METHOD_TRIGGER_MERGE = 4;
+  UI_DRIVER_METHOD_OPEN_SESSION_VIEW = 5;
+  UI_DRIVER_METHOD_OPEN_DIFF_VIEW = 6;
+  // Secondary/debugging surface.
+  UI_DRIVER_METHOD_CAPTURE_SCREENSHOT = 7;
+  // Desktop layout actions (Domain 5).
+  UI_DRIVER_METHOD_SET_LEFT_PANE_COLLAPSED = 8;
+  UI_DRIVER_METHOD_SET_SETTINGS_DIALOG_OPEN = 24;
+  UI_DRIVER_METHOD_SET_SETTINGS_DIALOG_SECTION = 25;
+  // User-managed chats (Domain 5).
+  UI_DRIVER_METHOD_CREATE_CHAT_SESSION = 9;
+  UI_DRIVER_METHOD_CLOSE_CHAT_SESSION = 10;
+  UI_DRIVER_METHOD_PIN_CHAT_SESSION = 11;
+  UI_DRIVER_METHOD_UNPIN_CHAT_SESSION = 12;
+  // Refresh the current view/graph (Domain 5).
+  UI_DRIVER_METHOD_TRIGGER_REFRESH = 13;
+  // Deterministic waiting primitives (T-15/T-48).
+  UI_DRIVER_METHOD_WAIT_FOR_SNAPSHOT = 14;
+  UI_DRIVER_METHOD_WAIT_FOR_IDLE = 15;
+  // Graph actions (Domain 6).
+  UI_DRIVER_METHOD_GRAPH_SELECT_NODE = 16;
+  UI_DRIVER_METHOD_GRAPH_CLEAR_SELECTION = 17;
+  UI_DRIVER_METHOD_GRAPH_TOGGLE_EXPANDED_TASK_CARD = 19;
+  UI_DRIVER_METHOD_GRAPH_MULTI_SELECT_ADD_NODE = 20;
+  UI_DRIVER_METHOD_GRAPH_MULTI_SELECT_REMOVE_NODE = 21;
+  // Session view settings (Domain 7).
+  UI_DRIVER_METHOD_SESSION_SETTINGS_MENU_SET_OPEN = 22;
+  UI_DRIVER_METHOD_SESSION_SETTINGS_MENU_SEND_KEY = 23;
+  // Workspace task filters (Domain 6).
+  UI_DRIVER_METHOD_TASK_FILTERS_MENU_SET_OPEN = 26;
+
+  reserved 18;
+}
+
+message UiDriverRequest {
+  // RequestId (ULID bytes, length = 16).
+  bytes request_id = 1;
+  UiDriverMethod method = 2;
+
+  oneof payload {
+    GetUiSnapshotRequest get_snapshot = 10;
+    OpenEpicRequest open_epic = 11;
+    SelectTaskRequest select_task = 12;
+    TriggerMergeRequest trigger_merge = 13;
+    OpenSessionViewRequest open_session_view = 14;
+    OpenDiffViewRequest open_diff_view = 15;
+    CaptureScreenshotRequest capture_screenshot = 16;
+    SetLeftPaneCollapsedRequest set_left_pane_collapsed = 17;
+    SetSettingsDialogOpenRequest set_settings_dialog_open = 33;
+    SetSettingsDialogSectionRequest set_settings_dialog_section = 34;
+    UiDriverCreateChatSessionRequest create_chat_session = 18;
+    UiDriverCloseChatSessionRequest close_chat_session = 19;
+    PinChatSessionRequest pin_chat_session = 20;
+    UnpinChatSessionRequest unpin_chat_session = 21;
+    TriggerRefreshRequest trigger_refresh = 22;
+    WaitForUiSnapshotRequest wait_for_snapshot = 23;
+    WaitForUiIdleRequest wait_for_idle = 24;
+    SelectGraphNodeRequest select_graph_node = 25;
+    ClearGraphSelectionRequest clear_graph_selection = 26;
+    ToggleExpandedTaskCardRequest toggle_expanded_task_card = 28;
+    MultiSelectAddNodeRequest multi_select_add_node = 29;
+    MultiSelectRemoveNodeRequest multi_select_remove_node = 30;
+    SessionSettingsMenuSetOpenRequest session_settings_menu_set_open = 31;
+    SessionSettingsMenuSendKeyRequest session_settings_menu_send_key = 32;
+    TaskFiltersMenuSetOpenRequest task_filters_menu_set_open = 35;
+  }
+
+  reserved 27;
+}
+
+enum UiDriverResponseStatus {
+  UI_DRIVER_RESPONSE_STATUS_UNSPECIFIED = 0;
+  UI_DRIVER_RESPONSE_STATUS_OK = 1;
+  UI_DRIVER_RESPONSE_STATUS_ERROR = 2;
+}
+
+message UiDriverResponse {
+  // RequestId (ULID bytes, length = 16).
+  bytes request_id = 1;
+  UiDriverResponseStatus status = 2;
+
+  oneof result {
+    GetUiSnapshotResponse get_snapshot = 10;
+    OpenEpicResponse open_epic = 11;
+    SelectTaskResponse select_task = 12;
+    TriggerMergeResponse trigger_merge = 13;
+    OpenSessionViewResponse open_session_view = 14;
+    OpenDiffViewResponse open_diff_view = 15;
+    CaptureScreenshotResponse capture_screenshot = 16;
+    SetLeftPaneCollapsedResponse set_left_pane_collapsed = 17;
+    SetSettingsDialogOpenResponse set_settings_dialog_open = 33;
+    SetSettingsDialogSectionResponse set_settings_dialog_section = 34;
+    UiDriverCreateChatSessionResponse create_chat_session = 18;
+    UiDriverCloseChatSessionResponse close_chat_session = 19;
+    PinChatSessionResponse pin_chat_session = 20;
+    UnpinChatSessionResponse unpin_chat_session = 21;
+    TriggerRefreshResponse trigger_refresh = 22;
+    WaitForUiSnapshotResponse wait_for_snapshot = 23;
+    WaitForUiIdleResponse wait_for_idle = 24;
+    SelectGraphNodeResponse select_graph_node = 25;
+    ClearGraphSelectionResponse clear_graph_selection = 26;
+    ToggleExpandedTaskCardResponse toggle_expanded_task_card = 28;
+    MultiSelectAddNodeResponse multi_select_add_node = 29;
+    MultiSelectRemoveNodeResponse multi_select_remove_node = 30;
+    SessionSettingsMenuSetOpenResponse session_settings_menu_set_open = 31;
+    SessionSettingsMenuSendKeyResponse session_settings_menu_send_key = 32;
+    TaskFiltersMenuSetOpenResponse task_filters_menu_set_open = 35;
+    ErrorEnvelope error = 100;
+  }
+
+  reserved 27;
+}
+
+message GetUiSnapshotRequest {}
+
+message GetUiSnapshotResponse {
+  UiSnapshot snapshot = 1;
+}
+
+message OpenEpicRequest {
+  // Prefer stable ids where available; for early integration, epic identity can be a repo slug.
+  string epic_slug = 1;
+}
+
+message OpenEpicResponse {}
+
+message SelectTaskRequest {
+  // For early integration, tasks are identified by a stable slug.
+  string task_slug = 1;
+}
+
+message SelectTaskResponse {}
+
+message TriggerMergeRequest {
+  // Optional; if empty, merge is inferred from current selection.
+  string task_slug = 1;
+}
+
+message TriggerMergeResponse {
+  // Optional: the command id issued by the UI (if any).
+  bytes command_id = 1;
+}
+
+message OpenSessionViewRequest {}
+
+message OpenSessionViewResponse {}
+
+message OpenDiffViewRequest {}
+
+message OpenDiffViewResponse {}
+
+message SessionSettingsMenuSetOpenRequest {
+  bool open = 1;
+}
+
+message SessionSettingsMenuSetOpenResponse {}
+
+message SessionSettingsMenuSendKeyRequest {
+  // Keystroke key string (e.g. "up", "down", "left", "right", "enter", "escape").
+  string key = 1;
+}
+
+message SessionSettingsMenuSendKeyResponse {}
+
+message TaskFiltersMenuSetOpenRequest {
+  bool open = 1;
+}
+
+message TaskFiltersMenuSetOpenResponse {}
+
+message SetLeftPaneCollapsedRequest {
+  bool collapsed = 1;
+}
+
+message SetLeftPaneCollapsedResponse {}
+
+message SetSettingsDialogOpenRequest {
+  bool open = 1;
+}
+
+message SetSettingsDialogOpenResponse {}
+
+enum SettingsDialogSection {
+  SETTINGS_DIALOG_SECTION_UNSPECIFIED = 0;
+  SETTINGS_DIALOG_SECTION_APPEARANCE = 1;
+  SETTINGS_DIALOG_SECTION_AGENTS = 2;
+}
+
+message SetSettingsDialogSectionRequest {
+  SettingsDialogSection section = 1;
+}
+
+message SetSettingsDialogSectionResponse {}
+
+message UiDriverCreateChatSessionRequest {
+  // Best-effort label used for UI + artifacts.
+  string name_hint = 1;
+}
+
+message UiDriverCreateChatSessionResponse {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+}
+
+message UiDriverCloseChatSessionRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+}
+
+message UiDriverCloseChatSessionResponse {}
+
+message PinChatSessionRequest {
+  // SessionId (ULID bytes, length = 16).
+  bytes session_id = 1;
+}
+
+message PinChatSessionResponse {}
+
+message UnpinChatSessionRequest {}
+
+message UnpinChatSessionResponse {}
+
+message TriggerRefreshRequest {
+  // Optional; if empty, refresh is inferred from current selection.
+  string epic_slug = 1;
+  // Best-effort label used for artifacts naming.
+  string name_hint = 2;
+}
+
+message TriggerRefreshResponse {
+  // Optional: the command id issued by the UI (if any).
+  bytes command_id = 1;
+}
+
+message WaitForUiSnapshotRequest {
+  // Timeout in milliseconds; if 0, a server default is used.
+  uint64 timeout_ms = 1;
+  UiSnapshotPredicate predicate = 2;
+}
+
+message UiSnapshotPredicate {
+  // If unspecified, treated as "don't care".
+  UiPrimaryView primary_view = 1;
+  // If empty, treated as "don't care".
+  string epic_slug = 2;
+  // If set, require in_flight to be empty/non-empty.
+  optional bool in_flight_empty = 3;
+  // If empty, treated as "don't care".
+  // TaskId (ULID bytes, length = 16).
+  bytes selected_task_id = 4;
+  // If set, require graph layout settled to match.
+  optional bool graph_layout_settled = 6;
+  // If set, require graph selection settled to match.
+  optional bool graph_selection_settled = 7;
+
+  reserved 5;
+}
+
+message WaitForUiSnapshotResponse {
+  UiSnapshot snapshot = 1;
+}
+
+message WaitForUiIdleRequest {
+  // Timeout in milliseconds; if 0, a server default is used.
+  uint64 timeout_ms = 1;
+  // Quiescence window in milliseconds; if 0, a server default is used.
+  uint64 quiescence_ms = 2;
+}
+
+message WaitForUiIdleResponse {}
+
+// --- Graph driver requests (Domain 6) ---
+
+message SelectGraphNodeRequest {
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 1;
+}
+
+message SelectGraphNodeResponse {}
+
+message ClearGraphSelectionRequest {}
+
+message ClearGraphSelectionResponse {}
+
+message ToggleExpandedTaskCardRequest {
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 1;
+}
+
+message ToggleExpandedTaskCardResponse {}
+
+message MultiSelectAddNodeRequest {
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 1;
+}
+
+message MultiSelectAddNodeResponse {}
+
+message MultiSelectRemoveNodeRequest {
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 1;
+}
+
+message MultiSelectRemoveNodeResponse {}
+
+enum UiScreenshotWindow {
+  UI_SCREENSHOT_WINDOW_UNSPECIFIED = 0;
+  UI_SCREENSHOT_WINDOW_PRIMARY = 1;
+  UI_SCREENSHOT_WINDOW_ALL = 2;
+}
+
+message CaptureScreenshotRequest {
+  // Best-effort label used for artifact naming.
+  string name_hint = 1;
+  UiScreenshotWindow window = 2;
+  // Best-effort; may be ignored on some platforms.
+  optional bool include_decorations = 3;
+}
+
+message CaptureScreenshotResponse {
+  // Preferred: write to artifacts dir and return a path.
+  string png_path = 1;
+  // Optional fallback: PNG bytes (may be empty if unsupported).
+  bytes png_data = 2;
+}
+
+enum UiPrimaryView {
+  UI_PRIMARY_VIEW_UNSPECIFIED = 0;
+  UI_PRIMARY_VIEW_EPIC_SELECTOR = 1;
+  UI_PRIMARY_VIEW_EPIC_WORKSPACE = 2;
+}
+
+message UiLeftPaneState {
+  bool visible = 1;
+  bool collapsed = 2;
+  uint32 width = 3;
+}
+
+message UiSelectionState {
+  // EpicId (ULID bytes, length = 16).
+  bytes epic_id = 1;
+  string epic_slug = 2;
+  // TaskId (ULID bytes, length = 16).
+  bytes task_id = 3;
+  string task_slug = 4;
+  // Domain graph edge selection (TaskRelationId; ULID bytes, length = 16).
+  //
+  // Note: UI graph edge selection is surfaced via UiGraphState.selected_edge.
+  bytes edge_id = 5;
+}
+
+enum UiGraphLoadState {
+  UI_GRAPH_LOAD_STATE_UNSPECIFIED = 0;
+  UI_GRAPH_LOAD_STATE_UNSELECTED = 1;
+  UI_GRAPH_LOAD_STATE_LOADING = 2;
+  UI_GRAPH_LOAD_STATE_LOADED = 3;
+  UI_GRAPH_LOAD_STATE_EMPTY = 4;
+  UI_GRAPH_LOAD_STATE_ERROR = 5;
+}
+
+message UiGraphNodeId {
+  oneof id {
+    // TaskId (ULID bytes, length = 16).
+    bytes task_id = 1;
+    bool trunk = 2;
+  }
+}
+
+message UiGraphEdgeId {
+  UiGraphNodeId from = 1;
+  UiGraphNodeId to = 2;
+}
+
+message UiGraphCameraState {
+  // Coarse camera origin in world-space (logical pixels).
+  sint32 origin_world_x = 1;
+  sint32 origin_world_y = 2;
+  // Coarse zoom (percent), where 100 == 1.0.
+  uint32 zoom_percent = 3;
+}
+
+message UiGraphState {
+  UiGraphLoadState load_state = 1;
+  uint32 node_count = 2;
+  uint32 edge_count = 3;
+
+  UiGraphNodeId selected_node = 4;
+  UiGraphEdgeId selected_edge = 5;
+  repeated UiGraphNodeId multi_selected_nodes = 6;
+  bool expanded_task_card_open = 8;
+  // TaskId (ULID bytes, length = 16). Empty means "no expanded card".
+  bytes expanded_task_id = 9;
+  bool selection_bar_visible = 10;
+  // True when the graph's layout animation has finished (node positions stable).
+  // This intentionally does not include camera or selection-bar transitions.
+  bool layout_settled = 11;
+  // True when selection-driven UI transitions have finished
+  // (layout + camera + selection bar).
+  bool selection_settled = 12;
+  UiGraphCameraState camera = 13;
+
+  reserved 7;
+}
+
+message UiInFlightAction {
+  string label = 1;
+  // CommandId (ULID bytes, length = 16).
+  bytes command_id = 2;
+}
+
+message UiErrorCallout {
+  // Short, actionable message.
+  string message = 1;
+}
+
+message UiComposerState {
+  bool sending = 1;
+  // Empty means "no error".
+  string error = 2;
+}
+
+// Stable, machine-readable representation of what the UI is showing.
+message UiSnapshot {
+  google.protobuf.Timestamp captured_at = 1;
+  UiPrimaryView primary_view = 2;
+  UiLeftPaneState left_pane = 3;
+  UiSelectionState selection = 4;
+  repeated UiInFlightAction in_flight = 5;
+  repeated UiErrorCallout errors = 6;
+  // SessionId (ULID bytes, length = 16). Empty means "no pinned chat".
+  bytes pinned_chat_session_id = 7;
+  UiComposerState pinned_chat_composer = 8;
+  UiGraphState graph = 9;
+}

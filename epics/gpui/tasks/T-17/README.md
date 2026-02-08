@@ -63,6 +63,31 @@ Notes:
 - Do not embed large blobs in `events` or `session_events`; use `artifacts` for big content.
 - Prefer normalized columns for frequently queried fields; keep “extra JSON” as an escape hatch only where necessary.
 
+### 2.1) DB-level consistency constraints (prefer constraints over app logic)
+
+Prefer enforcing cross-column invariants in SQLite where practical so downstream code can assume the
+graph is internally consistent.
+
+In particular:
+
+- **Repo scope columns are a single logical identity**:
+  - Tables that store both `scope_workspace_id` and `scope_repo_id` should prefer a *composite* FK
+    like `(scope_workspace_id, scope_repo_id) → repositories(workspace_id, id)` (instead of two
+    independent FKs), to prevent “workspace A + repo B” impossible pairings.
+- **Tree topology should be internally consistent**:
+  - Prefer enforcing `tasks.parent_task_id` never crosses epics via a composite FK
+    `(epic_id, parent_task_id) → tasks(epic_id, id)`.
+- **Scope chains should be coherent where representable**:
+  - When storing `session_events` with `scope_kind = epic|task`, prefer constraints that ensure
+    referenced `epic_id`/`task_id` belong to the same repo scope (often via additional composite
+    FKs or redundant columns).
+
+Non-goals for v0 (unless required by real bugs):
+
+- Invariants that require multi-table join logic (e.g. “`commands.target_task_id` must belong to
+  `scope_repo_id`”) usually require triggers or denormalization; treat these as application-layer
+  invariants until we choose the minimal redundant columns needed to enforce them cheaply.
+
 ### 3) Indexing policy
 
 Add indices for the primary query patterns:
@@ -76,6 +101,12 @@ Add indices for the primary query patterns:
 
 - Migrations are applied automatically by the control plane at startup in dev/test.
 - Provide a clear, documented workflow for adding migrations (no manual DB fiddling).
+
+Split DB strategy:
+
+- Rust migrations apply to the Rust DB file only: `<repo>/.redesmyn/redesmyn_rust.sqlite3`.
+- Do not modify the legacy Alembic DB (`<repo>/.redesmyn/redesmyn.sqlite3`) from Rust code.
+- Provide an explicit, testable import/cutover tool as a separate ticket (T-67).
 
 ### 5) Testability
 

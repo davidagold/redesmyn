@@ -1,0 +1,10 @@
+[package]
+name = "redesmyn_graph_layout"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+redesmyn_logging.workspace = true

@@ -1,7 +1,7 @@
 ---
 epic: gpui
 branch:
-  suggested: rn/gpui/T-8-rn-rust-skeleton
+  suggested: rn/gpui/T-8-rust-rn-skeleton
 rn:
   parent: T-1
 ---

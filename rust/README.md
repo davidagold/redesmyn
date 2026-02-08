@@ -13,6 +13,43 @@ Or directly:
 
 - `cd rust && cargo check`
 
+## `rn-rs` (Rust CLI)
+
+During the port, the existing Python CLI remains `rn`. The Rust port’s CLI binary is named `rn-rs` so both can coexist on `PATH`.
+
+Examples:
+
+- `cd rust && cargo run -p rn -- --help`
+- `cd rust && cargo run -p rn -- doctor`
+- `cd rust && cargo run -p rn -- version`
+- `cd rust && cargo run -p rn -- bench startup`
+- `cd rust && cargo run -p rn -- protocol decode --input frames.bin --codec protobuf --output json --verbose`
+- `cd rust && cargo run -p rn -- protocol encode --input frame.json --codec protobuf --out frames.bin`
+- `cd rust && cargo run -p rn -- protocol tap --output json` (connects to configured client API UDS)
+
+Protocol tooling defaults:
+
+- `protocol decode` / `protocol encode`: `--framed` defaults to `true` (disable with `--framed=false` for raw payloads).
+- `protocol tap`: `--status` and `--subscribe-event-log` default to `true` (disable with `--status=false` / `--subscribe-event-log=false`).
+- `--pretty` defaults to `true` (only applies to `--verbose` + `--output human`).
+
+Conventions:
+
+- Structured output: `--output human|json` (default: `human`).
+- Exit codes (aligned with the shared T-3 error categories):
+  - `0`: success
+  - `1`: internal/unexpected
+  - `2`: invalid request / CLI usage
+  - `3`: not found
+  - `4`: conflict
+  - `5`: unauthorized
+  - `6`: unavailable
+  - `130`: interrupted (Ctrl-C)
+
+Install to `PATH`:
+
+- `cd rust && cargo install --path crates/rn --bin rn-rs`
+
 ## Crate boundaries (by construction)
 
 Dependency rules (enforced by `Cargo.toml` edges):
