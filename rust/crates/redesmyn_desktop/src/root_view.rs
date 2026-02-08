@@ -3,11 +3,11 @@ mod command_palette_overlay;
 mod live_updates;
 mod settings_dialog;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use std::future::Future;
 
 use gpui::{
     App, AppContext, AsyncApp, ClickEvent, Context, Entity, FocusHandle, Focusable, Render,
@@ -63,7 +63,7 @@ use crate::command_palette::{
 use crate::control_plane_client::{ControlPlaneClient, ControlPlaneClientError};
 use crate::orchestration_config::{
     CodexApprovalPolicyDefault, CodexReasoningEffortDefault, CodexSandboxPolicyDefault,
-    load_effective_defaults,
+    load_effective_defaults, repo_root_from_cwd,
 };
 use crate::settings_dialog_keys::{CloseSettingsDialog, ToggleSettingsDialog};
 use crate::task_filters::{
@@ -2312,7 +2312,9 @@ fn codex_sandbox_policy_from_default(
 
 fn repo_root_from_desktop_config(config: &redesmyn_config::RustConfig) -> Option<PathBuf> {
     redesmyn_config::discover_repo_root_from(&config.control_plane.db.path)
-        .or_else(|| redesmyn_config::discover_repo_root_from(&config.control_plane.api.client_socket_path))
+        .or_else(|| {
+            redesmyn_config::discover_repo_root_from(&config.control_plane.api.client_socket_path)
+        })
         .or_else(|| redesmyn_config::discover_repo_root_from(&config.daemon.worktree_root))
         .or_else(|| redesmyn_config::discover_repo_root_from(&config.daemon.repo_registry_dir))
 }
@@ -2431,7 +2433,6 @@ fn sync_chat_title_openai_api_key_from_defaults() {
     redesmyn_control_plane::client_api::set_openai_api_key_override(api_key);
 }
 
-async fn apply_default_chat_session_policies(
 fn agent_sessions_palette_show_unreachable_from_defaults() -> bool {
     match repo_root_from_cwd() {
         Ok(repo_root) => match load_effective_defaults(&repo_root) {
@@ -2468,17 +2469,12 @@ async fn apply_default_chat_session_policies(
     let approval_policy = load_task_start_codex_approval_policy(repo_root.as_path());
     if let Some(approval_policy) = approval_policy {
         let scope = scope.clone();
-        apply_default_chat_session_command(
-            client,
-            session_id,
-            "approval_policy",
-            async move {
-                client
-                    .set_session_codex_approval_policy(scope, session_id, Some(approval_policy))
-                    .await
-                    .map(|response| response.command)
-            },
-        )
+        apply_default_chat_session_command(client, session_id, "approval_policy", async move {
+            client
+                .set_session_codex_approval_policy(scope, session_id, Some(approval_policy))
+                .await
+                .map(|response| response.command)
+        })
         .await;
     }
 
@@ -2512,7 +2508,9 @@ async fn apply_default_chat_session_command<F>(
     setting_name: &'static str,
     request: F,
 ) where
-    F: Future<Output = Result<Option<redesmyn_protocol::client::CommandSummary>, ControlPlaneClientError>>,
+    F: Future<
+        Output = Result<Option<redesmyn_protocol::client::CommandSummary>, ControlPlaneClientError>,
+    >,
 {
     let command = match request.await {
         Ok(command) => command,
@@ -4909,7 +4907,9 @@ impl WorkspacePaneHost {
         let task_start_model_selection = repo_root
             .as_deref()
             .and_then(load_default_session_model_selection);
-        let task_start_initial_prompt = repo_root.as_deref().and_then(load_task_start_initial_prompt);
+        let task_start_initial_prompt = repo_root
+            .as_deref()
+            .and_then(load_task_start_initial_prompt);
         let task_start_codex_approval_policy = repo_root
             .as_deref()
             .and_then(load_task_start_codex_approval_policy);
