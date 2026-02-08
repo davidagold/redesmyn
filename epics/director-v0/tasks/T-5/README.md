@@ -7,6 +7,11 @@ rn:
 
 # T-5 Director UI v0 (pinned session + controller overlay)
 
+## Implementation Boundary
+
+- Implement UI behavior in the Rust GPUI desktop app (`redesmyn_desktop` + Rust UI crates) only.
+- Do not add or rely on legacy Python/webview UI implementations for this task.
+
 ## Plan
 
 - Use the epic-pinned director session as the primary UI (no separate heavy workbench in v0).
@@ -28,3 +33,4 @@ rn:
 - A user can clearly tell when the director session is actively auto-directing the epic.
 - Users cannot accidentally send manual messages while auto-direction is active.
 - Controller queue/wake state is visible without introducing duplicate task-status surfaces.
+- Implementation targets Rust GPUI UI surfaces, not legacy UI paths.

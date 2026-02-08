@@ -92,7 +92,17 @@ Gates (tests, lint, typecheck, build, etc.) are modeled as commands that:
 - Director-driven orchestration via direct `rn` command execution.
 - Director UI v0 as pinned session + controller overlay.
 
-## 3.1 Explicit out-of-scope (moved to sibling epic)
+## 3.1 Implementation boundary (Rust/GPUI only)
+
+- Director v0 implementation lands in the Rust application stack:
+  - `crates/redesmyn_desktop` (GPUI desktop shell + UI orchestration surfaces),
+  - `crates/redesmyn_control_plane` (command/event orchestration semantics),
+  - `crates/redesmyn_ui_graph` + `crates/redesmyn_ui_session` (director/task UI surfaces),
+  - related Rust protocol/storage crates as needed.
+- Legacy Python backend and legacy webview application are out of implementation scope for this epic.
+- Any temporary compatibility glue must not become the source of truth for director semantics.
+
+## 3.2 Explicit out-of-scope (moved to sibling epic)
 
 The following is tracked in `epics/remote-execution-v0/README.md`:
 

@@ -7,6 +7,11 @@ rn:
 
 # T-2 Merge queue model + conductor actions
 
+## Implementation Boundary
+
+- Implement queue state, conductor actions, and orchestration execution in Rust control-plane/desktop surfaces.
+- Do not add or rely on legacy Python/webview implementations for this task.
+
 ## Plan
 
 - Define the merge queue primitives:
@@ -28,3 +33,4 @@ rn:
 - The queue can represent pending dependencies and staged approvals without inventing ad-hoc states.
 - Director-driven actions and conductor overrides are both explicit, durable, and explainable.
 - The director can re-evaluate ordering when new information arrives (e.g. task C appears).
+- Implementation targets Rust runtime paths (control plane + desktop integration), not legacy paths.

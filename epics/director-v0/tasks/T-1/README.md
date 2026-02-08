@@ -7,6 +7,11 @@ rn:
 
 # T-1 Director run semantics (cursor + idempotency)
 
+## Implementation Boundary
+
+- Specify and implement these semantics in Rust control-plane/desktop integration paths only.
+- Do not add or rely on legacy Python/webview implementations for this task.
+
 ## Plan
 
 - Specify the director/controller lifecycle:
@@ -30,3 +35,4 @@ rn:
 - The "new events while running" behavior is explicit and does not rely on polling.
 - Director restarts preserve correctness via cursored replay.
 - Reprocessing a wake is safe and does not duplicate orchestration actions.
+- Implementation targets Rust runtime paths (control plane + desktop integration), not legacy paths.

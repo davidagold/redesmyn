@@ -7,6 +7,11 @@ rn:
 
 # T-4 Controller <-> director wake protocol + backlog delivery
 
+## Implementation Boundary
+
+- Implement wake protocol and backlog delivery in Rust control-plane + desktop integration surfaces.
+- Do not add or rely on legacy Python/webview implementations for this task.
+
 ## Plan
 
 - Define significant-event detection for wakeups:
@@ -29,3 +34,4 @@ rn:
 - Director can be driven entirely by controller wake messages in v0 (no direct event polling required).
 - No events are silently dropped between wake and ack, including large-backlog scenarios.
 - Replayed wake deliveries are safe and do not cause unintended duplicate orchestration actions.
+- Implementation targets Rust runtime paths (control plane + desktop integration), not legacy paths.
