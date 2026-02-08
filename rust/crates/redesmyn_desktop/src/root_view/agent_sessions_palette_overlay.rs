@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use gpui::{
     App, Context, ElementId, Entity, FocusHandle, Focusable, ScrollHandle, SharedString, Window,
-    div, prelude::*, px,
+    div, point, prelude::*, px,
 };
 
 use redesmyn_ids::{SessionId, TaskId};
@@ -206,6 +206,7 @@ impl AgentSessionsPaletteOverlay {
         self.archiving_session_id = None;
         self.error = None;
         self.selected_index = 0;
+        self.scroll.set_offset(point(px(0.0), px(0.0)));
         cx.notify();
     }
 
@@ -220,6 +221,7 @@ impl AgentSessionsPaletteOverlay {
         self.archiving_session_id = None;
         self.error = None;
         self.selected_index = 0;
+        self.scroll.set_offset(point(px(0.0), px(0.0)));
         self.scroll_selected_into_view(cx);
         cx.notify();
     }
@@ -462,6 +464,7 @@ impl AgentSessionsPaletteOverlay {
         self.action_in_flight = false;
         self.archiving_session_id = None;
         self.input.update(cx, |input, cx| input.set_text("", cx));
+        self.scroll.set_offset(point(px(0.0), px(0.0)));
         self.scroll_selected_into_view(cx);
         window.focus(&self.input.focus_handle(cx));
         cx.notify();
