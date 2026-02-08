@@ -5,6 +5,9 @@ use gpui::SharedString;
 use redesmyn_graph_layout::{ForestLayoutEngine, LayoutConfig, LayoutNode, LayoutOptions};
 use redesmyn_ids::{CommandId, SessionEventId, SessionId, TaskId};
 use redesmyn_protocol::Timestamp;
+use redesmyn_protocol::agent_commands::{
+    SESSION_AGENT_RESUME_BY_ID_TURN, TASK_AGENT_START, TASK_AGENT_STOP,
+};
 use redesmyn_protocol::client::{CommandState, MergeReadiness, TaskState};
 use redesmyn_ui::task_filters::{TaskAgentStatus, TaskFilterTarget, TaskFilters};
 
@@ -551,8 +554,17 @@ impl GraphScene {
         }
 
         if should_apply_to_latest {
-            let next_status = agent_status_from_command_state(state);
-            if node.agent_status != next_status {
+            let kind_for_status = kind
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .or_else(|| {
+                    node.latest_command
+                        .as_ref()
+                        .map(|latest| latest.kind.as_ref())
+                });
+            if let Some(next_status) = agent_status_from_command(kind_for_status, state)
+                && node.agent_status != next_status
+            {
                 node.agent_status = next_status;
                 changed = true;
             }
@@ -1237,7 +1249,10 @@ fn agent_status_by_task_id(
         let Some(task_id) = summary.target_task_id else {
             continue;
         };
-        let status = agent_status_from_command_state(summary.state);
+        let Some(status) = agent_status_from_command(Some(summary.kind.as_str()), summary.state)
+        else {
+            continue;
+        };
         out.entry(task_id)
             .and_modify(|existing| {
                 if priority(status) > priority(*existing) {
@@ -1249,15 +1264,55 @@ fn agent_status_by_task_id(
     out
 }
 
-fn agent_status_from_command_state(state: CommandState) -> AgentStatus {
-    match state {
-        CommandState::Queued | CommandState::Running | CommandState::Accepted => {
-            AgentStatus::Running
-        }
-        CommandState::Blocked | CommandState::Resumable => AgentStatus::Blocked,
-        CommandState::Failed => AgentStatus::Error,
-        CommandState::Succeeded | CommandState::Canceled => AgentStatus::Stopped,
-        CommandState::Unknown => AgentStatus::Unknown,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentLifecycleCommand {
+    Start,
+    Stop,
+    Resume,
+}
+
+fn classify_agent_lifecycle_command(kind: Option<&str>) -> Option<AgentLifecycleCommand> {
+    match kind.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(TASK_AGENT_START) => Some(AgentLifecycleCommand::Start),
+        Some(TASK_AGENT_STOP) => Some(AgentLifecycleCommand::Stop),
+        Some(SESSION_AGENT_RESUME_BY_ID_TURN) => Some(AgentLifecycleCommand::Resume),
+        _ => None,
+    }
+}
+
+fn agent_status_from_command(kind: Option<&str>, state: CommandState) -> Option<AgentStatus> {
+    let lifecycle = classify_agent_lifecycle_command(kind)?;
+
+    match lifecycle {
+        AgentLifecycleCommand::Start => match state {
+            CommandState::Queued
+            | CommandState::Running
+            | CommandState::Accepted
+            | CommandState::Succeeded => Some(AgentStatus::Running),
+            CommandState::Blocked | CommandState::Resumable => Some(AgentStatus::Blocked),
+            CommandState::Failed => Some(AgentStatus::Error),
+            CommandState::Canceled => Some(AgentStatus::Stopped),
+            CommandState::Unknown => Some(AgentStatus::Unknown),
+        },
+        AgentLifecycleCommand::Stop => match state {
+            CommandState::Queued
+            | CommandState::Running
+            | CommandState::Accepted
+            | CommandState::Blocked
+            | CommandState::Resumable => Some(AgentStatus::Running),
+            CommandState::Succeeded | CommandState::Canceled => Some(AgentStatus::Stopped),
+            CommandState::Failed => Some(AgentStatus::Error),
+            CommandState::Unknown => Some(AgentStatus::Unknown),
+        },
+        AgentLifecycleCommand::Resume => match state {
+            CommandState::Queued
+            | CommandState::Running
+            | CommandState::Accepted
+            | CommandState::Succeeded => Some(AgentStatus::Running),
+            CommandState::Blocked | CommandState::Resumable => Some(AgentStatus::Blocked),
+            CommandState::Failed => Some(AgentStatus::Error),
+            CommandState::Canceled | CommandState::Unknown => None,
+        },
     }
 }
 
@@ -1733,5 +1788,96 @@ mod tests {
             latest.last_message.as_ref().map(|message| message.as_ref()),
             Some("starting")
         );
+    }
+
+    #[test]
+    fn apply_command_state_update_treats_start_succeeded_as_running() {
+        let task_id = TaskId::from_bytes([12; 16]);
+        let command_id = CommandId::from_bytes([13; 16]);
+        let mut scene = GraphScene::empty_demo();
+        scene.insert_demo_node(GraphNodeId::Task(task_id));
+
+        let updated_at = Timestamp::from_unix_millis(2).expect("timestamp");
+        assert!(scene.apply_command_state_update(
+            command_id,
+            Some(task_id),
+            Some(TASK_AGENT_START),
+            CommandState::Succeeded,
+            Some("dispatched"),
+            updated_at,
+        ));
+
+        let node = scene
+            .node(GraphNodeId::Task(task_id))
+            .expect("task node should exist");
+        assert_eq!(node.agent_status, AgentStatus::Running);
+    }
+
+    #[test]
+    fn apply_command_state_update_task_stop_succeeded_sets_stopped() {
+        let task_id = TaskId::from_bytes([14; 16]);
+        let start_command_id = CommandId::from_bytes([15; 16]);
+        let stop_command_id = CommandId::from_bytes([16; 16]);
+        let mut scene = GraphScene::empty_demo();
+        scene.insert_demo_node(GraphNodeId::Task(task_id));
+
+        let started_at = Timestamp::from_unix_millis(3).expect("timestamp");
+        assert!(scene.apply_command_state_update(
+            start_command_id,
+            Some(task_id),
+            Some(TASK_AGENT_START),
+            CommandState::Succeeded,
+            Some("started"),
+            started_at,
+        ));
+
+        let stopped_at = Timestamp::from_unix_millis(4).expect("timestamp");
+        assert!(scene.apply_command_state_update(
+            stop_command_id,
+            Some(task_id),
+            Some(TASK_AGENT_STOP),
+            CommandState::Succeeded,
+            Some("stopped"),
+            stopped_at,
+        ));
+
+        let node = scene
+            .node(GraphNodeId::Task(task_id))
+            .expect("task node should exist");
+        assert_eq!(node.agent_status, AgentStatus::Stopped);
+    }
+
+    #[test]
+    fn apply_command_state_update_ignores_non_lifecycle_agent_commands() {
+        let task_id = TaskId::from_bytes([17; 16]);
+        let start_command_id = CommandId::from_bytes([18; 16]);
+        let set_model_command_id = CommandId::from_bytes([19; 16]);
+        let mut scene = GraphScene::empty_demo();
+        scene.insert_demo_node(GraphNodeId::Task(task_id));
+
+        let started_at = Timestamp::from_unix_millis(5).expect("timestamp");
+        assert!(scene.apply_command_state_update(
+            start_command_id,
+            Some(task_id),
+            Some(TASK_AGENT_START),
+            CommandState::Succeeded,
+            Some("started"),
+            started_at,
+        ));
+
+        let non_lifecycle_at = Timestamp::from_unix_millis(6).expect("timestamp");
+        assert!(scene.apply_command_state_update(
+            set_model_command_id,
+            Some(task_id),
+            Some("session.agent.set_model"),
+            CommandState::Succeeded,
+            Some("model changed"),
+            non_lifecycle_at,
+        ));
+
+        let node = scene
+            .node(GraphNodeId::Task(task_id))
+            .expect("task node should exist");
+        assert_eq!(node.agent_status, AgentStatus::Running);
     }
 }
