@@ -62,6 +62,9 @@ const OPENAI_CHAT_TITLE_MODEL: &str = "gpt-4o-mini";
 const OPENAI_API_KEY_ENV: &str = "OPENAI_API_KEY";
 const REDESMYN_OPENAI_API_KEY_ENV: &str = "REDESMYN_RUST__CONTROL_PLANE__OPENAI_API_KEY";
 const CHAT_TITLE_SOURCE_MAX_CHARS: usize = 2_000;
+const CHAT_TITLE_CONTEXT_EVENT_LIMIT: u32 = 14;
+const CHAT_TITLE_CONTEXT_PREVIEW_MAX_CHARS: usize = 220;
+const CHAT_TITLE_PROMPT_MAX_CHARS: usize = 3_200;
 const CHAT_TITLE_MAX_CHARS: usize = 96;
 static OPENAI_API_KEY_OVERRIDE: OnceLock<RwLock<Option<String>>> = OnceLock::new();
 
@@ -2326,22 +2329,18 @@ async fn handle_request_result(
                 )));
             };
 
-            let prompt = redesmyn_storage::sessions::latest_session_event_preview_by_kind(
+            let context_rows = redesmyn_storage::sessions::list_recent_session_message_previews(
                 control_plane.pool(),
                 req.session_id,
-                "user_message",
+                CHAT_TITLE_CONTEXT_EVENT_LIMIT,
             )
             .await?;
-            let Some(prompt) = prompt
-                .map(|text| text.trim().to_string())
-                .filter(|text| !text.is_empty())
-            else {
+            let Some(prompt) = build_chat_title_prompt_from_context_rows(&context_rows) else {
                 return Ok(ResponseResult::Error(ErrorEnvelope::new(
                     ErrorCategory::InvalidRequest,
-                    "Cannot regenerate title: this session has no user messages yet.",
+                    "Cannot regenerate title: this session has no message history yet.",
                 )));
             };
-            let prompt: String = prompt.chars().take(CHAT_TITLE_SOURCE_MAX_CHARS).collect();
 
             let generated = match generate_chat_title_via_openai(&api_key, &prompt).await {
                 Ok(Some(title)) => title,
@@ -2667,15 +2666,44 @@ fn maybe_spawn_chat_title_generation(
         return;
     };
 
-    let prompt = text.trim();
-    if prompt.is_empty() {
-        return;
-    }
-
-    let prompt: String = prompt.chars().take(CHAT_TITLE_SOURCE_MAX_CHARS).collect();
+    let fallback_prompt: String = text
+        .trim()
+        .chars()
+        .take(CHAT_TITLE_SOURCE_MAX_CHARS)
+        .collect();
     let session_id = session.session_id;
 
     tokio::spawn(async move {
+        let prompt = match redesmyn_storage::sessions::list_recent_session_message_previews(
+            &pool,
+            session_id,
+            CHAT_TITLE_CONTEXT_EVENT_LIMIT,
+        )
+        .await
+        {
+            Ok(rows) => build_chat_title_prompt_from_context_rows(&rows)
+                .or_else(|| {
+                    if fallback_prompt.is_empty() {
+                        None
+                    } else {
+                        Some(fallback_prompt.clone())
+                    }
+                })
+                .unwrap_or_default(),
+            Err(error) => {
+                tracing::warn!(
+                    session_id = %session_id,
+                    error = %error,
+                    "failed to load chat title context rows; using fallback prompt"
+                );
+                fallback_prompt.clone()
+            }
+        };
+
+        if prompt.is_empty() {
+            return;
+        }
+
         let generated = match generate_chat_title_via_openai(&api_key, &prompt).await {
             Ok(title) => title,
             Err(error) => {
@@ -2728,6 +2756,58 @@ fn openai_api_key_from_env() -> Option<String> {
         .or_else(|| non_empty_env(OPENAI_API_KEY_ENV))
 }
 
+fn build_chat_title_prompt_from_context_rows(
+    rows: &[redesmyn_storage::sessions::SessionMessagePreviewRecord],
+) -> Option<String> {
+    let mut context_lines = Vec::new();
+    for row in rows {
+        let role = match row.kind.as_str() {
+            "user_message" => "User",
+            "assistant_message" => "Assistant",
+            _ => continue,
+        };
+
+        let preview = truncate_chat_title_context_preview(&row.message_preview);
+        if preview.is_empty() {
+            continue;
+        }
+
+        context_lines.push(format!("{role}: {preview}"));
+    }
+
+    if context_lines.is_empty() {
+        return None;
+    }
+
+    let mut prompt = String::from("Recent conversation snippets (most recent first):\n");
+    for (index, line) in context_lines.iter().enumerate() {
+        prompt.push_str(&(index + 1).to_string());
+        prompt.push_str(". ");
+        prompt.push_str(line);
+        prompt.push('\n');
+    }
+    prompt.push_str(
+        "\nGenerate one concise title that reflects the concrete current focus. \
+Prioritize the most recent snippets over older context.",
+    );
+
+    if prompt.chars().count() > CHAT_TITLE_PROMPT_MAX_CHARS {
+        prompt = prompt.chars().take(CHAT_TITLE_PROMPT_MAX_CHARS).collect();
+    }
+
+    Some(prompt.trim().to_string())
+}
+
+fn truncate_chat_title_context_preview(raw: &str) -> String {
+    let compact = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    compact
+        .chars()
+        .take(CHAT_TITLE_CONTEXT_PREVIEW_MAX_CHARS)
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
 async fn generate_chat_title_via_openai(
     api_key: &str,
     prompt: &str,
@@ -2740,11 +2820,11 @@ async fn generate_chat_title_via_openai(
     let request = OpenAiChatTitleRequest {
         model: OPENAI_CHAT_TITLE_MODEL,
         temperature: 0.2,
-        max_tokens: 20,
+        max_tokens: 24,
         messages: vec![
             OpenAiChatTitleMessage {
                 role: "system",
-                content: "Generate a concise chat session title (max 8 words). Return only the title, with no quotes or prefixes.".to_string(),
+                content: "Generate a concise engineering chat title (max 8 words). Use specific entities from context (files, components, tasks, errors). Prioritize recent context. Avoid generic titles like \"discussion\", \"steps\", or \"task\". Return only the title text without quotes or prefixes.".to_string(),
             },
             OpenAiChatTitleMessage {
                 role: "user",

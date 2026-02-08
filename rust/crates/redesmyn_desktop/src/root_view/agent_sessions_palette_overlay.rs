@@ -654,6 +654,7 @@ impl AgentSessionsPaletteOverlay {
                         entry,
                         row_display_index == selected_index,
                         row_display_index,
+                        true,
                         self.is_blocking_loading() || self.action_in_flight,
                         cx,
                         &theme,
@@ -684,6 +685,7 @@ impl AgentSessionsPaletteOverlay {
                         entry,
                         row_display_index == selected_index,
                         row_display_index,
+                        false,
                         self.is_blocking_loading() || self.action_in_flight,
                         cx,
                         &theme,
@@ -762,6 +764,7 @@ fn render_entry_row(
     entry: &AgentSessionPaletteEntry,
     selected: bool,
     display_index: usize,
+    show_repo_prefix: bool,
     globally_disabled: bool,
     cx: &mut Context<RootView>,
     theme: &UiTheme,
@@ -771,6 +774,12 @@ fn render_entry_row(
         AgentSessionNavigation::Task { .. } | AgentSessionNavigation::Chat { .. } => None,
     };
     let disabled = globally_disabled || disabled_reason.is_some();
+    let subtitle = if show_repo_prefix {
+        let base = entry.subtitle();
+        format!("{} • {base}", entry.repo_group_label)
+    } else {
+        entry.subtitle()
+    };
 
     let base_row_id = ElementId::from(("agent_session_row", cx.entity_id()));
     let mut row = div()
@@ -801,7 +810,7 @@ fn render_entry_row(
             div()
                 .text_xs()
                 .text_color(theme.colors.foreground_muted)
-                .child(entry.subtitle()),
+                .child(subtitle),
         );
 
     if let Some(reason) = disabled_reason {

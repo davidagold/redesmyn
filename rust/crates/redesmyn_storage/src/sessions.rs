@@ -142,6 +142,13 @@ pub struct SessionEventRecord {
     pub payload: Vec<u8>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionMessagePreviewRecord {
+    pub kind: String,
+    pub message_preview: String,
+    pub created_at_ms: i64,
+}
+
 type SessionEventRow = (
     SessionEventId,
     SessionId,
@@ -152,6 +159,8 @@ type SessionEventRow = (
     Option<ArtifactId>,
     Vec<u8>,
 );
+
+type SessionMessagePreviewRow = (String, String, i64);
 
 fn decode_session_event_row(
     (id, session_id, created_at_ms, kind, turn_id, message_preview, artifact_id, payload): SessionEventRow,
@@ -165,6 +174,16 @@ fn decode_session_event_row(
         message_preview,
         artifact_id,
         payload,
+    }
+}
+
+fn decode_session_message_preview_row(
+    (kind, message_preview, created_at_ms): SessionMessagePreviewRow,
+) -> SessionMessagePreviewRecord {
+    SessionMessagePreviewRecord {
+        kind,
+        message_preview,
+        created_at_ms,
     }
 }
 
@@ -604,6 +623,38 @@ where
     .await?;
 
     Ok(row.map(|(preview,)| preview))
+}
+
+pub async fn list_recent_session_message_previews<'e, E>(
+    executor: E,
+    session_id: SessionId,
+    limit: u32,
+) -> Result<Vec<SessionMessagePreviewRecord>, StorageError>
+where
+    E: Executor<'e, Database = Sqlite>,
+{
+    let rows: Vec<SessionMessagePreviewRow> = sqlx::query_as(
+        r#"
+        SELECT kind, message_preview, created_at_ms
+        FROM session_events
+        WHERE
+            session_id = ?1
+            AND kind IN ('user_message', 'assistant_message')
+            AND message_preview IS NOT NULL
+            AND TRIM(message_preview) <> ''
+        ORDER BY created_at_ms DESC, id DESC
+        LIMIT ?2
+        "#,
+    )
+    .bind(session_id)
+    .bind(i64::from(limit))
+    .fetch_all(executor)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(decode_session_message_preview_row)
+        .collect())
 }
 
 pub async fn update_agent_session_status<'e, E>(
