@@ -5,7 +5,7 @@ rn:
   parent: T-4
 ---
 
-# T-5 Director UI v0 (pinned session + controller overlay)
+# T-5 Director mode session UX v0
 
 ## Implementation Boundary
 
@@ -14,23 +14,25 @@ rn:
 
 ## Plan
 
-- Use the epic-pinned director session as the primary UI (no separate heavy workbench in v0).
-- Add automatic-direction controls:
-  - composer disabled while automatic direction is active
-  - explicit pause/resume automatic direction toggle; composer re-enabled when paused
-- Add integrated active-director visual treatment:
-  - subtle, structural styling (integrated with layout/chrome)
-  - avoid badge-only or duplicate status labels
-- Add a small controller overlay in graph view (e.g. corner dock) that shows:
-  - queued wake/message count
-  - controller state (idle/sending/waiting-ack/error)
-  - last wake reason/time
-- Keep overlay scope tight:
-  - do not duplicate task-card progress/status content already visible in graph
+- Use the epic-pinned director session as the primary UI.
+- Add a floating, non-scrolling `Director mode` affordance in the top-right of the session timeline viewport.
+- Add activation flow:
+  - user chooses `Run in current session` or `Run in new session`,
+  - after intent selection, activation is one click.
+- Add composer interaction contract for director mode:
+  - normal send transforms inline into two-step `Pause & Send` (no dialog/modal),
+  - `Steer` toggle allows one-shot manual instruction without pausing orchestration,
+  - add keyboard shortcut `Cmd+.` to toggle `Steer`.
+- Add integrated active/idle director visual treatment:
+  - visible but calm structural styling,
+  - active and idle states are visually distinct,
+  - avoid badge accumulation and duplicate labels.
+- Surface interruption/backlog state in a fixed non-modal surface near the session UI (not timeline event spam).
 
 ## Acceptance Criteria
 
 - A user can clearly tell when the director session is actively auto-directing the epic.
-- Users cannot accidentally send manual messages while auto-direction is active.
-- Controller queue/wake state is visible without introducing duplicate task-status surfaces.
+- Users can activate director mode from the session viewport and choose current/new session path.
+- Manual send in director mode requires explicit `Pause & Send`, while `Steer` can send without pausing.
+- `Steer` toggle is available in composer with working `Cmd+.` shortcut.
 - Implementation targets Rust GPUI UI surfaces, not legacy UI paths.

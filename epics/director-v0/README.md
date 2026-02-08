@@ -24,7 +24,7 @@ decisions. Keep it current.
 Add a **director** that can drive multi-agent work towards a coherent outcome:
 
 - Observe the control plane’s durable event stream.
-- Decide merge/start/request-change/gating actions for an epic.
+- Decide start/re-enqueue/request-change/merge actions for an epic (policy-controlled).
 - Execute those actions via `rn` commands from the director agent session.
 - Keep the human “conductor” in the loop for approvals/overrides.
 
@@ -48,7 +48,8 @@ decision-maker for orchestration, while the controller provides deterministic wa
 
 ### 2.3 Director executes orchestration via `rn`
 
-- The director agent directly runs `rn` commands for orchestration actions (start task, merge, run gates, etc.).
+- The director agent directly runs `rn` commands for orchestration actions (start task, re-enqueue, request
+  changes, merge).
 - Event emission comes from normal command handling paths; no separate intent-runner is required for v0.
 - Controller responsibilities are wakeup, delivery, dedupe/coalescing, and lifecycle coordination.
 
@@ -59,38 +60,71 @@ The director operates on an explicit merge queue that supports:
 - candidate refs (typically commit SHAs or task branch refs),
 - dependencies/blockers (e.g. “A approved pending B”),
 - conductor actions (approve, defer, request changes, requeue),
-- and visibility into what’s gated/blocked and why.
+- and visibility into what’s blocked and why.
 
-### 2.5 Gating is a first-class command, applied sparingly
+### 2.5 Merge authority policy (default safe, optional YOLO)
 
-Gates (tests, lint, typecheck, build, etc.) are modeled as commands that:
+- Merge authority is configurable by policy.
+- Global default controls baseline behavior for new epics; epic-level override is supported.
+- v0 default is conservative:
+  - `yolo_merge = false` (director does not autonomously merge),
+  - director may still prepare merge queue and surface merge-ready suggestions.
+- Optional per-epic YOLO mode:
+  - `yolo_merge = true` allows autonomous merge under configured constraints.
 
-- run on a designated executor,
-- emit durable progress + results into the event log,
-- publish logs/artifacts for review,
-- and can be cached by `(candidate_ref, base_ref_used, policy)`.
+### 2.6 Wake trigger set for v0 (no gates)
 
-### 2.6 Review path: director-owned in v0, pluggable provider later
+Controller wakeups must be emitted for:
+
+- task session turn completion events,
+- terminal command outcomes that affect task or merge-queue state,
+- conductor override actions,
+- queue-affecting outcomes from non-director actors.
+
+Gates are intentionally excluded from v0 trigger requirements.
+
+### 2.7 Replay/resume payload and lifecycle
+
+- Replay/resume wake payload includes:
+  - a compact summary (`cursor`, queue size, last wake reason/time),
+  - and raw unacknowledged events in deterministic order.
+- Director reconnect/resume is explicit in v0 (no automatic silent resume after process/application restart).
+
+### 2.8 Review path: director-owned in v0, pluggable provider later
 
 - In v0, the director agent may perform review itself.
 - Future direction: delegate review to a separate review mechanism (LLM session/tool/CLI flow) and have the
   director consume structured review outputs.
 - Event schema should preserve this evolution path (e.g. `review_requested` / `review_completed`-style events).
 
-### 2.7 UI is part of the director contract, kept minimal in v0
+### 2.9 Director mode UX contract (v0)
 
-- The director surface is the pinned epic session view.
-- Composer is disabled while automatic direction is active, unless the user explicitly pauses automatic direction.
-- The UI includes a subtle integrated visual treatment indicating an active director session (avoid badge-only UI).
-- A small controller overlay in graph view shows wake/queue status only (not duplicate task progress surfaces).
+- User-facing label is **Director mode** (v0 baseline; `auto-direct` can be explored later).
+- Activation affordance is a floating, non-scrolling control in the top-right of the session timeline viewport.
+- Start flow:
+  - user picks `Run in current session` or `Run in new session`,
+  - once intent is selected, activation is one click.
+- Composer behavior in director mode:
+  - normal send path becomes inline two-step `Pause & Send` (no modal/dialog),
+  - `Steer` mode allows one-shot manual instruction without pausing orchestration,
+  - `Steer` is a composer toggle with shortcut `Cmd+.`.
+- UI visual treatment differentiates director `active` vs `idle` without badge clutter.
+
+### 2.10 Direction overlay scope (v0)
+
+- Overlay is read-only in v0 and does not auto-collapse.
+- Overlay includes two sections:
+  - event wake queue (ready/unacked backlog + expandable recent history),
+  - merge queue preview (current queue ordering/state summary).
+- Overlay must avoid duplicating task-card status surfaces.
 
 ## 3) v0 scope
 
 - Director/controller run semantics (wakeups, backlog delivery, cursor/ack, idempotency).
 - Merge queue + conductor controls.
-- Gate policy and gate execution plumbing (as commands).
+- Merge authority policy (global default + epic override, YOLO disabled by default).
 - Director-driven orchestration via direct `rn` command execution.
-- Director UI v0 as pinned session + controller overlay.
+- Director mode UI as pinned session + direction overlay.
 
 ## 3.1 Implementation boundary (Rust/GPUI only)
 
@@ -109,9 +143,13 @@ The following is tracked in `epics/remote-execution-v0/README.md`:
 - Remote change transport (e.g. git bundle artifact workflows).
 - Remote daemon/executor AuthN/AuthZ and deployment security posture.
 
+The following is intentionally deferred beyond director-v0:
+
+- Gate policy, gate execution, and gate caching UX/mechanics.
+
 ## 4) Non-goals (v0)
 
-- Fully autonomous merging without human approval.
+- Fully autonomous merging by default across all epics.
 - Multi-user shared control plane with fine-grained org policies.
 - Perfect scheduling; v0 can be “wake on event + manual run”.
 - Solving remote execution transport/security in this epic.
@@ -120,16 +158,20 @@ The following is tracked in `epics/remote-execution-v0/README.md`:
 
 - `epics/director-v0/tasks/T-1/README.md`: Director run semantics (cursor/high-water/idempotency).
 - `epics/director-v0/tasks/T-2/README.md`: Merge queue model + conductor actions.
-- `epics/director-v0/tasks/T-3/README.md`: Gate policy + caching as commands.
+- `epics/director-v0/tasks/T-3/README.md`: Gate policy + caching (deferred; not in v0 delivery set).
 - `epics/director-v0/tasks/T-4/README.md`: Controller <-> director wake protocol + event backlog delivery.
-- `epics/director-v0/tasks/T-5/README.md`: Director UI v0 (pinned session + controller overlay).
+- `epics/director-v0/tasks/T-5/README.md`: Director mode session UX (activation + pause/send + steer).
+- `epics/director-v0/tasks/T-6/README.md`: Director mode lifecycle + merge authority policy surfaces.
+- `epics/director-v0/tasks/T-7/README.md`: Direction overlay + queue projections.
 
 ## 6) Sequencing intent (parallelizable)
 
 - Land `T-1` first to pin run semantics (cursor/high-water/idempotency).
 - After `T-1`, execute in parallel:
   - `T-2` merge queue model + conductor actions.
-  - `T-3` gate policy + caching as commands.
   - `T-4` wake protocol + backlog delivery.
-- Land `T-5` after `T-4`, with alignment against `T-2`/`T-3` so the UI mirrors queue/gate/controller state
-  without duplicating task-card information.
+  - `T-6` director mode lifecycle + policy surfaces.
+- Land `T-5` after `T-4` and `T-6` so session UX uses final lifecycle/policy contract.
+- Land `T-7` after `T-2` and `T-4` so overlay projections mirror queue/wake state without duplicating task-card
+  information.
+- `T-3` is explicitly deferred from v0.

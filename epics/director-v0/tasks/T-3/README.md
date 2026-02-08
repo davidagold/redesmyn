@@ -7,33 +7,26 @@ rn:
 
 # T-3 Gate policy + caching (as commands)
 
+## Status
+
+- Deferred from `director-v0` delivery scope.
+- Keep this task as a placeholder/spec stub for a follow-up epic or `director-v1`.
+
 ## Implementation Boundary
 
 - Implement gate command semantics, cache keys, and durable outputs in Rust command/control-plane paths.
 - Do not add or rely on legacy Python/webview implementations for this task.
 
-## Plan
+## Plan (Deferred)
 
-- Define “gates” as first-class commands:
-  - gate policy schema (which gates; on which repo/stack; required vs advisory)
-  - executor selection (local vs remote)
-  - durable status and results (events + artifacts)
-- Define review interaction for gated changes:
-  - v0: director may perform review directly and encode the result durably
-  - future: review may be delegated to an external review mechanism and returned as structured events
-- Define a caching strategy keyed by:
-  - candidate ref (usually commit SHA)
-  - base ref used (merge-base or trunk)
-  - policy version/config
-- Define when gates are applied:
-  - manual trigger vs automatic
-  - “parsimonious gating” strategy (avoid re-running expensive gates unnecessarily)
+- Capture requirements and interfaces only; do not implement in `director-v0`.
+- Keep future shape constrained to command/event contracts:
+  - gate policy schema and cache key contracts,
+  - durable command outputs and review-consumable results,
+  - integration points with director wake protocol.
 
-## Acceptance Criteria
+## Acceptance Criteria (Deferred)
 
-- Gate execution is representable without new bespoke “gate runner” subsystems (reuse command engine + events).
-- Cached gates can be reused safely when the key inputs are unchanged.
-- The conductor can understand which gates ran, where, and why a gate is considered valid.
-- Review outcomes are consumable by director logic regardless of whether review was in-director (v0) or delegated
-  (future direction).
+- `director-v0` can ship without this task.
+- Deferred scope is documented clearly enough that follow-up implementation can start without re-discovery.
 - Implementation targets Rust runtime paths (command engine + control plane), not legacy paths.
