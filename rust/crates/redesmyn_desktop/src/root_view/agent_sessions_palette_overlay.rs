@@ -246,7 +246,7 @@ impl AgentSessionsPaletteOverlay {
                 cx.notify();
                 None
             }
-            TextInputEvent::Submitted(_) => None,
+            TextInputEvent::Submitted(_) => self.activate_selected(cx),
             TextInputEvent::PastedImages(_) => None,
         }
     }
@@ -332,7 +332,6 @@ impl AgentSessionsPaletteOverlay {
         }
 
         self.selected_index = clamped;
-        self.scroll_selected_into_view(cx);
         cx.notify();
     }
 
@@ -696,7 +695,11 @@ impl AgentSessionsPaletteOverlay {
 
         palette_body = palette_body.child(self.input.clone());
 
-        let mut list = div().flex().flex_col().gap(theme.spacing.xs);
+        let mut list = ScrollArea::new(
+            ("agent_sessions_palette_list", cx.entity_id()),
+            self.scroll.clone(),
+        )
+        .scrollbar_width(px(10.0));
 
         if self.loading && self.entries.is_empty() {
             list = list.child(
@@ -786,13 +789,6 @@ impl AgentSessionsPaletteOverlay {
                 }
             }
         }
-
-        let list = ScrollArea::new(
-            ("agent_sessions_palette_list", cx.entity_id()),
-            self.scroll.clone(),
-        )
-        .scrollbar_width(px(10.0))
-        .child(list);
 
         palette_body = palette_body.child(div().max_h(px(420.0)).child(list));
 
