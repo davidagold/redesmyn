@@ -304,6 +304,246 @@ async fn get_epic_graph_returns_typed_projection() {
     let _ = server.await;
 }
 
+#[tokio::test]
+async fn get_epic_graph_includes_task_lifecycle_commands_outside_recent_window() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let socket_path = tmp.path().join("control_plane.sock");
+
+    let db = redesmyn_storage::open_test_sqlite_pool()
+        .await
+        .expect("open test DB");
+
+    let now_ms: i64 = 1_700_000_000_000;
+    let workspace_id = WorkspaceId::new();
+    let repo_id = RepoId::new();
+    let epic_id = EpicId::new();
+    let task_id = TaskId::new();
+
+    sqlx::query(
+        r#"
+        INSERT INTO workspaces (id, created_at_ms, updated_at_ms, name)
+        VALUES (?1, ?2, ?3, ?4)
+        "#,
+    )
+    .bind(workspace_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind("dev")
+    .execute(&db)
+    .await
+    .expect("insert workspace");
+
+    sqlx::query(
+        r#"
+        INSERT INTO repositories (id, workspace_id, created_at_ms, updated_at_ms, slug, title)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "#,
+    )
+    .bind(repo_id)
+    .bind(workspace_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind("demo")
+    .bind("Demo Repo")
+    .execute(&db)
+    .await
+    .expect("insert repo");
+
+    sqlx::query(
+        r#"
+        INSERT INTO epics (id, repo_id, created_at_ms, updated_at_ms, slug, title)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        "#,
+    )
+    .bind(epic_id)
+    .bind(repo_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind("gpui")
+    .bind("GPUI + Rust Port")
+    .execute(&db)
+    .await
+    .expect("insert epic");
+
+    sqlx::query(
+        r#"
+        INSERT INTO tasks (
+            id,
+            epic_id,
+            parent_task_id,
+            created_at_ms,
+            updated_at_ms,
+            local_ref,
+            title,
+            branch_name,
+            merge_readiness,
+            state
+        )
+        VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, NULL, 'unknown', 'todo')
+        "#,
+    )
+    .bind(task_id)
+    .bind(epic_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind("T-1")
+    .bind("Task one")
+    .execute(&db)
+    .await
+    .expect("insert task");
+
+    let lifecycle_command_id = CommandId::new();
+    sqlx::query(
+        r#"
+        INSERT INTO commands (
+            id,
+            created_at_ms,
+            updated_at_ms,
+            scope_kind,
+            scope_workspace_id,
+            scope_repo_id,
+            target_task_id,
+            kind,
+            state,
+            payload
+        )
+        VALUES (?1, ?2, ?3, 'repo', ?4, ?5, ?6, ?7, 'succeeded', X'')
+        "#,
+    )
+    .bind(lifecycle_command_id)
+    .bind(now_ms)
+    .bind(now_ms)
+    .bind(workspace_id)
+    .bind(repo_id)
+    .bind(task_id)
+    .bind("task.agent.start")
+    .execute(&db)
+    .await
+    .expect("insert lifecycle command");
+
+    // Insert enough recent "global" commands to crowd the lifecycle command out of the
+    // `RECENT_LIMIT` window in `load_commands`.
+    for idx in 0..40_i64 {
+        let command_id = CommandId::new();
+        sqlx::query(
+            r#"
+            INSERT INTO commands (
+                id,
+                created_at_ms,
+                updated_at_ms,
+                scope_kind,
+                scope_workspace_id,
+                scope_repo_id,
+                target_task_id,
+                kind,
+                state,
+                payload
+            )
+            VALUES (?1, ?2, ?3, 'repo', ?4, ?5, NULL, ?6, 'succeeded', X'')
+            "#,
+        )
+        .bind(command_id)
+        .bind(now_ms + 10 + idx)
+        .bind(now_ms + 10 + idx)
+        .bind(workspace_id)
+        .bind(repo_id)
+        .bind("session.agent.list_models")
+        .execute(&db)
+        .await
+        .expect("insert global command");
+    }
+
+    let (_session_id, _session_event_id) =
+        seed_session_event(&db, now_ms + 200, workspace_id, repo_id, epic_id, task_id).await;
+
+    let event_id = EventId::new();
+    sqlx::query(
+        r#"
+        INSERT INTO events (
+            id,
+            created_at_ms,
+            scope_kind,
+            scope_workspace_id,
+            scope_repo_id,
+            kind,
+            payload
+        )
+        VALUES (?1, ?2, 'repo', ?3, ?4, 'event_log.appended', X'')
+        "#,
+    )
+    .bind(event_id)
+    .bind(now_ms + 300)
+    .bind(workspace_id)
+    .bind(repo_id)
+    .execute(&db)
+    .await
+    .expect("insert event");
+
+    let server_socket_path = socket_path.clone();
+    let server_control_plane = ControlPlane::new(db.clone());
+    let (shutdown_tx, _shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let server_shutdown_tx = shutdown_tx.clone();
+    let server = tokio::spawn(async move {
+        let mut shutdown_rx = server_shutdown_tx.subscribe();
+        redesmyn_control_plane::client_api::serve_client_api_uds(
+            server_control_plane,
+            server_socket_path,
+            ClientApiCodec::Protobuf,
+            &mut shutdown_rx,
+        )
+        .await
+    });
+
+    for _ in 0..50 {
+        if socket_path.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(socket_path.exists(), "socket file was not created");
+
+    let stream = tokio::net::UnixStream::connect(&socket_path)
+        .await
+        .expect("connect");
+    let mut conn = FramedEndpoint::new(stream, ProtobufCodec::new());
+
+    let request_id = RequestId::new();
+    conn.send(ClientFrame::new(
+        ProtocolEnvelope::new(),
+        ClientMessage::Request(Request {
+            request_id,
+            payload: RequestPayload::GetEpicGraph(GetEpicGraphRequest {
+                epic_slug: "gpui".to_string(),
+            }),
+        }),
+    ))
+    .await
+    .expect("send request");
+
+    let frame = conn.recv().await.expect("recv");
+    let ClientMessage::Response(resp) = frame.message else {
+        panic!("expected Response, got {:?}", frame.message);
+    };
+    assert_eq!(resp.request_id, request_id);
+
+    let ResponseResult::GetEpicGraph(payload) = resp.result else {
+        panic!("expected GetEpicGraph response, got {:?}", resp.result);
+    };
+
+    let has_lifecycle = payload.graph.command_summaries.iter().any(|summary| {
+        summary.command_id == lifecycle_command_id
+            && summary.kind == "task.agent.start"
+            && summary.target_task_id == Some(task_id)
+    });
+    assert!(
+        has_lifecycle,
+        "expected lifecycle command summary even when crowded out of recent window"
+    );
+
+    server.abort();
+    let _ = server.await;
+}
+
 async fn seed_session_event(
     db: &sqlx::SqlitePool,
     created_at_ms: i64,

@@ -169,6 +169,18 @@ where
             .unwrap_or(true)
     });
 
+    let task_id_list: Vec<TaskId> = task_ids.iter().copied().collect();
+    let mut lifecycle_commands =
+        load_task_lifecycle_commands(executor, epic.scope, task_id_list.as_slice()).await?;
+    if !lifecycle_commands.is_empty() {
+        let mut seen: HashSet<CommandId> = commands.iter().map(|cmd| cmd.command_id).collect();
+        lifecycle_commands.retain(|cmd| seen.insert(cmd.command_id));
+        if !lifecycle_commands.is_empty() {
+            commands.extend(lifecycle_commands);
+            commands.sort_by(|a, b| b.created_at_ms.cmp(&a.created_at_ms));
+        }
+    }
+
     let command_last_updates = load_command_last_updates(executor, &commands).await?;
     let daemon_presences = load_daemon_presences(executor).await?;
     let session_summaries = load_session_summaries(executor, epic.epic_id).await?;
@@ -370,6 +382,85 @@ where
 
     combined.sort_by(|a, b| b.created_at_ms.cmp(&a.created_at_ms));
     Ok(combined)
+}
+
+async fn load_task_lifecycle_commands<'e, E>(
+    executor: E,
+    scope: RepoScope,
+    task_ids: &[TaskId],
+) -> Result<Vec<CommandRecord>, StorageError>
+where
+    E: Executor<'e, Database = Sqlite> + Copy,
+{
+    if task_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut builder = sqlx::QueryBuilder::<Sqlite>::new(
+        r#"
+        SELECT id, created_at_ms, updated_at_ms, kind, state, target_task_id
+        FROM (
+            SELECT
+                id,
+                created_at_ms,
+                updated_at_ms,
+                kind,
+                state,
+                target_task_id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY target_task_id
+                    ORDER BY updated_at_ms DESC, created_at_ms DESC, id DESC
+                ) AS rn
+            FROM commands
+            WHERE
+                scope_kind = 'repo'
+                AND scope_workspace_id = 
+        "#,
+    );
+    builder.push_bind(scope.workspace_id);
+    builder.push(
+        r#"
+                AND scope_repo_id =
+        "#,
+    );
+    builder.push_bind(scope.repo_id);
+    builder.push(
+        r#"
+                AND kind IN ('task.agent.start', 'task.agent.stop')
+                AND target_task_id IN (
+        "#,
+    );
+    {
+        let mut ids = builder.separated(", ");
+        for task_id in task_ids {
+            ids.push_bind(*task_id);
+        }
+    }
+    builder.push(
+        r#"
+                )
+        )
+        WHERE rn = 1
+        "#,
+    );
+
+    let rows: Vec<(CommandId, i64, i64, String, String, TaskId)> =
+        builder.build_query_as().fetch_all(executor).await?;
+
+    rows.into_iter()
+        .map(
+            |(command_id, created_at_ms, updated_at_ms, kind, state, target_task_id)| {
+                Ok(CommandRecord {
+                    command_id,
+                    created_at_ms,
+                    updated_at_ms,
+                    kind,
+                    state: decode_command_state(&state)?,
+                    target_task_id: Some(target_task_id),
+                })
+            },
+        )
+        .collect()
 }
 
 async fn load_command_last_updates<'e, E>(

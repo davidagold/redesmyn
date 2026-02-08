@@ -1234,17 +1234,7 @@ fn trunk_layout_for_timeline(timeline: &TrunkTimeline) -> TrunkLayout {
 fn agent_status_by_task_id(
     graph: &redesmyn_protocol::client::EpicGraph,
 ) -> BTreeMap<TaskId, AgentStatus> {
-    fn priority(status: AgentStatus) -> u8 {
-        match status {
-            AgentStatus::Error => 4,
-            AgentStatus::Blocked => 3,
-            AgentStatus::Running => 2,
-            AgentStatus::Stopped => 1,
-            AgentStatus::Unknown => 0,
-        }
-    }
-
-    let mut out: BTreeMap<TaskId, AgentStatus> = BTreeMap::new();
+    let mut out: BTreeMap<TaskId, (Timestamp, AgentStatus)> = BTreeMap::new();
     for summary in &graph.command_summaries {
         let Some(task_id) = summary.target_task_id else {
             continue;
@@ -1253,15 +1243,18 @@ fn agent_status_by_task_id(
         else {
             continue;
         };
+
         out.entry(task_id)
-            .and_modify(|existing| {
-                if priority(status) > priority(*existing) {
+            .and_modify(|(seen_at, existing)| {
+                if summary.updated_at > *seen_at {
+                    *seen_at = summary.updated_at;
                     *existing = status;
                 }
             })
-            .or_insert(status);
+            .or_insert((summary.updated_at, status));
     }
-    out
+
+    out.into_iter().map(|(id, (_, status))| (id, status)).collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1788,6 +1781,50 @@ mod tests {
             latest.last_message.as_ref().map(|message| message.as_ref()),
             Some("starting")
         );
+    }
+
+    #[test]
+    fn agent_status_by_task_id_uses_latest_command_summary() {
+        let task_id = TaskId::from_bytes([20; 16]);
+
+        let older_at = Timestamp::from_unix_millis(10).expect("timestamp");
+        let newer_at = Timestamp::from_unix_millis(20).expect("timestamp");
+
+        let older = redesmyn_protocol::client::CommandSummary {
+            command_id: CommandId::from_bytes([21; 16]),
+            created_at: older_at,
+            updated_at: older_at,
+            kind: TASK_AGENT_START.to_string(),
+            state: CommandState::Failed,
+            target_task_id: Some(task_id),
+            last_update: None,
+        };
+        let newer = redesmyn_protocol::client::CommandSummary {
+            command_id: CommandId::from_bytes([22; 16]),
+            created_at: newer_at,
+            updated_at: newer_at,
+            kind: TASK_AGENT_STOP.to_string(),
+            state: CommandState::Succeeded,
+            target_task_id: Some(task_id),
+            last_update: None,
+        };
+
+        let graph = redesmyn_protocol::client::EpicGraph {
+            epic_slug: "demo".to_string(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            epic_id: None,
+            epic_title: None,
+            workspace_id: None,
+            repo_id: None,
+            command_summaries: vec![older, newer],
+            daemon_presences: Vec::new(),
+            session_summaries: Vec::new(),
+            as_of_event_id: None,
+        };
+
+        let out = agent_status_by_task_id(&graph);
+        assert_eq!(out.get(&task_id).copied(), Some(AgentStatus::Stopped));
     }
 
     #[test]
