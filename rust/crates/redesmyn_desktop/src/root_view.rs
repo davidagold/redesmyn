@@ -79,8 +79,6 @@ use self::command_palette_overlay::CommandPaletteOverlay;
 use self::live_updates::{LiveUpdateAction, LiveUpdateRouter};
 use self::settings_dialog::SettingsDialog;
 
-const TASK_STATE_CHANGED_EVENT: &str = "task.state.changed";
-
 #[derive(Debug)]
 pub struct DesktopModel {
     config: Arc<redesmyn_config::RustConfig>,

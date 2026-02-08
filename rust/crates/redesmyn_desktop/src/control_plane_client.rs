@@ -2,15 +2,13 @@ use redesmyn_client_api::Client;
 use redesmyn_ids::{EpicId, EventId, SessionId, SubscriptionId};
 use redesmyn_protocol::client::{
     AgentKind, ArchiveChatSessionRequest, CommandState, CommandSummary, CreateChatSessionRequest,
-    CreateChatSessionResponse, EventLogFilter, GetEpicGraphRequest,
-    GetEpicPinnedChatSessionRequest, ListAgentModelsRequest, ListChatSessionsRequest,
-    ListEpicsRequest, PinChatSessionToEpicRequest, RegenerateChatSessionTitleRequest,
+    CreateChatSessionResponse, EventLogFilter, GetEpicGraphRequest, ListAgentModelsRequest,
+    ListChatSessionsRequest, ListEpicsRequest, RegenerateChatSessionTitleRequest,
     RegenerateChatSessionTitleResponse, RequestPayload, ResponseResult, SessionModelOption,
     SessionModelSelection, SetSessionCodexApprovalPolicyRequest,
     SetSessionCodexApprovalPolicyResponse, SetSessionCodexSandboxPolicyRequest,
     SetSessionCodexSandboxPolicyResponse, SetSessionModelRequest, SetSessionModelResponse,
-    StatusRequest, StatusResponse, SubscriptionEvent, SubscriptionFilter,
-    UnpinChatSessionFromEpicRequest, WaitForCommandRequest,
+    StatusRequest, StatusResponse, SubscriptionEvent, SubscriptionFilter, WaitForCommandRequest,
 };
 use redesmyn_protocol::{CodexApprovalPolicy, CodexSandboxPolicy, ProtocolEnvelope, RepoScope};
 use redesmyn_transport::client::in_proc::InProcEndpoint;
@@ -84,28 +82,6 @@ impl ControlPlaneClient {
             .await?
         {
             ResponseResult::GetEpicGraph(resp) => Ok(resp.graph),
-            ResponseResult::Error(err) => Err(ControlPlaneClientError::Server {
-                message: err.message,
-            }),
-            _ => Err(ControlPlaneClientError::UnexpectedMessage),
-        }
-    }
-
-    pub async fn get_epic_pinned_chat_session(
-        &self,
-        scope: RepoScope,
-        epic_id: EpicId,
-    ) -> Result<Option<SessionId>, ControlPlaneClientError> {
-        match self
-            .request_scoped(
-                scope,
-                RequestPayload::GetEpicPinnedChatSession(GetEpicPinnedChatSessionRequest {
-                    epic_id,
-                }),
-            )
-            .await?
-        {
-            ResponseResult::GetEpicPinnedChatSession(resp) => Ok(resp.session_id),
             ResponseResult::Error(err) => Err(ControlPlaneClientError::Server {
                 message: err.message,
             }),
@@ -202,52 +178,6 @@ impl ControlPlaneClient {
         }
     }
 
-    pub async fn pin_chat_session_to_epic(
-        &self,
-        scope: RepoScope,
-        epic_id: EpicId,
-        session_id: SessionId,
-    ) -> Result<(), ControlPlaneClientError> {
-        match self
-            .request_scoped(
-                scope,
-                RequestPayload::PinChatSessionToEpic(PinChatSessionToEpicRequest {
-                    epic_id,
-                    session_id,
-                }),
-            )
-            .await?
-        {
-            ResponseResult::PinChatSessionToEpic(_) => Ok(()),
-            ResponseResult::Error(err) => Err(ControlPlaneClientError::Server {
-                message: err.message,
-            }),
-            _ => Err(ControlPlaneClientError::UnexpectedMessage),
-        }
-    }
-
-    pub async fn unpin_chat_session_from_epic(
-        &self,
-        scope: RepoScope,
-        epic_id: EpicId,
-    ) -> Result<(), ControlPlaneClientError> {
-        match self
-            .request_scoped(
-                scope,
-                RequestPayload::UnpinChatSessionFromEpic(UnpinChatSessionFromEpicRequest {
-                    epic_id,
-                }),
-            )
-            .await?
-        {
-            ResponseResult::UnpinChatSessionFromEpic(_) => Ok(()),
-            ResponseResult::Error(err) => Err(ControlPlaneClientError::Server {
-                message: err.message,
-            }),
-            _ => Err(ControlPlaneClientError::UnexpectedMessage),
-        }
-    }
-
     pub async fn list_agent_models(
         &self,
         scope: RepoScope,
@@ -301,10 +231,12 @@ impl ControlPlaneClient {
         match self
             .request_scoped(
                 scope,
-                RequestPayload::SetSessionCodexApprovalPolicy(SetSessionCodexApprovalPolicyRequest {
-                    session_id,
-                    approval_policy,
-                }),
+                RequestPayload::SetSessionCodexApprovalPolicy(
+                    SetSessionCodexApprovalPolicyRequest {
+                        session_id,
+                        approval_policy,
+                    },
+                ),
             )
             .await?
         {

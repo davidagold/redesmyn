@@ -23,7 +23,9 @@ pub type TxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(30);
 const LEGACY_ID_MAP_MIGRATION_VERSION: i64 = 20260120001000;
-const SESSION_POLICY_PROJECTION_MIGRATION_VERSION: i64 = 20260208000000;
+const ARCHIVED_AT_RENAME_MIGRATION_VERSION: i64 = 20260210000000;
+const AGENT_SESSIONS_EPIC_ID_MIGRATION_VERSION: i64 = 20260210001000;
+const LATEST_MIGRATION_VERSION: i64 = AGENT_SESSIONS_EPIC_ID_MIGRATION_VERSION;
 
 pub async fn open_sqlite_pool(db_path: impl AsRef<Path>) -> Result<SqlitePool, StorageError> {
     let db_path = db_path.as_ref().to_path_buf();
@@ -98,7 +100,7 @@ pub async fn apply_migrations(pool: &SqlitePool) -> Result<(), StorageError> {
         }
         info!(
             elapsed_ms = start.elapsed().as_millis(),
-            latest_migration_version = SESSION_POLICY_PROJECTION_MIGRATION_VERSION,
+            latest_migration_version = LATEST_MIGRATION_VERSION,
             "sqlite migrations applied"
         );
         Ok(())
@@ -116,9 +118,23 @@ async fn try_repair_migrate_error(
     let MigrateError::ExecuteMigration(source, version) = err else {
         return Ok(false);
     };
-    if *version != LEGACY_ID_MAP_MIGRATION_VERSION {
-        return Ok(false);
+    if *version == LEGACY_ID_MAP_MIGRATION_VERSION {
+        return try_repair_legacy_id_map_migration(pool, source).await;
     }
+    if *version == ARCHIVED_AT_RENAME_MIGRATION_VERSION {
+        return try_repair_archived_at_rename_migration(pool, source).await;
+    }
+    if *version == AGENT_SESSIONS_EPIC_ID_MIGRATION_VERSION {
+        return try_repair_agent_sessions_epic_id_migration(pool, source).await;
+    }
+
+    Ok(false)
+}
+
+async fn try_repair_legacy_id_map_migration(
+    pool: &SqlitePool,
+    source: &sqlx::Error,
+) -> Result<bool, StorageError> {
     if !sqlite_error_is_table_already_exists(source, "legacy_id_map") {
         return Ok(false);
     }
@@ -136,21 +152,100 @@ async fn try_repair_migrate_error(
         return Ok(false);
     }
 
+    record_embedded_migration_as_applied(
+        pool,
+        LEGACY_ID_MAP_MIGRATION_VERSION,
+        "legacy_id_map schema already present",
+    )
+    .await
+}
+
+async fn try_repair_archived_at_rename_migration(
+    pool: &SqlitePool,
+    source: &sqlx::Error,
+) -> Result<bool, StorageError> {
+    if !sqlite_error_is_missing_column(source, "closed_at_ms") {
+        return Ok(false);
+    }
+    if sqlite_table_has_column(pool, "agent_sessions", "closed_at_ms").await? {
+        return Ok(false);
+    }
+    if !sqlite_table_has_column(pool, "agent_sessions", "archived_at_ms").await? {
+        return Ok(false);
+    }
+
+    record_embedded_migration_as_applied(
+        pool,
+        ARCHIVED_AT_RENAME_MIGRATION_VERSION,
+        "agent_sessions already uses archived_at_ms",
+    )
+    .await
+}
+
+async fn try_repair_agent_sessions_epic_id_migration(
+    pool: &SqlitePool,
+    source: &sqlx::Error,
+) -> Result<bool, StorageError> {
+    if !sqlite_error_is_duplicate_column(source, "epic_id") {
+        return Ok(false);
+    }
+    if !sqlite_table_has_column(pool, "agent_sessions", "epic_id").await? {
+        return Ok(false);
+    }
+
+    sqlx::query(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_agent_sessions_epic_created_at
+        ON agent_sessions (epic_id, created_at_ms)
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        UPDATE agent_sessions
+        SET epic_id = (
+            SELECT session_pins.epic_id
+            FROM session_pins
+            WHERE session_pins.session_id = agent_sessions.session_id
+            LIMIT 1
+        )
+        WHERE scope_kind = 'chat' AND epic_id IS NULL
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    record_embedded_migration_as_applied(
+        pool,
+        AGENT_SESSIONS_EPIC_ID_MIGRATION_VERSION,
+        "agent_sessions.epic_id schema already present",
+    )
+    .await
+}
+
+async fn record_embedded_migration_as_applied(
+    pool: &SqlitePool,
+    version: i64,
+    reason: &'static str,
+) -> Result<bool, StorageError> {
+    if sqlite_migration_is_applied(pool, version).await? {
+        return Ok(false);
+    }
+
     let Some(migration) = MIGRATOR
         .iter()
-        .find(|candidate| candidate.version == LEGACY_ID_MAP_MIGRATION_VERSION)
+        .find(|candidate| candidate.version == version)
     else {
         warn!(
-            version = LEGACY_ID_MAP_MIGRATION_VERSION,
+            version,
             "refusing to repair migration; embedded migration metadata missing"
         );
         return Ok(false);
     };
 
-    warn!(
-        version = LEGACY_ID_MAP_MIGRATION_VERSION,
-        "repairing missing sqlx migration record for legacy_id_map"
-    );
+    warn!(version, reason, "repairing missing sqlx migration record");
 
     sqlx::query(
         r#"
@@ -161,7 +256,7 @@ async fn try_repair_migrate_error(
             checksum = excluded.checksum
         "#,
     )
-    .bind(LEGACY_ID_MAP_MIGRATION_VERSION)
+    .bind(version)
     .bind(migration.description.as_ref())
     .bind(migration.checksum.as_ref())
     .execute(pool)
@@ -171,11 +266,31 @@ async fn try_repair_migrate_error(
 }
 
 fn sqlite_error_is_table_already_exists(err: &sqlx::Error, table_name: &str) -> bool {
-    let Some(db_err) = err.as_database_error() else {
+    let Some(message) = sqlite_error_message(err) else {
         return false;
     };
-    let message = db_err.message();
     message.contains("already exists") && message.contains(table_name)
+}
+
+fn sqlite_error_is_missing_column(err: &sqlx::Error, column_name: &str) -> bool {
+    let Some(message) = sqlite_error_message(err) else {
+        return false;
+    };
+    message.contains("no such column") && message.contains(column_name)
+}
+
+fn sqlite_error_is_duplicate_column(err: &sqlx::Error, column_name: &str) -> bool {
+    let Some(message) = sqlite_error_message(err) else {
+        return false;
+    };
+    message.contains("duplicate column name") && message.contains(column_name)
+}
+
+fn sqlite_error_message(err: &sqlx::Error) -> Option<String> {
+    let Some(db_err) = err.as_database_error() else {
+        return None;
+    };
+    Some(db_err.message().to_ascii_lowercase())
 }
 
 async fn sqlite_table_exists(pool: &SqlitePool, table_name: &str) -> Result<bool, StorageError> {
@@ -191,6 +306,18 @@ async fn sqlite_table_exists(pool: &SqlitePool, table_name: &str) -> Result<bool
     .fetch_optional(pool)
     .await?;
     Ok(found.is_some())
+}
+
+async fn sqlite_table_has_column(
+    pool: &SqlitePool,
+    table_name: &str,
+    column_name: &str,
+) -> Result<bool, StorageError> {
+    let columns: Vec<SqliteTableInfoRow> =
+        sqlx::query_as(&format!("PRAGMA table_info({table_name});"))
+            .fetch_all(pool)
+            .await?;
+    Ok(columns.iter().any(|column| column.name == column_name))
 }
 
 async fn sqlite_migration_is_applied(
