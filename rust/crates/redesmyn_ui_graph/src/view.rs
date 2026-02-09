@@ -3226,6 +3226,10 @@ impl Render for GraphView {
                                                                         )),
                                                                         node_key.clone(),
                                                                     ))
+                                                                    .flex()
+                                                                    .flex_row()
+                                                                    .items_center()
+                                                                    .gap(theme.spacing.xs)
                                                                     .px(theme.spacing.sm)
                                                                     .py(px(3.0))
                                                                     .text_xs()
@@ -3281,7 +3285,21 @@ impl Render for GraphView {
                                                                             cx.stop_propagation();
                                                                         }
                                                                     })
-                                                                    .child("Session"),
+                                                                    .child("Session")
+                                                                    .child(
+                                                                        div()
+                                                                            .px(px(4.0))
+                                                                            .py(px(1.0))
+                                                                            .rounded(theme.radius.sm)
+                                                                            .bg(theme.colors.surface_elevated.opacity(0.42))
+                                                                            .border_1()
+                                                                            .border_color(
+                                                                                theme.colors.border.opacity(0.24),
+                                                                            )
+                                                                            .text_xs()
+                                                                            .text_color(theme.colors.foreground_muted)
+                                                                            .child("⌘/⌃1"),
+                                                                    ),
                                                             )
                                                             .child(
                                                                 div()
@@ -3292,6 +3310,10 @@ impl Render for GraphView {
                                                                         )),
                                                                         node_key.clone(),
                                                                     ))
+                                                                    .flex()
+                                                                    .flex_row()
+                                                                    .items_center()
+                                                                    .gap(theme.spacing.xs)
                                                                     .px(theme.spacing.sm)
                                                                     .py(px(3.0))
                                                                     .text_xs()
@@ -3351,7 +3373,21 @@ impl Render for GraphView {
                                                                             cx.stop_propagation();
                                                                         }
                                                                     })
-                                                                    .child("README"),
+                                                                    .child("README")
+                                                                    .child(
+                                                                        div()
+                                                                            .px(px(4.0))
+                                                                            .py(px(1.0))
+                                                                            .rounded(theme.radius.sm)
+                                                                            .bg(theme.colors.surface_elevated.opacity(0.42))
+                                                                            .border_1()
+                                                                            .border_color(
+                                                                                theme.colors.border.opacity(0.24),
+                                                                            )
+                                                                            .text_xs()
+                                                                            .text_color(theme.colors.foreground_muted)
+                                                                            .child("⌘/⌃2"),
+                                                                    ),
                                                             ),
                                                     )
                                                     .child(
