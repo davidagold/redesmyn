@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
 use gpui::{
-    AbsoluteLength, AnyElement, App, ClickEvent, ClipboardItem, ElementId, FontStyle, FontWeight,
-    Hsla, RenderOnce, ScrollHandle, TextRun, UnderlineStyle, Window, div, px,
+    div, px, AbsoluteLength, AnyElement, App, ClickEvent, ClipboardItem, ElementId, FontStyle,
+    FontWeight, Hsla, RenderOnce, ScrollHandle, TextRun, UnderlineStyle, Window,
 };
 
 use gpui::prelude::*;
 
 use redesmyn_markdown::{MarkdownBlock, MarkdownDoc, MarkdownInline};
 
-use crate::utils::{OpenExternalUrl as _, theme_for_window};
+use crate::utils::{theme_for_window, OpenExternalUrl as _};
 
 use super::{
     ButtonKind, RoundedBackgroundStyle, RoundedStyledText, ScrollbarAxis, StyledScrollbar,
@@ -71,7 +71,14 @@ impl RenderOnce for MarkdownView {
 
         for (ix, block) in self.doc.blocks.iter().enumerate() {
             let block_id: ElementId = (base_id.clone(), format!("block-{ix}")).into();
-            container = container.child(render_block(block_id, block, base_text_color, window, cx));
+            container = container.child(render_block(
+                block_id,
+                block,
+                base_text_color,
+                &base_id,
+                window,
+                cx,
+            ));
         }
 
         if self.show_truncation_notice
@@ -188,6 +195,7 @@ fn render_block(
     id: ElementId,
     block: &MarkdownBlock,
     base_text_color: Hsla,
+    selection_scope: &ElementId,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -195,7 +203,7 @@ fn render_block(
 
     match block {
         MarkdownBlock::Paragraph { content, .. } => {
-            render_inline_flow(id, content, base_text_color, window, cx)
+            render_inline_flow(id, content, base_text_color, selection_scope, window, cx)
         }
         MarkdownBlock::Heading { level, content, .. } => {
             let text_size = match level {
@@ -214,6 +222,7 @@ fn render_block(
                     content,
                     InlineSegmentsStyle::default().as_heading(*level),
                     base_text_color,
+                    selection_scope,
                     window,
                     cx,
                 ))
@@ -247,6 +256,7 @@ fn render_block(
                 content_id,
                 blocks,
                 base_text_color,
+                selection_scope,
                 window,
                 cx,
             ));
@@ -275,6 +285,7 @@ fn render_block(
                     marker,
                     item,
                     base_text_color,
+                    selection_scope,
                     window,
                     cx,
                 ));
@@ -410,6 +421,7 @@ fn render_blocks_column(
     id: ElementId,
     blocks: &[MarkdownBlock],
     base_text_color: Hsla,
+    selection_scope: &ElementId,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -424,7 +436,14 @@ fn render_blocks_column(
 
     for (ix, block) in blocks.iter().enumerate() {
         let block_id: ElementId = (id.clone(), format!("block-{ix}")).into();
-        col = col.child(render_block(block_id, block, base_text_color, window, cx));
+        col = col.child(render_block(
+            block_id,
+            block,
+            base_text_color,
+            selection_scope,
+            window,
+            cx,
+        ));
     }
 
     col.into_any_element()
@@ -435,6 +454,7 @@ fn render_list_item(
     marker: String,
     item: &redesmyn_markdown::MarkdownListItem,
     base_text_color: Hsla,
+    selection_scope: &ElementId,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -458,6 +478,7 @@ fn render_list_item(
             content_id,
             &item.blocks,
             base_text_color,
+            selection_scope,
             window,
             cx,
         ))
@@ -468,6 +489,7 @@ fn render_inline_flow(
     id: ElementId,
     inlines: &[MarkdownInline],
     base_text_color: Hsla,
+    selection_scope: &ElementId,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -476,6 +498,7 @@ fn render_inline_flow(
         inlines,
         InlineSegmentsStyle::default(),
         base_text_color,
+        selection_scope,
         window,
         cx,
     )
@@ -521,6 +544,7 @@ fn render_inline_segments(
     inlines: &[MarkdownInline],
     style: InlineSegmentsStyle,
     base_text_color: Hsla,
+    selection_scope: &ElementId,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -542,6 +566,7 @@ fn render_inline_segments(
                 }],
                 TextFlavor::Body(base_text_color),
                 base_text_color,
+                selection_scope,
                 window,
                 cx,
             ));
@@ -557,6 +582,7 @@ fn render_inline_segments(
                 atoms,
                 TextFlavor::Body(base_text_color),
                 base_text_color,
+                selection_scope,
                 window,
                 cx,
             ));
@@ -579,6 +605,7 @@ fn render_inline_segments(
                 chunk,
                 style,
                 base_text_color,
+                selection_scope,
                 window,
                 cx,
             ));
@@ -620,6 +647,7 @@ fn render_inline_chunk(
     chunk: InlineChunk,
     style: InlineSegmentsStyle,
     base_text_color: Hsla,
+    selection_scope: &ElementId,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -629,6 +657,7 @@ fn render_inline_chunk(
             atoms,
             TextFlavor::Body(base_text_color),
             base_text_color,
+            selection_scope,
             window,
             cx,
         ),
@@ -662,6 +691,7 @@ fn render_inline_chunk(
                     atoms,
                     TextFlavor::Link(link_color),
                     base_text_color,
+                    selection_scope,
                     window,
                     cx,
                 ))
@@ -675,10 +705,20 @@ fn render_inline_atoms(
     atoms: Vec<InlineAtom>,
     flavor: TextFlavor,
     base_text_color: Hsla,
+    selection_scope: &ElementId,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    styled_text_div(id, atoms, flavor, base_text_color, window, cx).into_any_element()
+    styled_text_div(
+        id,
+        atoms,
+        flavor,
+        base_text_color,
+        selection_scope,
+        window,
+        cx,
+    )
+    .into_any_element()
 }
 
 #[derive(Clone, Copy)]
@@ -692,9 +732,11 @@ fn styled_text_div(
     atoms: Vec<InlineAtom>,
     flavor: TextFlavor,
     base_text_color: Hsla,
+    selection_scope: &ElementId,
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
+    let selectable = matches!(flavor, TextFlavor::Body(_));
     let theme = theme_for_window(window, cx);
     let code_bg = match theme.mode {
         crate::styles::ThemeMode::Dark => {
@@ -777,17 +819,23 @@ fn styled_text_div(
         text.push_str(&atom_text);
     }
 
-    div().id(id).min_w_0().flex_shrink().child(
-        RoundedStyledText::new(text)
-            .with_runs(runs)
-            .background_style(RoundedBackgroundStyle {
-                corner_radius: theme.radius.sm,
-                trim_horizontal: true,
-                padding_x: px(5.0),
-                padding_y: px(2.5),
-                ..Default::default()
-            }),
-    )
+    let mut text_element = RoundedStyledText::new(text)
+        .id((id.clone(), "text"))
+        .with_runs(runs)
+        .background_style(RoundedBackgroundStyle {
+            corner_radius: theme.radius.sm,
+            trim_horizontal: true,
+            padding_x: px(5.0),
+            padding_y: px(2.5),
+            ..Default::default()
+        });
+    if selectable {
+        text_element = text_element
+            .selectable(true)
+            .selection_scope(selection_scope.clone());
+    }
+
+    div().id(id).min_w_0().flex_shrink().child(text_element)
 }
 
 fn styled_text_block(
@@ -795,9 +843,11 @@ fn styled_text_block(
     atoms: Vec<InlineAtom>,
     flavor: TextFlavor,
     base_text_color: Hsla,
+    selection_scope: &ElementId,
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
+    let selectable = matches!(flavor, TextFlavor::Body(_));
     // Similar to `styled_text_div`, but forces the line to take full width (which helps keep GPUI's
     // layout stable when inline spans mix styles).
     let theme = theme_for_window(window, cx);
@@ -882,17 +932,23 @@ fn styled_text_block(
         text.push_str(&atom_text);
     }
 
-    div().id(id).min_w_0().w_full().child(
-        RoundedStyledText::new(text)
-            .with_runs(runs)
-            .background_style(RoundedBackgroundStyle {
-                corner_radius: theme.radius.sm,
-                trim_horizontal: true,
-                padding_x: px(5.0),
-                padding_y: px(2.5),
-                ..Default::default()
-            }),
-    )
+    let mut text_element = RoundedStyledText::new(text)
+        .id((id.clone(), "text"))
+        .with_runs(runs)
+        .background_style(RoundedBackgroundStyle {
+            corner_radius: theme.radius.sm,
+            trim_horizontal: true,
+            padding_x: px(5.0),
+            padding_y: px(2.5),
+            ..Default::default()
+        });
+    if selectable {
+        text_element = text_element
+            .selectable(true)
+            .selection_scope(selection_scope.clone());
+    }
+
+    div().id(id).min_w_0().w_full().child(text_element)
 }
 
 enum InlineItem {

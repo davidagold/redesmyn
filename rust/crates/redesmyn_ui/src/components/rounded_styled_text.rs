@@ -1,10 +1,13 @@
-use std::{cell::RefCell, rc::Rc, sync::Arc};
+use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 
 use gpui::{
-    App, AvailableSpace, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, LayoutId,
-    Pixels, Point, SharedString, Size, TextAlign, TextRun, WhiteSpace, Window, fill, point, px,
-    size,
+    fill, point, px, size, App, AvailableSpace, Bounds, CursorStyle, DispatchPhase, Element,
+    ElementId, EntityId, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, LayoutId,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size,
+    TextAlign, TextRun, WhiteSpace, Window,
 };
+
+use crate::utils::theme_for_window;
 
 #[derive(Debug, Clone, Copy)]
 pub struct RoundedBackgroundStyle {
@@ -42,6 +45,9 @@ pub struct RoundedStyledText {
     runs: Option<Vec<TextRun>>,
     layout: RoundedTextLayout,
     background_style: RoundedBackgroundStyle,
+    id: Option<ElementId>,
+    selectable: bool,
+    selection_scope: Option<ElementId>,
 }
 
 impl RoundedStyledText {
@@ -51,6 +57,9 @@ impl RoundedStyledText {
             runs: None,
             layout: RoundedTextLayout::default(),
             background_style: RoundedBackgroundStyle::default(),
+            id: None,
+            selectable: false,
+            selection_scope: None,
         }
     }
 
@@ -68,6 +77,42 @@ impl RoundedStyledText {
         self.background_style = style;
         self
     }
+
+    pub fn id(mut self, id: impl Into<ElementId>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+
+    pub fn selectable(mut self, selectable: bool) -> Self {
+        self.selectable = selectable;
+        self
+    }
+
+    pub fn selection_scope(mut self, scope: impl Into<ElementId>) -> Self {
+        self.selection_scope = Some(scope.into());
+        self
+    }
+}
+
+#[derive(Default)]
+struct RoundedTextSelectionGlobal {
+    active: Option<ActiveRoundedTextSelection>,
+}
+
+impl gpui::Global for RoundedTextSelectionGlobal {}
+
+#[derive(Clone)]
+struct ActiveRoundedTextSelection {
+    key: RoundedTextSelectionKey,
+    anchor_position: Point<Pixels>,
+    head_position: Point<Pixels>,
+    selecting: bool,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+struct RoundedTextSelectionKey {
+    view_id: EntityId,
+    scope_id: ElementId,
 }
 
 impl gpui::IntoElement for RoundedStyledText {
@@ -80,10 +125,10 @@ impl gpui::IntoElement for RoundedStyledText {
 
 impl Element for RoundedStyledText {
     type RequestLayoutState = ();
-    type PrepaintState = ();
+    type PrepaintState = Option<Hitbox>;
 
     fn id(&self) -> Option<ElementId> {
-        None
+        self.id.clone()
     }
 
     fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
@@ -108,10 +153,15 @@ impl Element for RoundedStyledText {
         _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
-        _window: &mut Window,
+        window: &mut Window,
         _cx: &mut App,
-    ) {
+    ) -> Self::PrepaintState {
         self.layout.prepaint(bounds, self.text.as_ref());
+        if self.selectable {
+            Some(window.insert_hitbox(bounds, HitboxBehavior::Normal))
+        } else {
+            None
+        }
     }
 
     fn paint(
@@ -120,12 +170,121 @@ impl Element for RoundedStyledText {
         _inspector_id: Option<&InspectorElementId>,
         _bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
-        _: &mut Self::PrepaintState,
+        hitbox: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
+        if self.selectable
+            && let Some(hitbox) = hitbox.as_ref()
+            && let Some(scope_id) = self.selection_scope.clone()
+        {
+            let key = RoundedTextSelectionKey {
+                view_id: window.current_view(),
+                scope_id,
+            };
+
+            if hitbox.is_hovered(window) {
+                window.set_cursor_style(CursorStyle::IBeam, hitbox);
+            }
+
+            let hitbox_for_down = hitbox.clone();
+            let key_for_down = key.clone();
+            window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+                if event.button != MouseButton::Left {
+                    return;
+                }
+
+                let global = cx.default_global::<RoundedTextSelectionGlobal>();
+                if phase == DispatchPhase::Capture {
+                    if !hitbox_for_down.is_hovered(window)
+                        && global
+                            .active
+                            .as_ref()
+                            .is_some_and(|active| active.key == key_for_down)
+                    {
+                        global.active = None;
+                        window.refresh();
+                    }
+                    return;
+                }
+
+                if phase != DispatchPhase::Bubble || !hitbox_for_down.is_hovered(window) {
+                    return;
+                }
+
+                global.active = Some(ActiveRoundedTextSelection {
+                    key: key_for_down.clone(),
+                    anchor_position: event.position,
+                    head_position: event.position,
+                    selecting: true,
+                });
+                cx.stop_propagation();
+                window.prevent_default();
+                window.refresh();
+            });
+
+            let key_for_move = key.clone();
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                if phase != DispatchPhase::Bubble {
+                    return;
+                }
+
+                let global = cx.default_global::<RoundedTextSelectionGlobal>();
+                let Some(active) = global.active.as_mut() else {
+                    return;
+                };
+                if active.key != key_for_move || !active.selecting {
+                    return;
+                }
+
+                active.head_position = event.position;
+                window.refresh();
+            });
+
+            let key_for_up = key.clone();
+            window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
+                if phase != DispatchPhase::Bubble || event.button != MouseButton::Left {
+                    return;
+                }
+
+                let global = cx.default_global::<RoundedTextSelectionGlobal>();
+                let Some(active) = global.active.as_mut() else {
+                    return;
+                };
+                if active.key != key_for_up || !active.selecting {
+                    return;
+                }
+
+                active.head_position = event.position;
+                active.selecting = false;
+                window.refresh();
+            });
+
+            let selected = {
+                let global = cx.default_global::<RoundedTextSelectionGlobal>();
+                global.active.as_ref().and_then(|active| {
+                    if active.key == key {
+                        self.layout.selection_range_for_positions(
+                            active.anchor_position,
+                            active.head_position,
+                        )
+                    } else {
+                        None
+                    }
+                })
+            };
+            self.layout.paint(
+                self.text.as_ref(),
+                self.background_style,
+                selected,
+                window,
+                cx,
+            );
+            return;
+        }
+
         self.layout
-            .paint(self.text.as_ref(), self.background_style, window, cx);
+            .paint(self.text.as_ref(), self.background_style, None, window, cx);
     }
 }
 
@@ -227,7 +386,70 @@ impl RoundedTextLayout {
         element_state.bounds = Some(bounds);
     }
 
-    fn paint(&self, text: &str, style: RoundedBackgroundStyle, window: &mut Window, cx: &mut App) {
+    fn index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
+        let element_state = self.0.borrow();
+        let Some(element_state) = element_state.as_ref() else {
+            return Err(0);
+        };
+        let Some(bounds) = element_state.bounds else {
+            return Err(0);
+        };
+
+        if position.y < bounds.top() {
+            return Err(0);
+        }
+
+        let line_height = element_state.line_height;
+        let mut line_origin = bounds.origin;
+        let mut line_start_ix = 0;
+
+        for line in &element_state.lines {
+            let line_bottom = line_origin.y + line.size(line_height).height;
+            if position.y > line_bottom {
+                line_origin.y = line_bottom;
+                line_start_ix += line.len() + 1;
+                continue;
+            }
+
+            let position_within_line = position - line_origin;
+            match line.closest_index_for_position(position_within_line, line_height) {
+                Ok(ix) | Err(ix) => return Ok(line_start_ix + ix),
+            }
+        }
+
+        Err(line_start_ix.saturating_sub(1))
+    }
+
+    fn index_for_position_clamped(&self, position: Point<Pixels>) -> usize {
+        match self.index_for_position(position) {
+            Ok(ix) | Err(ix) => ix,
+        }
+    }
+
+    fn selection_range_for_positions(
+        &self,
+        anchor_position: Point<Pixels>,
+        head_position: Point<Pixels>,
+    ) -> Option<Range<usize>> {
+        let anchor = self.index_for_position_clamped(anchor_position);
+        let head = self.index_for_position_clamped(head_position);
+        if anchor == head {
+            None
+        } else if anchor < head {
+            Some(anchor..head)
+        } else {
+            Some(head..anchor)
+        }
+    }
+
+    fn paint(
+        &self,
+        text: &str,
+        style: RoundedBackgroundStyle,
+        selected_range: Option<Range<usize>>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         let element_state = self.0.borrow();
         let element_state = element_state
             .as_ref()
@@ -239,6 +461,7 @@ impl RoundedTextLayout {
         let line_height = element_state.line_height;
         let text_style = window.text_style();
         let font_size = text_style.font_size.to_pixels(window.rem_size());
+        let selection_color = theme_for_window(window, cx).colors.ring.opacity(0.2);
 
         let mut line_origin = bounds.origin;
         let mut line_start_ix = 0usize;
@@ -291,6 +514,40 @@ impl RoundedTextLayout {
                 }
             });
 
+            if let Some(selected_range) = selected_range.as_ref() {
+                let sel_start = selected_range.start;
+                let sel_end = selected_range.end;
+                let start = sel_start.clamp(line_start_ix, line_end_ix);
+                let end = sel_end.clamp(line_start_ix, line_end_ix);
+
+                if start < end {
+                    let local_start = start - line_start_ix;
+                    let local_end = end - line_start_ix;
+                    let boundary_indices = wrap_boundary_end_indices(line);
+
+                    let mut segment_start = 0usize;
+                    let mut segment_y = px(0.0);
+                    for segment_end in boundary_indices {
+                        let start_ix = local_start.clamp(segment_start, segment_end);
+                        let end_ix = local_end.clamp(segment_start, segment_end);
+                        if start_ix < end_ix {
+                            let segment_start_x = line.unwrapped_layout.x_for_index(segment_start);
+                            let x0 = line.unwrapped_layout.x_for_index(start_ix) - segment_start_x;
+                            let x1 = line.unwrapped_layout.x_for_index(end_ix) - segment_start_x;
+
+                            let top_left = point(line_origin.x + x0, line_origin.y + segment_y);
+                            let bottom_right = point(line_origin.x + x1, top_left.y + line_height);
+                            window.paint_quad(fill(
+                                Bounds::from_corners(top_left, bottom_right),
+                                selection_color,
+                            ));
+                        }
+                        segment_start = segment_end;
+                        segment_y += line_height;
+                    }
+                }
+            }
+
             if let Err(error) = line.paint(
                 line_origin,
                 line_height,
@@ -333,6 +590,19 @@ fn compute_background_spans(runs: &[TextRun]) -> Vec<BackgroundSpan> {
     }
 
     spans
+}
+
+fn wrap_boundary_end_indices(line: &gpui::WrappedLine) -> Vec<usize> {
+    let mut boundaries = Vec::with_capacity(line.wrap_boundaries.len().saturating_add(1));
+    for boundary in &line.wrap_boundaries {
+        if let Some(run) = line.unwrapped_layout.runs.get(boundary.run_ix)
+            && let Some(glyph) = run.glyphs.get(boundary.glyph_ix)
+        {
+            boundaries.push(glyph.index);
+        }
+    }
+    boundaries.push(line.len());
+    boundaries
 }
 
 fn paint_rounded_background_span(
