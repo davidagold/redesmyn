@@ -5029,6 +5029,7 @@ struct WorkspacePaneHost {
     task_filters_action_availability: ActionAvailabilityProbe,
     ui_updates: UiUpdateCounter,
     model: Entity<DesktopModel>,
+    repo_root: Option<PathBuf>,
     task_session_view: Entity<SessionView>,
     graph_view: Entity<GraphView>,
     task_filters: TaskFilters,
@@ -5221,7 +5222,9 @@ impl WorkspacePaneHost {
             view.set_settings_menu_secondary_side(CascadingMenuSecondarySide::Left, cx);
         });
         let graph_session_view = task_session_view.clone();
-        let graph_view = cx.new(|cx| GraphView::new_empty(graph_session_view, cx));
+        let graph_repo_root = repo_root.clone();
+        let graph_view =
+            cx.new(|cx| GraphView::new_empty(graph_session_view, graph_repo_root.clone(), cx));
         subscriptions.push(
             cx.subscribe(
                 &graph_view,
@@ -5248,6 +5251,7 @@ impl WorkspacePaneHost {
             task_filters_action_availability: ActionAvailabilityProbe::new(),
             ui_updates,
             model,
+            repo_root,
             task_session_view,
             graph_view,
             task_filters: TaskFilters::default(),
@@ -5306,7 +5310,9 @@ impl WorkspacePaneHost {
             self.task_session_view
                 .update(cx, |view, _cx| view.set_repo_scope(None));
             let task_session_view = self.task_session_view.clone();
-            self.graph_view = cx.new(|cx| GraphView::new_empty(task_session_view, cx));
+            let graph_repo_root = self.repo_root.clone();
+            self.graph_view =
+                cx.new(|cx| GraphView::new_empty(task_session_view, graph_repo_root.clone(), cx));
             self.graph_refresh_pending = false;
             if self.task_filters.is_active() {
                 let filters = self.task_filters.clone();

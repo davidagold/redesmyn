@@ -273,6 +273,12 @@ enum TaskDescriptionState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExpandedTaskTab {
+    Session,
+    Readme,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct AgentStatusDotVisualKey {
     task_state: TaskState,
     agent_status: AgentStatus,
@@ -292,7 +298,9 @@ pub struct GraphView {
     pan_drag: Option<PanDrag>,
     last_canvas_bounds: Option<gpui::Bounds<gpui::Pixels>>,
     task_session_view: Entity<SessionView>,
+    repo_root: Option<PathBuf>,
     expanded_details_scroll: ScrollHandle,
+    expanded_task_tab: ExpandedTaskTab,
     current_epic_slug: Option<gpui::SharedString>,
     selected_task_description_key: Option<(gpui::SharedString, gpui::SharedString)>,
     selected_task_description: TaskDescriptionState,
@@ -324,23 +332,32 @@ pub struct GraphView {
 }
 
 impl GraphView {
-    pub fn new_empty(task_session_view: Entity<SessionView>, cx: &mut Context<Self>) -> Self {
+    pub fn new_empty(
+        task_session_view: Entity<SessionView>,
+        repo_root: Option<PathBuf>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let span = redesmyn_logging::redesmyn_info_span!("ui.graph_view.new_empty");
         let _guard = span.enter();
 
-        Self::new_with_scene(GraphScene::empty_demo(), task_session_view, cx)
+        Self::new_with_scene(GraphScene::empty_demo(), task_session_view, repo_root, cx)
     }
 
-    pub fn new_demo(task_session_view: Entity<SessionView>, cx: &mut Context<Self>) -> Self {
+    pub fn new_demo(
+        task_session_view: Entity<SessionView>,
+        repo_root: Option<PathBuf>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let span = redesmyn_logging::redesmyn_info_span!("ui.graph_view.new_demo");
         let _guard = span.enter();
 
-        Self::new_with_scene(GraphScene::demo(), task_session_view, cx)
+        Self::new_with_scene(GraphScene::demo(), task_session_view, repo_root, cx)
     }
 
     fn new_with_scene(
         scene: GraphScene,
         task_session_view: Entity<SessionView>,
+        repo_root: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) -> Self {
         let fps_overlay_enabled = std::env::var("REDESMYN_UI_FPS_OVERLAY")
@@ -369,7 +386,9 @@ impl GraphView {
             pan_drag: None,
             last_canvas_bounds: None,
             task_session_view,
+            repo_root: repo_root.or_else(Self::discover_repo_root_from_cwd),
             expanded_details_scroll: ScrollHandle::new(),
+            expanded_task_tab: ExpandedTaskTab::Session,
             current_epic_slug: None,
             selected_task_description_key: None,
             selected_task_description: TaskDescriptionState::Idle,
@@ -738,6 +757,43 @@ impl GraphView {
         self.update_selection(|scene| scene.clear_selection(), cx);
     }
 
+    fn set_expanded_task_tab(&mut self, tab: ExpandedTaskTab, cx: &mut Context<Self>) {
+        if self.expanded_task_tab == tab {
+            return;
+        }
+        self.expanded_task_tab = tab;
+        cx.notify();
+    }
+
+    fn set_expanded_task_tab_from_shortcut(
+        &mut self,
+        key: &str,
+        modifiers: gpui::Modifiers,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !matches!(self.visual_selected_node(), Some(GraphNodeId::Task(_))) {
+            return false;
+        }
+
+        if !modifiers.secondary()
+            || modifiers.alt
+            || modifiers.shift
+            || modifiers.function
+            || modifiers.number_of_modifiers() != 1
+        {
+            return false;
+        }
+
+        let tab = match key {
+            "1" => ExpandedTaskTab::Session,
+            "2" => ExpandedTaskTab::Readme,
+            _ => return false,
+        };
+
+        self.set_expanded_task_tab(tab, cx);
+        true
+    }
+
     #[must_use]
     pub fn contains_task_node(&self, task_id: TaskId) -> bool {
         self.scene.node(GraphNodeId::Task(task_id)).is_some()
@@ -891,14 +947,35 @@ impl GraphView {
         });
     }
 
-    fn task_readme_path_for(&self, epic_slug: &str, task_slug: &str) -> PathBuf {
-        let mut path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    fn discover_repo_root_from_cwd() -> Option<PathBuf> {
+        let cwd = std::env::current_dir().ok()?;
+        Self::discover_repo_root_from(cwd)
+    }
+
+    fn discover_repo_root_from(start: PathBuf) -> Option<PathBuf> {
+        let mut cursor = start;
+        loop {
+            if cursor.join(".git").exists() {
+                return Some(cursor);
+            }
+            if !cursor.pop() {
+                return None;
+            }
+        }
+    }
+
+    fn task_readme_path_for(&mut self, epic_slug: &str, task_slug: &str) -> Option<PathBuf> {
+        if self.repo_root.is_none() {
+            self.repo_root = Self::discover_repo_root_from_cwd();
+        }
+
+        let mut path = self.repo_root.clone()?;
         path.push("epics");
         path.push(epic_slug);
         path.push("tasks");
         path.push(task_slug);
         path.push("README.md");
-        path
+        Some(path)
     }
 
     fn sync_task_description(
@@ -935,7 +1012,13 @@ impl GraphView {
         self.selected_task_description_key = Some(key.clone());
         self.selected_task_description_task = None;
 
-        let path = self.task_readme_path_for(epic_slug.as_ref(), task_slug.as_ref());
+        let Some(path) = self.task_readme_path_for(epic_slug.as_ref(), task_slug.as_ref()) else {
+            self.selected_task_description = TaskDescriptionState::Error {
+                message: "Unable to resolve repository root for task README.".into(),
+            };
+            cx.notify();
+            return;
+        };
         if let Some(doc) = self.task_description_cache.get(&key).cloned() {
             self.selected_task_description = TaskDescriptionState::Loaded { doc };
             return;
@@ -998,6 +1081,7 @@ impl GraphView {
 
     fn reset_expanded_card_state(&mut self) {
         self.expanded_details_scroll = ScrollHandle::new();
+        self.expanded_task_tab = ExpandedTaskTab::Session;
         self.selected_task_description_key = None;
         self.selected_task_description = TaskDescriptionState::Idle;
         self.selected_task_description_task = None;
@@ -1717,9 +1801,7 @@ impl GraphView {
 
             let message = match result {
                 Ok(ResponseResult::StartAgent(_)) if kind == TaskQuickActionKind::Start => None,
-                Ok(ResponseResult::RestartAgent(_)) if kind == TaskQuickActionKind::Restart => {
-                    None
-                }
+                Ok(ResponseResult::RestartAgent(_)) if kind == TaskQuickActionKind::Restart => None,
                 Ok(ResponseResult::StopAgent(_)) if kind == TaskQuickActionKind::Stop => None,
                 Ok(ResponseResult::Error(err)) => Some(err.message),
                 Err(err) => Some(err.message),
@@ -2996,6 +3078,7 @@ impl Render for GraphView {
                     let latest_session = node.latest_session.clone();
                     let latest_command = node.latest_command.clone();
                     let description_state = self.selected_task_description.clone();
+                    let active_tab = self.expanded_task_tab;
                     let task_id = match node_id {
                         GraphNodeId::Task(task_id) => task_id,
                         GraphNodeId::Trunk => unreachable!("trunk nodes are skipped above"),
@@ -3008,6 +3091,19 @@ impl Render for GraphView {
                             .or_else(|| state.restart.error.clone())
                             .or_else(|| state.stop.error.clone())
                     });
+
+                    let has_session = task_session_state.session_id.is_some()
+                        || latest_session.as_ref().is_some();
+                    let action_state = self.quick_actions.get(&task_id);
+                    let start_disabled = action_state.is_some_and(|state| state.start.in_flight);
+                    let restart_disabled =
+                        action_state.is_some_and(|state| state.restart.in_flight);
+                    let stop_disabled = action_state.is_some_and(|state| state.stop.in_flight);
+                    let show_stop =
+                        matches!(agent_status, AgentStatus::Running | AgentStatus::Blocked);
+                    let show_restart = has_session || show_stop;
+                    let show_start = !show_restart;
+
                     card = card.child(
                         div()
                             .flex()
@@ -3019,7 +3115,7 @@ impl Render for GraphView {
                             .child(
                                 div()
                                     .px(theme.spacing.md)
-                                    .py(theme.spacing.sm)
+                                    .py(theme.spacing.md)
                                     .flex()
                                     .flex_row()
                                     .items_center()
@@ -3072,362 +3168,423 @@ impl Render for GraphView {
                             )
                             .child(
                                 div()
-                                    .flex_1()
-                                    .min_h(px(0.0))
+                                    .px(theme.spacing.md)
+                                    .py(theme.spacing.sm)
                                     .flex()
-                                    .flex_row()
-                                    .bg(theme.colors.surface)
+                                    .flex_col()
+                                    .gap(theme.spacing.sm)
+                                    .bg(theme.colors.background.opacity(0.72))
+                                    .border_b_1()
+                                    .border_color(theme.colors.border.opacity(0.45))
                                     .child(
                                         div()
                                             .flex()
-                                            .flex_col()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .border_r_1()
-                                            .border_color(theme.colors.border.opacity(0.5))
+                                            .flex_row()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap(theme.spacing.md)
                                             .child(
                                                 div()
-                                                    .flex_1()
-                                                    .min_h(px(0.0))
-                                                    .px(theme.spacing.md)
-                                                    .pb(theme.spacing.md)
                                                     .flex()
                                                     .flex_col()
-                                                    .gap(theme.spacing.sm)
-                                                    .when(is_primary_selected, |this| {
-                                                        let mut this = this;
-
-                                                        if task_session_state.in_flight {
-                                                            let label = if task_session_state.operation
-                                                                == Some(TaskSessionOperation::StartAgent)
-                                                            {
-                                                                "Starting agent…"
-                                                            } else {
-                                                                "Loading latest session…"
-                                                            };
-                                                            this = this.child(
-                                                                div()
-                                                                    .text_sm()
-                                                                    .text_color(
-                                                                        theme.colors.foreground_muted,
-                                                                    )
-                                                                    .child(label),
-                                                            );
-                                                        } else if let Some(err) = task_session_state.error.clone() {
-                                                            let refresh_button_id = (
-                                                                gpui::ElementId::from((
-                                                                    "task_card_session_refresh",
-                                                                    entity_id,
-                                                                )),
-                                                                node_key.clone(),
-                                                            );
-                                                            let task_session_view =
-                                                                self.task_session_view.clone();
-                                                            let is_start_agent_error = task_session_state.operation
-                                                                == Some(TaskSessionOperation::StartAgent);
-                                                            let action_label =
-                                                                if is_start_agent_error { "Start agent" } else { "Retry" };
-
-                                                            this = this.child(
-                                                                div()
-                                                                    .mt(theme.spacing.sm)
-                                                                    .child(
-                                                                        Callout::new(err)
-                                                                            .kind(CalloutKind::Danger)
-                                                                            .title("Session")
-                                                                            .action(
-                                                                                TextButton::new(
-                                                                                    refresh_button_id,
-                                                                                    action_label,
-                                                                                )
-                                                                                .kind(ButtonKind::Secondary)
-                                                                                .on_click(move |_, _, cx| {
-                                                                                    if is_start_agent_error {
-                                                                                        let GraphNodeId::Task(task_id) = node_id else {
-                                                                                            return;
-                                                                                        };
-                                                                                        task_session_view.update(
-                                                                                            cx,
-                                                                                            |view, cx| {
-                                                                                                view.start_agent_for_task(task_id, cx)
-                                                                                            },
-                                                                                        );
-                                                                                    } else {
-                                                                                        task_session_view.update(
-                                                                                            cx,
-                                                                                            |view, cx| {
-                                                                                                view.refresh_latest_task_session(cx)
-                                                                                            },
-                                                                                        );
-                                                                                    }
-                                                                                }),
-                                                                            ),
-                                                                    ),
-                                                            );
-                                                        } else if task_session_state.session_id.is_none() {
-                                                            let start_button_id = (
-                                                                gpui::ElementId::from((
-                                                                    "task_card_session_start_agent",
-                                                                    entity_id,
-                                                                )),
-                                                                node_key.clone(),
-                                                            );
-
-                                                            this = this.child(
-                                                                div()
-                                                                    .mt(theme.spacing.sm)
-                                                                    .child(
-                                                                        Callout::new("No session yet.")
-                                                                            .kind(CalloutKind::Info)
-                                                                            .title("Session")
-                                                                            .action(
-                                                                                div()
-                                                                                    .flex()
-                                                                                    .flex_row()
-                                                                                    .gap(theme.spacing.sm)
-                                                                                    .child(
-                                                                                        TextButton::new(
-                                                                                            start_button_id,
-                                                                                            "Start agent",
-                                                                                        )
-                                                                                        .kind(
-                                                                                            ButtonKind::Secondary,
-                                                                                        )
-                                                                                        .on_click(
-                                                                                            start_agent_action,
-                                                                                        ),
-                                                                                    ),
-                                                                            ),
-                                                                    ),
-                                                            );
-                                                        }
-
+                                                    .min_w_0()
+                                                    .gap(px(2.0))
+                                                    .when_some(branch_name.clone(), |this, name| {
                                                         this.child(
                                                             div()
-                                                                .flex_1()
-                                                                .min_h(px(0.0))
-                                                                .child(
-                                                                    self.task_session_view.clone(),
-                                                                ),
+                                                                .font(theme.typography.mono.font.clone())
+                                                                .text_size(theme.typography.mono.size)
+                                                                .text_color(theme.colors.foreground)
+                                                                .truncate()
+                                                                .child(name),
                                                         )
-                                                    }),
+                                                    })
+                                                    .when_some(
+                                                        latest_command
+                                                            .clone()
+                                                            .and_then(|command| command.last_message),
+                                                        |this, message| {
+                                                            this.child(
+                                                                div()
+                                                                    .text_xs()
+                                                                    .text_color(theme.colors.foreground_muted)
+                                                                    .truncate()
+                                                                    .child(message),
+                                                            )
+                                                        },
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .flex_row()
+                                                    .items_center()
+                                                    .gap(theme.spacing.sm)
+                                                    .when(show_start, |this| {
+                                                        let button_id = (
+                                                            gpui::ElementId::from((
+                                                                "task_card_action_start",
+                                                                entity_id,
+                                                            )),
+                                                            node_key.clone(),
+                                                        );
+                                                        let graph = graph.clone();
+                                                        this.child(
+                                                            TextButton::new(button_id, "Start agent")
+                                                                .kind(ButtonKind::Ghost)
+                                                                .small()
+                                                                .disabled(start_disabled)
+                                                                .disabled_reason("Starting…")
+                                                                .on_click(move |event, _window, cx| {
+                                                                    if event.standard_click() {
+                                                                        graph.update(cx, |this, cx| {
+                                                                            this.trigger_task_quick_action(
+                                                                                task_id,
+                                                                                TaskQuickActionKind::Start,
+                                                                                cx,
+                                                                            );
+                                                                        });
+                                                                    }
+                                                                    cx.stop_propagation();
+                                                                }),
+                                                        )
+                                                    })
+                                                    .when(show_restart, |this| {
+                                                        let button_id = (
+                                                            gpui::ElementId::from((
+                                                                "task_card_action_restart",
+                                                                entity_id,
+                                                            )),
+                                                            node_key.clone(),
+                                                        );
+                                                        let graph = graph.clone();
+                                                        this.child(
+                                                            TextButton::new(button_id, "Restart")
+                                                                .kind(ButtonKind::Ghost)
+                                                                .small()
+                                                                .disabled(restart_disabled)
+                                                                .disabled_reason("Restarting…")
+                                                                .on_click(move |event, _window, cx| {
+                                                                    if event.standard_click() {
+                                                                        graph.update(cx, |this, cx| {
+                                                                            this.trigger_task_quick_action(
+                                                                                task_id,
+                                                                                TaskQuickActionKind::Restart,
+                                                                                cx,
+                                                                            );
+                                                                        });
+                                                                    }
+                                                                    cx.stop_propagation();
+                                                                }),
+                                                        )
+                                                    })
+                                                    .when(show_stop, |this| {
+                                                        let button_id = (
+                                                            gpui::ElementId::from((
+                                                                "task_card_action_stop",
+                                                                entity_id,
+                                                            )),
+                                                            node_key.clone(),
+                                                        );
+                                                        let graph = graph.clone();
+                                                        this.child(
+                                                            TextButton::new(button_id, "Stop")
+                                                                .kind(ButtonKind::Ghost)
+                                                                .small()
+                                                                .disabled(stop_disabled)
+                                                                .disabled_reason("Stopping…")
+                                                                .on_click(move |event, _window, cx| {
+                                                                    if event.standard_click() {
+                                                                        graph.update(cx, |this, cx| {
+                                                                            this.trigger_task_quick_action(
+                                                                                task_id,
+                                                                                TaskQuickActionKind::Stop,
+                                                                                cx,
+                                                                            );
+                                                                        });
+                                                                    }
+                                                                    cx.stop_propagation();
+                                                                }),
+                                                        )
+                                                    })
+                                                    .when(
+                                                        action_state.is_some_and(|state| {
+                                                            state.start.in_flight
+                                                                || state.restart.in_flight
+                                                                || state.stop.in_flight
+                                                        }),
+                                                        |this| {
+                                                            let label = if action_state
+                                                                .is_some_and(|state| state.start.in_flight)
+                                                            {
+                                                                "Starting"
+                                                            } else if action_state
+                                                                .is_some_and(|state| state.restart.in_flight)
+                                                            {
+                                                                "Restarting"
+                                                            } else {
+                                                                "Stopping"
+                                                            };
+                                                            this.child(
+                                                                ProgressPill::new(label)
+                                                                    .kind(ProgressPillKind::Accent),
+                                                            )
+                                                        },
+                                                    ),
                                             ),
                                     )
-	                                    .child(
-	                                        div()
-	                                            .flex()
-	                                            .flex_col()
-	                                            .w(px(380.0))
-	                                            .min_w_0()
-	                                            .child(
-	                                                div()
-	                                                    .flex_1()
-	                                                    .min_h(px(0.0))
-	                                                    .px(theme.spacing.md)
-	                                                    .pb(theme.spacing.md)
-	                                                    .pt(theme.spacing.sm)
-	                                                    .child(
-	                                                        ScrollArea::new(
-	                                                            (
-	                                                                gpui::ElementId::from((
-	                                                                    "task_card_details_scroll",
-	                                                                    entity_id,
-	                                                                )),
-	                                                                node_key.clone(),
-	                                                            ),
-	                                                            right_scroll,
-	                                                        )
-	                                                        .child(task_details_description_section(
-	                                                            (
-	                                                                gpui::ElementId::from((
-	                                                                    "task_details_description",
-	                                                                    entity_id,
-	                                                                )),
-	                                                                node_key.clone(),
-	                                                            ),
-	                                                            title.clone(),
-	                                                            description_state,
-	                                                            &theme,
-	                                                        ))
-	                                                        .child(task_details_overview_section(
-	                                                            agent_status,
-	                                                            branch_name.clone(),
-	                                                            latest_command.clone(),
-	                                                            &theme,
-	                                                        ))
-	                                                        .child(details_section(
-	                                                            "Actions",
-	                                                            div()
-	                                                                .flex()
-	                                                                .flex_col()
-	                                                                .gap(theme.spacing.sm)
-	                                                                .when_some(
-	                                                                    quick_action_error,
-	                                                                    |this, error| {
-	                                                                        this.child(
-	                                                                            Callout::new(error)
-	                                                                                .kind(
-	                                                                                    CalloutKind::Danger,
-	                                                                                )
-	                                                                                .title(
-	                                                                                    "Task action failed",
-	                                                                                ),
-	                                                                        )
-	                                                                    },
-	                                                                )
-	                                                                .child({
-	                                                                    let graph = graph.clone();
-	                                                                    let has_session = task_session_state
-	                                                                        .session_id
-	                                                                        .is_some()
-	                                                                        || latest_session
-	                                                                            .as_ref()
-	                                                                            .is_some();
-	                                                                    let action_state =
-	                                                                        self.quick_actions
-	                                                                            .get(&task_id);
-	                                                                    let start_disabled = action_state
-	                                                                        .is_some_and(|state| {
-	                                                                            state.start.in_flight
-	                                                                        });
-	                                                                    let restart_disabled = action_state
-	                                                                        .is_some_and(|state| {
-	                                                                            state.restart.in_flight
-	                                                                        });
-	                                                                    let stop_disabled = action_state
-	                                                                        .is_some_and(|state| {
-	                                                                            state.stop.in_flight
-	                                                                        });
-	                                                                    let show_stop = matches!(
-	                                                                        agent_status,
-	                                                                        AgentStatus::Running
-	                                                                            | AgentStatus::Blocked
-	                                                                    );
-	                                                                    let show_restart =
-	                                                                        has_session || show_stop;
-	                                                                    let show_start = !show_restart;
+                                    .when_some(quick_action_error.clone(), |this, error| {
+                                        this.child(
+                                            Callout::new(error)
+                                                .kind(CalloutKind::Danger)
+                                                .title("Task action failed"),
+                                        )
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_h(px(0.0))
+                                    .flex()
+                                    .flex_col()
+                                    .bg(theme.colors.surface)
+                                    .child(
+                                        div()
+                                            .px(theme.spacing.md)
+                                            .pt(theme.spacing.sm)
+                                            .pb(theme.spacing.xs)
+                                            .flex()
+                                            .flex_row()
+                                            .items_center()
+                                            .gap(theme.spacing.sm)
+                                            .child(
+                                                TextButton::new(
+                                                    (
+                                                        gpui::ElementId::from((
+                                                            "task_card_tab_session",
+                                                            entity_id,
+                                                        )),
+                                                        node_key.clone(),
+                                                    ),
+                                                    "Session",
+                                                )
+                                                .kind(if active_tab == ExpandedTaskTab::Session {
+                                                    ButtonKind::Secondary
+                                                } else {
+                                                    ButtonKind::Ghost
+                                                })
+                                                .small()
+                                                .tooltip("Shortcut: Cmd/Ctrl+1")
+                                                .on_click({
+                                                    let graph = graph.clone();
+                                                    move |event, _window, cx| {
+                                                        if event.standard_click() {
+                                                            graph.update(cx, |this, cx| {
+                                                                this.set_expanded_task_tab(
+                                                                    ExpandedTaskTab::Session,
+                                                                    cx,
+                                                                );
+                                                            });
+                                                        }
+                                                        cx.stop_propagation();
+                                                    }
+                                                }),
+                                            )
+                                            .child(
+                                                TextButton::new(
+                                                    (
+                                                        gpui::ElementId::from((
+                                                            "task_card_tab_readme",
+                                                            entity_id,
+                                                        )),
+                                                        node_key.clone(),
+                                                    ),
+                                                    "README",
+                                                )
+                                                .kind(if active_tab == ExpandedTaskTab::Readme {
+                                                    ButtonKind::Secondary
+                                                } else {
+                                                    ButtonKind::Ghost
+                                                })
+                                                .small()
+                                                .tooltip("Shortcut: Cmd/Ctrl+2")
+                                                .on_click({
+                                                    let graph = graph.clone();
+                                                    move |event, _window, cx| {
+                                                        if event.standard_click() {
+                                                            graph.update(cx, |this, cx| {
+                                                                this.set_expanded_task_tab(
+                                                                    ExpandedTaskTab::Readme,
+                                                                    cx,
+                                                                );
+                                                            });
+                                                        }
+                                                        cx.stop_propagation();
+                                                    }
+                                                }),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_h(px(0.0))
+                                            .min_w_0()
+                                            .px(theme.spacing.md)
+                                            .pb(theme.spacing.md)
+                                            .pt(theme.spacing.xs)
+                                            .when(active_tab == ExpandedTaskTab::Session, |this| {
+                                                this.child(
+                                                    div()
+                                                        .flex_1()
+                                                        .min_h(px(0.0))
+                                                        .flex()
+                                                        .flex_col()
+                                                        .gap(theme.spacing.sm)
+                                                        .when(is_primary_selected, |this| {
+                                                            let mut this = this;
 
-	                                                                    let mut row = div()
-	                                                                        .flex()
-	                                                                        .flex_row()
-	                                                                        .flex_wrap()
-	                                                                        .items_center()
-	                                                                        .gap(theme.spacing.sm);
+                                                            if task_session_state.in_flight {
+                                                                let label = if task_session_state.operation
+                                                                    == Some(TaskSessionOperation::StartAgent)
+                                                                {
+                                                                    "Starting agent…"
+                                                                } else {
+                                                                    "Loading latest session…"
+                                                                };
+                                                                this = this.child(
+                                                                    div()
+                                                                        .text_sm()
+                                                                        .text_color(
+                                                                            theme.colors.foreground_muted,
+                                                                        )
+                                                                        .child(label),
+                                                                );
+                                                            } else if let Some(err) = task_session_state.error.clone() {
+                                                                let refresh_button_id = (
+                                                                    gpui::ElementId::from((
+                                                                        "task_card_session_refresh",
+                                                                        entity_id,
+                                                                    )),
+                                                                    node_key.clone(),
+                                                                );
+                                                                let task_session_view =
+                                                                    self.task_session_view.clone();
+                                                                let is_start_agent_error = task_session_state.operation
+                                                                    == Some(TaskSessionOperation::StartAgent);
+                                                                let action_label = if is_start_agent_error {
+                                                                    "Start agent"
+                                                                } else {
+                                                                    "Retry"
+                                                                };
 
-	                                                                    if show_start {
-	                                                                        let button_id = (
-	                                                                            gpui::ElementId::from((
-	                                                                                "task_card_action_start",
-	                                                                                entity_id,
-	                                                                            )),
-	                                                                            node_key.clone(),
-	                                                                        );
-	                                                                        let graph = graph.clone();
-	                                                                        row = row.child(
-	                                                                            TextButton::new(
-	                                                                                button_id,
-	                                                                                "Start agent",
-	                                                                            )
-	                                                                            .kind(ButtonKind::Ghost)
-	                                                                            .small()
-	                                                                            .disabled(start_disabled)
-	                                                                            .disabled_reason(
-	                                                                                "Starting…",
-	                                                                            )
-	                                                                            .on_click(move |event, _window, cx| {
-	                                                                                if event.standard_click() {
-	                                                                                    graph.update(cx, |this, cx| {
-	                                                                                        this.trigger_task_quick_action(
-	                                                                                            task_id,
-	                                                                                            TaskQuickActionKind::Start,
-	                                                                                            cx,
-	                                                                                        );
-	                                                                                    });
-	                                                                                }
-	                                                                                cx.stop_propagation();
-	                                                                            }),
-	                                                                        );
-	                                                                    }
+                                                                this = this.child(
+                                                                    div()
+                                                                        .mt(theme.spacing.sm)
+                                                                        .child(
+                                                                            Callout::new(err)
+                                                                                .kind(CalloutKind::Danger)
+                                                                                .title("Session")
+                                                                                .action(
+                                                                                    TextButton::new(
+                                                                                        refresh_button_id,
+                                                                                        action_label,
+                                                                                    )
+                                                                                    .kind(ButtonKind::Secondary)
+                                                                                    .on_click(move |_, _, cx| {
+                                                                                        if is_start_agent_error {
+                                                                                            let GraphNodeId::Task(task_id) = node_id else {
+                                                                                                return;
+                                                                                            };
+                                                                                            task_session_view.update(
+                                                                                                cx,
+                                                                                                |view, cx| {
+                                                                                                    view.start_agent_for_task(task_id, cx)
+                                                                                                },
+                                                                                            );
+                                                                                        } else {
+                                                                                            task_session_view.update(
+                                                                                                cx,
+                                                                                                |view, cx| {
+                                                                                                    view.refresh_latest_task_session(cx)
+                                                                                                },
+                                                                                            );
+                                                                                        }
+                                                                                    }),
+                                                                                ),
+                                                                        ),
+                                                                );
+                                                            } else if task_session_state.session_id.is_none() {
+                                                                let start_button_id = (
+                                                                    gpui::ElementId::from((
+                                                                        "task_card_session_start_agent",
+                                                                        entity_id,
+                                                                    )),
+                                                                    node_key.clone(),
+                                                                );
 
-	                                                                    if show_restart {
-	                                                                        let button_id = (
-	                                                                            gpui::ElementId::from((
-	                                                                                "task_card_action_restart",
-	                                                                                entity_id,
-	                                                                            )),
-	                                                                            node_key.clone(),
-	                                                                        );
-	                                                                        let graph = graph.clone();
-	                                                                        row = row.child(
-	                                                                            TextButton::new(
-	                                                                                button_id,
-	                                                                                "Restart",
-	                                                                            )
-	                                                                            .kind(ButtonKind::Ghost)
-	                                                                            .small()
-	                                                                            .disabled(restart_disabled)
-	                                                                            .disabled_reason(
-	                                                                                "Restarting…",
-	                                                                            )
-	                                                                            .on_click(move |event, _window, cx| {
-	                                                                                if event.standard_click() {
-	                                                                                    graph.update(cx, |this, cx| {
-	                                                                                        this.trigger_task_quick_action(
-	                                                                                            task_id,
-	                                                                                            TaskQuickActionKind::Restart,
-	                                                                                            cx,
-	                                                                                        );
-	                                                                                    });
-	                                                                                }
-	                                                                                cx.stop_propagation();
-	                                                                            }),
-	                                                                        );
-	                                                                    }
+                                                                this = this.child(
+                                                                    div()
+                                                                        .mt(theme.spacing.sm)
+                                                                        .child(
+                                                                            Callout::new("No session yet.")
+                                                                                .kind(CalloutKind::Info)
+                                                                                .title("Session")
+                                                                                .action(
+                                                                                    div()
+                                                                                        .flex()
+                                                                                        .flex_row()
+                                                                                        .gap(theme.spacing.sm)
+                                                                                        .child(
+                                                                                            TextButton::new(
+                                                                                                start_button_id,
+                                                                                                "Start agent",
+                                                                                            )
+                                                                                            .kind(ButtonKind::Secondary)
+                                                                                            .on_click(start_agent_action),
+                                                                                        ),
+                                                                                ),
+                                                                        ),
+                                                                );
+                                                            }
 
-	                                                                    if show_stop {
-	                                                                        let button_id = (
-	                                                                            gpui::ElementId::from((
-	                                                                                "task_card_action_stop",
-	                                                                                entity_id,
-	                                                                            )),
-	                                                                            node_key.clone(),
-	                                                                        );
-	                                                                        let graph = graph.clone();
-	                                                                        row = row.child(
-	                                                                            TextButton::new(
-	                                                                                button_id,
-	                                                                                "Stop",
-	                                                                            )
-	                                                                            .kind(ButtonKind::Ghost)
-	                                                                            .small()
-	                                                                            .disabled(stop_disabled)
-	                                                                            .disabled_reason(
-	                                                                                "Stopping…",
-	                                                                            )
-	                                                                            .on_click(move |event, _window, cx| {
-	                                                                                if event.standard_click() {
-	                                                                                    graph.update(cx, |this, cx| {
-	                                                                                        this.trigger_task_quick_action(
-	                                                                                            task_id,
-	                                                                                            TaskQuickActionKind::Stop,
-	                                                                                            cx,
-	                                                                                        );
-	                                                                                    });
-	                                                                                }
-	                                                                                cx.stop_propagation();
-	                                                                            }),
-	                                                                        );
-	                                                                    }
-
-	                                                                    row
-	                                                                }),
-	                                                            &theme,
-	                                                        ))
-	                                                        .child(div().h(theme.spacing.md)),
-	                                                    ),
-	                                            ),
-	                                    ),
-							),
+                                                            this.child(
+                                                                div()
+                                                                    .flex_1()
+                                                                    .min_h(px(0.0))
+                                                                    .child(self.task_session_view.clone()),
+                                                            )
+                                                        }),
+                                                )
+                                            })
+                                            .when(active_tab == ExpandedTaskTab::Readme, |this| {
+                                                this.child(
+                                                    ScrollArea::new(
+                                                        (
+                                                            gpui::ElementId::from((
+                                                                "task_card_details_scroll",
+                                                                entity_id,
+                                                            )),
+                                                            node_key.clone(),
+                                                        ),
+                                                        right_scroll,
+                                                    )
+                                                    .child(task_details_description_section(
+                                                        (
+                                                            gpui::ElementId::from((
+                                                                "task_details_description",
+                                                                entity_id,
+                                                            )),
+                                                            node_key.clone(),
+                                                        ),
+                                                        title.clone(),
+                                                        description_state,
+                                                        &theme,
+                                                    ))
+                                                    .child(div().h(theme.spacing.md)),
+                                                )
+                                            }),
+                                    ),
+                            ),
                     );
                 }
 
@@ -3580,6 +3737,18 @@ impl Render for GraphView {
             .capture_key_down({
                 let graph = graph.clone();
                 move |event, _window, cx| {
+                    let did_switch_tab = graph.update(cx, |this, cx| {
+                        this.set_expanded_task_tab_from_shortcut(
+                            event.keystroke.key.as_str(),
+                            event.keystroke.modifiers,
+                            cx,
+                        )
+                    });
+                    if did_switch_tab {
+                        cx.stop_propagation();
+                        return;
+                    }
+
                     if event.keystroke.key != "escape" {
                         return;
                     }
@@ -4159,33 +4328,6 @@ fn task_status_chips(
         )
 }
 
-fn details_kv_row(
-    label: &'static str,
-    value: impl IntoElement,
-    theme: &redesmyn_ui::styles::UiTheme,
-) -> impl IntoElement {
-    div()
-        .flex()
-        .flex_row()
-        .items_start()
-        .gap(theme.spacing.sm)
-        .child(
-            div()
-                .w(px(96.0))
-                .text_xs()
-                .text_color(theme.colors.foreground_muted)
-                .child(label),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .text_sm()
-                .text_color(theme.colors.foreground)
-                .child(value),
-        )
-}
-
 fn details_section(
     title: &'static str,
     body: impl IntoElement,
@@ -4283,56 +4425,6 @@ fn task_details_description_section(
 
     details_section("Description", body, theme)
 }
-
-fn task_details_overview_section(
-    agent_status: AgentStatus,
-    branch_name: Option<gpui::SharedString>,
-    latest_command: Option<crate::scene::TaskCommandSummary>,
-    theme: &redesmyn_ui::styles::UiTheme,
-) -> impl IntoElement {
-    details_section(
-        "Overview",
-        div()
-            .flex()
-            .flex_col()
-            .gap(theme.spacing.xs)
-            .child(details_kv_row(
-                "Agent",
-                div().child(agent_status_value_label(agent_status)),
-                theme,
-            ))
-            .when_some(branch_name, |this, name| {
-                this.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(4.0))
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(theme.colors.foreground_muted)
-                                .child("Branch"),
-                        )
-                        .child(
-                            div()
-                                .min_w_0()
-                                .font(theme.typography.mono.font.clone())
-                                .text_size(theme.typography.mono.size)
-                                .text_color(theme.colors.foreground)
-                                .child(name),
-                        ),
-                )
-            })
-            .when_some(
-                latest_command.and_then(|command| command.last_message),
-                |this, message| {
-                    this.child(details_kv_row("Latest update", div().child(message), theme))
-                },
-            ),
-        theme,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
