@@ -63,6 +63,7 @@ impl SessionEventKindTag {
             SessionEventKind::ToolInvocation(_) => Self::ToolInvocation,
             SessionEventKind::ToolResult(_) => Self::ToolResult,
             SessionEventKind::StatusUpdate(_) => Self::StatusUpdate,
+            SessionEventKind::TaskAgentMessageSent(_) => Self::Unknown,
             SessionEventKind::PermissionsModeChanged(_) => Self::PermissionsModeChanged,
             SessionEventKind::CodexApprovalPolicyChanged(_) => Self::CodexApprovalPolicyChanged,
             SessionEventKind::CodexSandboxPolicyChanged(_) => Self::CodexSandboxPolicyChanged,
@@ -1035,6 +1036,7 @@ impl SessionEventItem {
             }
             SessionEventKind::ToolResult(ev) => SessionEventItemContent::ToolResult(ev.clone()),
             SessionEventKind::StatusUpdate(ev) => SessionEventItemContent::StatusUpdate(ev.clone()),
+            SessionEventKind::TaskAgentMessageSent(_) => SessionEventItemContent::Unknown,
             SessionEventKind::PermissionsModeChanged(ev) => {
                 SessionEventItemContent::PermissionsModeChanged(ev.clone())
             }
@@ -1141,6 +1143,7 @@ fn preview_from_event_kind(kind: &SessionEventKind) -> Option<String> {
             Some(output_preview.clone())
         }
         SessionEventKind::StatusUpdate(StatusUpdate { message, .. }) => message.clone(),
+        SessionEventKind::TaskAgentMessageSent(ev) => Some(ev.message_preview.clone()),
         SessionEventKind::PermissionsModeChanged(ev) => Some(
             match ev.mode {
                 redesmyn_protocol::session::PermissionsMode::Ask => "ask",
