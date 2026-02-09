@@ -96,6 +96,7 @@ impl TaskPaletteEntry {
 #[derive(Debug, Default)]
 struct DisplayRows {
     ordered_indices: Vec<usize>,
+    in_progress_indices: Vec<usize>,
     recent_indices: Vec<usize>,
     remaining_indices: Vec<usize>,
 }
@@ -386,9 +387,32 @@ impl TaskPaletteOverlay {
     fn display_rows(&self, cx: &App) -> DisplayRows {
         let filtered = self.filtered_indices(cx);
 
+        let mut in_progress_indices: Vec<usize> = filtered
+            .iter()
+            .copied()
+            .filter(|index| {
+                self.entries
+                    .get(*index)
+                    .is_some_and(|entry| entry.task_state == TaskState::InProgress)
+            })
+            .collect();
+        in_progress_indices.sort_by(|left, right| {
+            cmp_last_activity_desc(
+                self.entries
+                    .get(*left)
+                    .and_then(|entry| entry.last_activity),
+                self.entries
+                    .get(*right)
+                    .and_then(|entry| entry.last_activity),
+            )
+            .then_with(|| cmp_task_entry_sort_key(&self.entries[*left], &self.entries[*right]))
+        });
+
+        let in_progress_set: HashSet<usize> = in_progress_indices.iter().copied().collect();
         let mut recent_indices: Vec<usize> = filtered
             .iter()
             .copied()
+            .filter(|index| !in_progress_set.contains(index))
             .filter(|index| {
                 self.entries
                     .get(*index)
@@ -413,17 +437,19 @@ impl TaskPaletteOverlay {
         let mut remaining_indices: Vec<usize> = filtered
             .iter()
             .copied()
-            .filter(|index| !recent_set.contains(index))
+            .filter(|index| !in_progress_set.contains(index) && !recent_set.contains(index))
             .collect();
         remaining_indices.sort_by(|left, right| {
             cmp_task_entry_sort_key(&self.entries[*left], &self.entries[*right])
         });
 
-        let mut ordered_indices = recent_indices.clone();
+        let mut ordered_indices = in_progress_indices.clone();
+        ordered_indices.extend(recent_indices.iter().copied());
         ordered_indices.extend(remaining_indices.iter().copied());
 
         DisplayRows {
             ordered_indices,
+            in_progress_indices,
             recent_indices,
             remaining_indices,
         }
@@ -447,6 +473,17 @@ impl TaskPaletteOverlay {
             .min(display.ordered_indices.len().saturating_sub(1));
         let mut display_index = 0usize;
         let mut child_index = 0usize;
+
+        if !display.in_progress_indices.is_empty() {
+            child_index += 1;
+            for _ in &display.in_progress_indices {
+                if display_index == selected_display_index {
+                    return Some(child_index);
+                }
+                display_index += 1;
+                child_index += 1;
+            }
+        }
 
         if !display.recent_indices.is_empty() {
             child_index += 1;
@@ -501,6 +538,41 @@ impl TaskPaletteOverlay {
                     .child("No tasks match."),
             );
         } else {
+            if !display.in_progress_indices.is_empty() {
+                list = list.child(
+                    div()
+                        .pt(theme.spacing.sm)
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(theme.spacing.xs)
+                        .text_xs()
+                        .text_color(theme.colors.foreground_muted)
+                        .child(div().text_xs().child("▶"))
+                        .child(div().text_xs().child("In progress")),
+                );
+
+                for entry_index in &display.in_progress_indices {
+                    let Some(entry) = self.entries.get(*entry_index) else {
+                        continue;
+                    };
+                    let row_display_index = display
+                        .ordered_indices
+                        .iter()
+                        .position(|index| index == entry_index)
+                        .unwrap_or(0);
+                    list = list.child(render_task_row(
+                        entry,
+                        row_display_index == selected_index,
+                        row_display_index,
+                        self.is_blocking_loading() || self.action_in_flight,
+                        &root,
+                        cx,
+                        &theme,
+                    ));
+                }
+            }
+
             if !display.recent_indices.is_empty() {
                 list = list.child(
                     div()

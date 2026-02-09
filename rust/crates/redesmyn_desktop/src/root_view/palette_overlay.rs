@@ -99,7 +99,7 @@ where
         .max_w(px(920.0))
         .px(theme.spacing.lg)
         .py(theme.spacing.lg)
-        .bg(theme.colors.surface)
+        .bg(theme.colors.background)
         .border_1()
         .border_color(theme.colors.ring)
         .rounded(theme.radius.xl)
