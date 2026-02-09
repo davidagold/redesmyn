@@ -170,6 +170,8 @@ pub struct RootView {
     agent_sessions_palette_task: Option<Task<()>>,
     agent_sessions_palette_archive_task: Option<Task<()>>,
     task_palette_task: Option<Task<()>>,
+    task_palette_requested_epic_slug: Option<String>,
+    task_palette_refresh_pending: bool,
     settings_dialog: SettingsDialog,
     settings_model_catalog_task: Option<Task<()>>,
     chrome: ChromeState,
@@ -296,6 +298,8 @@ impl RootView {
             agent_sessions_palette_task: None,
             agent_sessions_palette_archive_task: None,
             task_palette_task: None,
+            task_palette_requested_epic_slug: None,
+            task_palette_refresh_pending: false,
             settings_dialog,
             settings_model_catalog_task: None,
             chrome: ChromeState::new(),
@@ -395,6 +399,12 @@ impl RootView {
             .as_deref()
             .is_some_and(|selected| self.chrome.epics.iter().any(|epic| epic.slug == selected));
         if opening && !has_selected_epic {
+            self.show_chrome_notice(
+                "Task palette".into(),
+                "Select an epic before opening the task palette.".into(),
+                CalloutKind::Info,
+                cx,
+            );
             return;
         }
         if opening && self.command_palette.is_open() {
@@ -703,10 +713,6 @@ impl RootView {
     }
 
     fn refresh_task_palette(&mut self, cx: &mut Context<Self>) {
-        if self.task_palette_task.is_some() {
-            return;
-        }
-
         let selected_epic = self
             .chrome
             .selected_epic_slug
@@ -714,11 +720,20 @@ impl RootView {
             .and_then(|slug| self.chrome.epics.iter().find(|epic| epic.slug == slug))
             .cloned();
         let Some(selected_epic) = selected_epic else {
+            self.task_palette_requested_epic_slug = None;
+            self.task_palette_refresh_pending = false;
             self.task_palette
                 .fail_loading("Select an epic before opening the task palette.", cx);
             self.ui_updates.bump();
             return;
         };
+        self.task_palette_requested_epic_slug = Some(selected_epic.slug.clone());
+
+        if self.task_palette_task.is_some() {
+            self.task_palette_refresh_pending = true;
+            return;
+        }
+        self.task_palette_refresh_pending = false;
 
         let Some(client) = self.model.read(cx).chrome_control_plane_client.clone() else {
             self.task_palette
@@ -728,6 +743,7 @@ impl RootView {
         };
 
         let epic_slug = selected_epic.slug.clone();
+        let requested_epic_slug = epic_slug.clone();
         let epic_title = (!selected_epic.name.trim().is_empty()).then_some(selected_epic.name);
         self.task_palette
             .start_loading_for_epic(epic_slug.clone(), epic_title.clone(), cx);
@@ -751,18 +767,27 @@ impl RootView {
                     let _ = cx.update(|cx| {
                         entity.update(cx, |this, cx| {
                             this.task_palette_task = None;
-                            match result {
-                                Ok(loaded) => {
-                                    this.task_palette.finish_loading_for_epic(
-                                        loaded.epic_slug,
-                                        loaded.epic_title,
-                                        loaded.entries,
-                                        cx,
-                                    );
+                            let request_is_current =
+                                this.task_palette_requested_epic_slug.as_deref()
+                                    == Some(requested_epic_slug.as_str());
+                            if request_is_current {
+                                match result {
+                                    Ok(loaded) => {
+                                        this.task_palette.finish_loading_for_epic(
+                                            loaded.epic_slug,
+                                            loaded.epic_title,
+                                            loaded.entries,
+                                            cx,
+                                        );
+                                    }
+                                    Err(error) => {
+                                        this.task_palette.fail_loading(error, cx);
+                                    }
                                 }
-                                Err(error) => {
-                                    this.task_palette.fail_loading(error, cx);
-                                }
+                            }
+
+                            if this.task_palette_refresh_pending && this.task_palette.is_open() {
+                                this.refresh_task_palette(cx);
                             }
                             this.ui_updates.bump();
                         });
@@ -1032,7 +1057,45 @@ impl RootView {
         self.workspace_pane.update(cx, move |pane, cx| {
             pane.set_selected_epic(Some(slug_for_workspace), selected, cx)
         });
+        if self.task_palette.is_open() {
+            self.refresh_task_palette(cx);
+        }
         self.focus_desktop_root(cx);
+        self.notify_ui_updated(cx);
+    }
+
+    fn show_chrome_notice(
+        &mut self,
+        title: SharedString,
+        message: SharedString,
+        kind: CalloutKind,
+        cx: &mut Context<Self>,
+    ) {
+        self.chrome.notice_epoch = self.chrome.notice_epoch.saturating_add(1);
+        let notice_epoch = self.chrome.notice_epoch;
+        self.chrome.notice = Some(ChromeNotice {
+            title,
+            message,
+            kind,
+        });
+
+        self.chrome.notice_task =
+            Some(cx.spawn(move |root: WeakEntity<Self>, cx: &mut AsyncApp| {
+                let cx = cx.clone();
+                async move {
+                    gpui::Timer::after(Duration::from_millis(2600)).await;
+                    let _ = cx.update(|cx| {
+                        let _ = root.update(cx, |this, cx| {
+                            if this.chrome.notice_epoch != notice_epoch {
+                                return;
+                            }
+                            this.chrome.notice = None;
+                            this.chrome.notice_task = None;
+                            this.notify_ui_updated(cx);
+                        });
+                    });
+                }
+            }));
         self.notify_ui_updated(cx);
     }
 
@@ -3780,6 +3843,20 @@ impl Render for RootView {
             .render(&root, settings_open, window, cx)
         {
             root_container = root_container.child(dialog);
+        }
+        if let Some(notice) = self.chrome.notice.clone() {
+            root_container = root_container.child(
+                div()
+                    .absolute()
+                    .right(theme.spacing.md)
+                    .bottom(theme.spacing.md)
+                    .w(px(420.0))
+                    .child(
+                        Callout::new(notice.message)
+                            .kind(notice.kind)
+                            .title(notice.title),
+                    ),
+            );
         }
 
         root_container
@@ -7559,6 +7636,9 @@ struct ChromeState {
     refresh: UserActionState,
     refresh_task: Option<Task<()>>,
     theme_error: Option<SharedString>,
+    notice: Option<ChromeNotice>,
+    notice_task: Option<Task<()>>,
+    notice_epoch: u64,
     epic_scroll: ScrollHandle,
 }
 
@@ -7574,7 +7654,17 @@ impl ChromeState {
             refresh: UserActionState::default(),
             refresh_task: None,
             theme_error: None,
+            notice: None,
+            notice_task: None,
+            notice_epoch: 0,
             epic_scroll: ScrollHandle::new(),
         }
     }
+}
+
+#[derive(Clone, Debug)]
+struct ChromeNotice {
+    title: SharedString,
+    message: SharedString,
+    kind: CalloutKind,
 }
