@@ -3210,7 +3210,7 @@ impl Render for GraphView {
                                                             .flex()
                                                             .flex_row()
                                                             .items_center()
-                                                            .rounded(theme.radius.md)
+                                                            .rounded(theme.radius.sm)
                                                             .border_1()
                                                             .border_color(
                                                                 theme.colors.border.opacity(0.55),
@@ -3230,8 +3230,8 @@ impl Render for GraphView {
                                                                     .flex_row()
                                                                     .items_center()
                                                                     .gap(theme.spacing.xs)
-                                                                    .px(theme.spacing.sm)
-                                                                    .py(px(3.0))
+                                                                    .px(theme.spacing.xs)
+                                                                    .py(px(2.0))
                                                                     .text_xs()
                                                                     .text_color(
                                                                         if active_tab
@@ -3265,12 +3265,6 @@ impl Render for GraphView {
                                                                         },
                                                                     )
                                                                     .cursor_pointer()
-                                                                    .tooltip(|_, cx| {
-                                                                        cx.new(|_| {
-                                                                            Tooltip::new("Shortcut: Cmd/Ctrl+1")
-                                                                        })
-                                                                        .into()
-                                                                    })
                                                                     .on_click({
                                                                         let graph = graph.clone();
                                                                         move |event, _window, cx| {
@@ -3288,8 +3282,8 @@ impl Render for GraphView {
                                                                     .child("Session")
                                                                     .child(
                                                                         div()
-                                                                            .px(px(4.0))
-                                                                            .py(px(1.0))
+                                                                            .px(px(3.0))
+                                                                            .py(px(0.0))
                                                                             .rounded(theme.radius.sm)
                                                                             .bg(theme.colors.surface_elevated.opacity(0.42))
                                                                             .border_1()
@@ -3298,7 +3292,7 @@ impl Render for GraphView {
                                                                             )
                                                                             .text_xs()
                                                                             .text_color(theme.colors.foreground_muted)
-                                                                            .child("⌘/⌃1"),
+                                                                            .child("⌘1"),
                                                                     ),
                                                             )
                                                             .child(
@@ -3314,8 +3308,8 @@ impl Render for GraphView {
                                                                     .flex_row()
                                                                     .items_center()
                                                                     .gap(theme.spacing.xs)
-                                                                    .px(theme.spacing.sm)
-                                                                    .py(px(3.0))
+                                                                    .px(theme.spacing.xs)
+                                                                    .py(px(2.0))
                                                                     .text_xs()
                                                                     .text_color(
                                                                         if active_tab
@@ -3353,12 +3347,6 @@ impl Render for GraphView {
                                                                         },
                                                                     )
                                                                     .cursor_pointer()
-                                                                    .tooltip(|_, cx| {
-                                                                        cx.new(|_| {
-                                                                            Tooltip::new("Shortcut: Cmd/Ctrl+2")
-                                                                        })
-                                                                        .into()
-                                                                    })
                                                                     .on_click({
                                                                         let graph = graph.clone();
                                                                         move |event, _window, cx| {
@@ -3376,8 +3364,8 @@ impl Render for GraphView {
                                                                     .child("README")
                                                                     .child(
                                                                         div()
-                                                                            .px(px(4.0))
-                                                                            .py(px(1.0))
+                                                                            .px(px(3.0))
+                                                                            .py(px(0.0))
                                                                             .rounded(theme.radius.sm)
                                                                             .bg(theme.colors.surface_elevated.opacity(0.42))
                                                                             .border_1()
@@ -3386,7 +3374,7 @@ impl Render for GraphView {
                                                                             )
                                                                             .text_xs()
                                                                             .text_color(theme.colors.foreground_muted)
-                                                                            .child("⌘/⌃2"),
+                                                                            .child("⌘2"),
                                                                     ),
                                                             ),
                                                     )
