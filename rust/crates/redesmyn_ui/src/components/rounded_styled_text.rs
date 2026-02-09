@@ -1,10 +1,10 @@
 use std::{cell::RefCell, cmp::Ordering, collections::HashMap, ops::Range, rc::Rc, sync::Arc};
 
 use gpui::{
-    fill, point, px, size, App, AvailableSpace, Bounds, ClipboardItem, CursorStyle, DispatchPhase,
-    Element, ElementId, EntityId, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId,
-    KeyDownEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Point, SharedString, Size, TextAlign, TextRun, WhiteSpace, Window,
+    App, AvailableSpace, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Element, ElementId,
+    EntityId, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, KeyDownEvent, LayoutId,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size,
+    TextAlign, TextRun, WhiteSpace, Window, fill, point, px, size,
 };
 
 use crate::utils::theme_for_window;
@@ -238,6 +238,14 @@ impl RoundedTextSelectionGlobal {
         }
 
         Some(output)
+    }
+
+    fn selected_copy_text_for_active_view(&self, view_id: EntityId) -> Option<String> {
+        let active = self.active.as_ref()?;
+        if active.key.view_id != view_id {
+            return None;
+        }
+        self.selected_copy_text_for_key(&active.key)
     }
 }
 
@@ -736,6 +744,26 @@ fn is_copy_keystroke(event: &KeyDownEvent) -> bool {
     let modifiers = &event.keystroke.modifiers;
     let has_primary_modifier = modifiers.platform || modifiers.control;
     has_primary_modifier && !modifiers.alt && !modifiers.function && event.keystroke.key == "c"
+}
+
+pub fn copy_active_rounded_text_selection(
+    event: &KeyDownEvent,
+    window: &mut Window,
+    cx: &mut App,
+) -> bool {
+    if !is_copy_keystroke(event) || window.default_prevented() {
+        return false;
+    }
+
+    let view_id = window.current_view();
+    let global = cx.default_global::<RoundedTextSelectionGlobal>();
+    let Some(copy_text) = global.selected_copy_text_for_active_view(view_id) else {
+        return false;
+    };
+
+    cx.write_to_clipboard(ClipboardItem::new_string(copy_text));
+    window.prevent_default();
+    true
 }
 
 fn copy_text_for_range(

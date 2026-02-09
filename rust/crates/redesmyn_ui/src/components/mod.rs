@@ -32,7 +32,9 @@ pub use expandable::Expandable;
 pub use markdown::{MarkdownInlineSingleLineContent, MarkdownInlineSingleLineView, MarkdownView};
 pub use overlay_surface::{OverlaySurfaceKind, overlay_surface};
 pub use progress::{ProgressPill, ProgressPillKind};
-pub use rounded_styled_text::{RoundedBackgroundStyle, RoundedStyledText};
+pub use rounded_styled_text::{
+    RoundedBackgroundStyle, RoundedStyledText, copy_active_rounded_text_selection,
+};
 pub use scroll_area::ScrollArea;
 pub use scroll_fade::ScrollFade;
 pub use select::{Select, SelectOption};

@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
 use gpui::{
-    div, px, AbsoluteLength, AnyElement, App, ClickEvent, ClipboardItem, ElementId, FontStyle,
-    FontWeight, Hsla, RenderOnce, ScrollHandle, TextRun, UnderlineStyle, Window,
+    AbsoluteLength, AnyElement, App, ClickEvent, ClipboardItem, ElementId, FontStyle, FontWeight,
+    Hsla, RenderOnce, ScrollHandle, TextRun, UnderlineStyle, Window, div, px,
 };
 
 use gpui::prelude::*;
 
 use redesmyn_markdown::{MarkdownBlock, MarkdownDoc, MarkdownInline};
 
-use crate::utils::{theme_for_window, OpenExternalUrl as _};
+use crate::utils::{OpenExternalUrl as _, theme_for_window};
 
 use super::rounded_styled_text::RoundedTextCopySpan;
 use super::{
