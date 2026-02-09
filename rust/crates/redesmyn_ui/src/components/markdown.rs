@@ -928,121 +928,16 @@ fn styled_text_div(
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
-    let selectable = matches!(flavor, TextFlavor::Body(_));
-    let theme = theme_for_window(window, cx);
-    let code_bg = match theme.mode {
-        crate::styles::ThemeMode::Dark => {
-            // In dark mode we invert user message bubbles (light background + dark text). Use a
-            // darker chip background there so inline code remains visible.
-            if base_text_color == theme.colors.surface {
-                theme.colors.border.opacity(0.45)
-            } else {
-                theme.colors.accent_foreground.opacity(0.12)
-            }
-        }
-        crate::styles::ThemeMode::Light => {
-            if base_text_color == theme.colors.surface {
-                theme.colors.border.opacity(0.35)
-            } else {
-                theme.colors.accent.opacity(0.65)
-            }
-        }
-    };
-    let mut text = String::new();
-    let mut runs = Vec::new();
-    let mut copy_spans: Vec<RoundedTextCopySpan> = Vec::new();
-
-    let (default_color, underline) = match flavor {
-        TextFlavor::Body(color) => (color, None),
-        TextFlavor::Link(color) => (
-            color,
-            Some(UnderlineStyle {
-                color: Some(color),
-                thickness: px(1.0),
-                wavy: false,
-            }),
-        ),
-    };
-
-    let code_color = if base_text_color == theme.colors.surface {
-        default_color.blend(theme.colors.foreground_muted.alpha(0.25))
-    } else {
-        default_color.blend(theme.colors.foreground_muted.alpha(0.45))
-    };
-
-    for atom in atoms {
-        if atom.text.is_empty() {
-            continue;
-        }
-
-        let InlineAtom {
-            text: atom_text,
-            style: atom_style,
-            link,
-        } = atom;
-
-        let mut font = if atom_style.code {
-            theme.typography.mono.font.clone()
-        } else {
-            theme.typography.body.font.clone()
-        };
-
-        if atom_style.bold {
-            font.weight = FontWeight::BOLD;
-        }
-        if atom_style.italic {
-            font.style = FontStyle::Italic;
-        }
-
-        let background_color = atom_style.code.then_some(code_bg);
-        let color = if atom_style.code {
-            code_color
-        } else {
-            default_color
-        };
-
-        runs.push(TextRun {
-            len: atom_text.len(),
-            font,
-            color,
-            background_color,
-            underline,
-            strikethrough: None,
-        });
-        let start = text.len();
-        text.push_str(&atom_text);
-        let end = text.len();
-        if selectable {
-            let copy_prefix = if copy_spans.is_empty() {
-                copy_prefix.as_deref()
-            } else {
-                None
-            };
-            copy_spans.push(RoundedTextCopySpan {
-                range: start..end,
-                markdown: atom_markdown_text(&atom_text, atom_style, link.as_deref(), copy_prefix)
-                    .into(),
-            });
-        }
-    }
-
-    let mut text_element = RoundedStyledText::new(text)
-        .id((id.clone(), "text"))
-        .with_runs(runs)
-        .background_style(RoundedBackgroundStyle {
-            corner_radius: theme.radius.sm,
-            trim_horizontal: true,
-            padding_x: px(5.0),
-            padding_y: px(2.5),
-            ..Default::default()
-        });
-    if selectable {
-        text_element = text_element
-            .selectable(true)
-            .selection_scope(selection_scope.clone())
-            .copy_spans(copy_spans);
-    }
-
+    let text_element = build_rounded_styled_text_element(
+        &id,
+        atoms,
+        flavor,
+        base_text_color,
+        selection_scope,
+        copy_prefix,
+        window,
+        cx,
+    );
     div().id(id).min_w_0().flex_shrink().child(text_element)
 }
 
@@ -1056,9 +951,32 @@ fn styled_text_block(
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
-    let selectable = matches!(flavor, TextFlavor::Body(_));
     // Similar to `styled_text_div`, but forces the line to take full width (which helps keep GPUI's
     // layout stable when inline spans mix styles).
+    let text_element = build_rounded_styled_text_element(
+        &id,
+        atoms,
+        flavor,
+        base_text_color,
+        selection_scope,
+        copy_prefix,
+        window,
+        cx,
+    );
+    div().id(id).min_w_0().w_full().child(text_element)
+}
+
+fn build_rounded_styled_text_element(
+    id: &ElementId,
+    atoms: Vec<InlineAtom>,
+    flavor: TextFlavor,
+    base_text_color: Hsla,
+    selection_scope: &ElementId,
+    copy_prefix: Option<String>,
+    window: &mut Window,
+    cx: &mut App,
+) -> RoundedStyledText {
+    let selectable = matches!(flavor, TextFlavor::Body(_));
     let theme = theme_for_window(window, cx);
     let code_bg = match theme.mode {
         crate::styles::ThemeMode::Dark => {
@@ -1173,7 +1091,7 @@ fn styled_text_block(
             .copy_spans(copy_spans);
     }
 
-    div().id(id).min_w_0().w_full().child(text_element)
+    text_element
 }
 
 enum InlineItem {

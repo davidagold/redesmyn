@@ -363,6 +363,12 @@ impl RoundedTextSelectionGlobal {
             previous_top = Some(piece.top);
         }
 
+        // Some markdown copy spans encode block separators (for example list -> paragraph). When a
+        // selection starts at the separator target block, drop that synthetic leading separator.
+        if output.starts_with('\n') {
+            output.remove(0);
+        }
+
         Some(output)
     }
 
