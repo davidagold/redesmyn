@@ -4409,16 +4409,6 @@ fn merge_readiness_badge(readiness: MergeReadiness) -> impl IntoElement {
     )
 }
 
-fn agent_status_value_label(status: AgentStatus) -> &'static str {
-    match status {
-        AgentStatus::Running => "Running",
-        AgentStatus::Blocked => "Blocked",
-        AgentStatus::Stopped => "Stopped",
-        AgentStatus::Error => "Error",
-        AgentStatus::Unknown => "Unknown",
-    }
-}
-
 fn task_status_chips(
     state: TaskState,
     merge_readiness: MergeReadiness,
@@ -4429,7 +4419,7 @@ fn task_status_chips(
     div()
         .flex()
         .flex_row()
-        .gap(theme.spacing.xs)
+        .gap(theme.spacing.sm)
         .items_center()
         .child(task_state_badge(state))
         .child(merge_readiness_badge(merge_readiness))
@@ -4438,7 +4428,6 @@ fn task_status_chips(
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(theme.spacing.xs)
                 .child(agent_status_dot_from_key(
                     AgentStatusDotVisualKey {
                         task_state: state,
@@ -4448,12 +4437,6 @@ fn task_status_chips(
                     theme,
                     1.0,
                 ))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.colors.foreground_muted)
-                        .child(agent_status_value_label(agent_status)),
-                ),
         )
 }
 
