@@ -53,6 +53,12 @@ decision-maker for orchestration, while the controller provides deterministic wa
 - Event emission comes from normal command handling paths; no separate intent-runner is required for v0.
 - Controller responsibilities are wakeup, delivery, dedupe/coalescing, and lifecycle coordination.
 
+Notes:
+
+- Director-requested changes commonly require messaging a task agent. v0 supports this by routing through the
+  control plane (e.g. `rn task send --intent request_changes`) so the message and any resulting command
+  outcomes are durable and observable.
+
 ### 2.4 Merge queue: explicit, human-steerable
 
 The director operates on an explicit merge queue that supports:
@@ -163,6 +169,7 @@ The following is intentionally deferred beyond director-v0:
 - `epics/director-v0/tasks/T-5/README.md`: Director mode session UX (activation + pause/send + steer).
 - `epics/director-v0/tasks/T-6/README.md`: Director mode lifecycle + merge authority policy surfaces.
 - `epics/director-v0/tasks/T-7/README.md`: Direction overlay + queue projections.
+- `epics/director-v0/tasks/T-8/README.md`: Task agent messaging + history (rn surfaces).
 
 ## 6) Sequencing intent (parallelizable)
 
