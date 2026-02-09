@@ -321,7 +321,7 @@ impl RoundedTextSelectionGlobal {
             return None;
         }
 
-        let mut pieces = self
+        let pieces = self
             .elements
             .iter()
             .filter(|(id, _)| &id.key == key)
@@ -339,37 +339,7 @@ impl RoundedTextSelectionGlobal {
                 })
             })
             .collect::<Vec<_>>();
-
-        if pieces.is_empty() {
-            return None;
-        }
-
-        pieces.sort_by(|a, b| {
-            a.top
-                .partial_cmp(&b.top)
-                .unwrap_or(Ordering::Equal)
-                .then_with(|| a.left.partial_cmp(&b.left).unwrap_or(Ordering::Equal))
-        });
-
-        let mut output = String::new();
-        let mut previous_top = None;
-        for piece in pieces {
-            if let Some(prev_top) = previous_top
-                && (piece.top < prev_top - px(0.5) || piece.top > prev_top + px(0.5))
-            {
-                output.push('\n');
-            }
-            output.push_str(&piece.text);
-            previous_top = Some(piece.top);
-        }
-
-        // Some markdown copy spans encode block separators (for example list -> paragraph). When a
-        // selection starts at the separator target block, drop that synthetic leading separator.
-        if output.starts_with('\n') {
-            output.remove(0);
-        }
-
-        Some(output)
+        assemble_selected_copy_text(pieces)
     }
 
     fn selected_copy_text_for_active(&self) -> Option<String> {
@@ -382,6 +352,42 @@ struct RegisteredSelectionPiece {
     top: Pixels,
     left: Pixels,
     text: String,
+}
+
+fn assemble_selected_copy_text(mut pieces: Vec<RegisteredSelectionPiece>) -> Option<String> {
+    if pieces.is_empty() {
+        return None;
+    }
+
+    pieces.sort_by(|a, b| {
+        a.top
+            .partial_cmp(&b.top)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| a.left.partial_cmp(&b.left).unwrap_or(Ordering::Equal))
+    });
+
+    let mut output = String::new();
+    let mut previous_top = None;
+    for piece in pieces {
+        if let Some(prev_top) = previous_top
+            && (piece.top < prev_top - px(0.5) || piece.top > prev_top + px(0.5))
+        {
+            output.push('\n');
+        }
+        output.push_str(&piece.text);
+        previous_top = Some(piece.top);
+    }
+
+    trim_synthetic_leading_separator(&mut output);
+    Some(output)
+}
+
+fn trim_synthetic_leading_separator(output: &mut String) {
+    // Some markdown copy spans encode block separators (for example list -> paragraph). When a
+    // selection starts at the separator target block, drop that synthetic leading separator.
+    if output.starts_with('\n') {
+        output.remove(0);
+    }
 }
 
 fn compare_element_positions(a: Point<Pixels>, b: Point<Pixels>) -> Ordering {
@@ -981,6 +987,71 @@ fn copy_text_for_range(
     }
 
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn assemble_selected_copy_text_sorts_by_position() {
+        let output = assemble_selected_copy_text(vec![
+            RegisteredSelectionPiece {
+                top: px(20.0),
+                left: px(5.0),
+                text: "second".to_string(),
+            },
+            RegisteredSelectionPiece {
+                top: px(10.0),
+                left: px(5.0),
+                text: "first".to_string(),
+            },
+        ]);
+
+        assert_eq!(output.as_deref(), Some("first\nsecond"));
+    }
+
+    #[test]
+    fn assemble_selected_copy_text_trims_synthetic_leading_separator() {
+        let output = assemble_selected_copy_text(vec![RegisteredSelectionPiece {
+            top: px(10.0),
+            left: px(5.0),
+            text: "\nThanks".to_string(),
+        }]);
+
+        assert_eq!(output.as_deref(), Some("Thanks"));
+    }
+
+    #[test]
+    fn trim_synthetic_leading_separator_only_removes_one_newline() {
+        let mut output = "\n\nafter".to_string();
+        trim_synthetic_leading_separator(&mut output);
+        assert_eq!(output, "\nafter");
+    }
+
+    #[test]
+    fn copy_text_for_range_prefers_markdown_for_full_span_selection() {
+        let text = "abc";
+        let copy_spans = vec![RoundedTextCopySpan {
+            range: 0..3,
+            markdown: "**abc**".into(),
+        }];
+
+        let copied = copy_text_for_range(text, 0..3, Some(&copy_spans));
+        assert_eq!(copied, "**abc**");
+    }
+
+    #[test]
+    fn copy_text_for_range_uses_plain_text_for_partial_span_selection() {
+        let text = "abc";
+        let copy_spans = vec![RoundedTextCopySpan {
+            range: 0..3,
+            markdown: "**abc**".into(),
+        }];
+
+        let copied = copy_text_for_range(text, 1..3, Some(&copy_spans));
+        assert_eq!(copied, "bc");
+    }
 }
 
 fn compute_background_spans(runs: &[TextRun]) -> Vec<BackgroundSpan> {

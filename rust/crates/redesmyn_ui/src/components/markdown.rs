@@ -728,12 +728,7 @@ fn render_inline_segments(
         let mut next_chunk_copy_prefix = line_copy_prefix;
         for (chunk_ix, chunk) in chunks.into_iter().enumerate() {
             let chunk_id: ElementId = (line_id.clone(), format!("chunk-{chunk_ix}")).into();
-            let chunk_copy_prefix =
-                if next_chunk_copy_prefix.is_some() && matches!(chunk, InlineChunk::Text(_)) {
-                    next_chunk_copy_prefix.take()
-                } else {
-                    None
-                };
+            let chunk_copy_prefix = take_chunk_copy_prefix(&mut next_chunk_copy_prefix, &chunk);
             line = line.child(render_inline_chunk(
                 chunk_id,
                 chunk,
@@ -750,6 +745,17 @@ fn render_inline_segments(
     }
 
     flow.into_any_element()
+}
+
+fn take_chunk_copy_prefix(
+    next_chunk_copy_prefix: &mut Option<String>,
+    chunk: &InlineChunk,
+) -> Option<String> {
+    if next_chunk_copy_prefix.is_some() && matches!(chunk, InlineChunk::Text(_)) {
+        next_chunk_copy_prefix.take()
+    } else {
+        None
+    }
 }
 
 fn split_inline_items_into_lines(items: Vec<InlineItem>) -> Vec<Vec<InlineAtom>> {
@@ -1288,5 +1294,82 @@ impl CodeBlockView {
             .border_color(theme.colors.border.opacity(0.6))
             .child(header)
             .child(body)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn list_block() -> MarkdownBlock {
+        MarkdownBlock::List {
+            range: None,
+            ordered: false,
+            start: None,
+            items: vec![],
+        }
+    }
+
+    fn paragraph_block() -> MarkdownBlock {
+        MarkdownBlock::Paragraph {
+            range: None,
+            content: vec![],
+        }
+    }
+
+    #[test]
+    fn block_separator_added_after_list_to_non_list() {
+        assert!(needs_extra_block_separator(
+            &list_block(),
+            &paragraph_block()
+        ));
+    }
+
+    #[test]
+    fn block_separator_not_added_between_adjacent_lists() {
+        assert!(!needs_extra_block_separator(&list_block(), &list_block()));
+    }
+
+    #[test]
+    fn block_separator_not_added_before_list() {
+        assert!(!needs_extra_block_separator(
+            &paragraph_block(),
+            &list_block()
+        ));
+    }
+
+    #[test]
+    fn list_marker_prefix_uses_depth_indent() {
+        let prefixes = CopyLinePrefixes::for_list_marker(2, "3.");
+        assert_eq!(prefixes.first_line.as_deref(), Some("    3. "));
+        let continuation = " ".repeat("    3. ".len());
+        assert_eq!(
+            prefixes.continuation.as_deref(),
+            Some(continuation.as_str())
+        );
+    }
+
+    #[test]
+    fn list_marker_prefix_can_prepend_separator() {
+        let prefixes = CopyLinePrefixes::for_list_marker(0, "-").prepend_first_line("\n");
+        assert_eq!(prefixes.first_line.as_deref(), Some("\n- "));
+    }
+
+    #[test]
+    fn chunk_copy_prefix_skips_link_then_applies_to_next_text_chunk() {
+        let mut next_prefix = Some("  - ".to_string());
+        let link_chunk = InlineChunk::Link {
+            destination: "https://example.com".to_string(),
+            atoms: vec![],
+        };
+        assert_eq!(take_chunk_copy_prefix(&mut next_prefix, &link_chunk), None);
+        assert_eq!(next_prefix.as_deref(), Some("  - "));
+
+        let text_chunk = InlineChunk::Text(vec![]);
+        assert_eq!(
+            take_chunk_copy_prefix(&mut next_prefix, &text_chunk).as_deref(),
+            Some("  - ")
+        );
+        assert!(next_prefix.is_none());
     }
 }
