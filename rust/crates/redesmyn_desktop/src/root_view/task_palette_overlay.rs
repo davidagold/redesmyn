@@ -717,20 +717,25 @@ fn render_task_row(
                 .justify_between()
                 .gap(theme.spacing.sm)
                 .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.colors.foreground)
-                        .child(entry.primary_label()),
+                    div().min_w_0().flex_1().child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.colors.foreground)
+                            .truncate()
+                            .child(entry.primary_label()),
+                    ),
                 )
                 .child(
                     div()
                         .text_xs()
+                        .flex_none()
                         .text_color(theme.colors.foreground_muted)
                         .child(task_state_label(entry.task_state)),
                 ),
         )
         .child(
             div()
+                .truncate()
                 .text_xs()
                 .text_color(theme.colors.foreground_muted)
                 .child(entry.subtitle()),
