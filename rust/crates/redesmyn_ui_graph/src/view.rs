@@ -3076,7 +3076,6 @@ impl Render for GraphView {
 
                     let right_scroll = self.expanded_details_scroll.clone();
                     let latest_session = node.latest_session.clone();
-                    let latest_command = node.latest_command.clone();
                     let description_state = self.selected_task_description.clone();
                     let active_tab = self.expanded_task_tab;
                     let task_id = match node_id {
@@ -3115,65 +3114,12 @@ impl Render for GraphView {
                             .child(
                                 div()
                                     .px(theme.spacing.md)
-                                    .py(theme.spacing.md)
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .justify_between()
-                                    .bg(theme.colors.background.opacity(0.78))
-                                    .border_b_1()
-                                    .border_color(theme.colors.border.opacity(0.5))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_col()
-                                            .min_w_0()
-                                            .gap(px(2.0))
-                                            .child(
-                                                div()
-                                                    .text_sm()
-                                                    .text_color(theme.colors.foreground)
-                                                    .truncate()
-                                                    .child(title.clone()),
-                                            )
-                                            .when(show_task_slug, |this| {
-                                                this.child(
-                                                    div()
-                                                        .text_xs()
-                                                        .text_color(theme.colors.foreground_muted)
-                                                        .truncate()
-                                                        .child(task_slug),
-                                                )
-                                            }),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_row()
-                                            .items_center()
-                                            .gap(theme.spacing.md)
-                                            .child(task_status_chips(
-                                                state,
-                                                merge_readiness,
-                                                agent_status,
-                                                task_session_state.session_id.is_some(),
-                                                &theme,
-                                            ))
-                                            .child(
-                                                IconButton::new(close_button_id, div().child("×"))
-                                                    .tooltip("Collapse")
-                                                    .on_click(collapse),
-                                            ),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .px(theme.spacing.md)
-                                    .py(theme.spacing.sm)
+                                    .pt(theme.spacing.sm)
+                                    .pb(theme.spacing.xs)
                                     .flex()
                                     .flex_col()
-                                    .gap(theme.spacing.sm)
-                                    .bg(theme.colors.background.opacity(0.72))
+                                    .gap(theme.spacing.xs)
+                                    .bg(theme.colors.background.opacity(0.76))
                                     .border_b_1()
                                     .border_color(theme.colors.border.opacity(0.45))
                                     .child(
@@ -3182,13 +3128,66 @@ impl Render for GraphView {
                                             .flex_row()
                                             .items_center()
                                             .justify_between()
-                                            .gap(theme.spacing.md)
+                                            .gap(theme.spacing.sm)
                                             .child(
                                                 div()
                                                     .flex()
-                                                    .flex_col()
+                                                    .flex_row()
+                                                    .items_baseline()
+                                                    .gap(theme.spacing.sm)
                                                     .min_w_0()
-                                                    .gap(px(2.0))
+                                                    .child(
+                                                        div()
+                                                            .text_sm()
+                                                            .text_color(theme.colors.foreground)
+                                                            .truncate()
+                                                            .child(title.clone()),
+                                                    )
+                                                    .when(show_task_slug, |this| {
+                                                        this.child(
+                                                            div()
+                                                                .text_xs()
+                                                                .text_color(
+                                                                    theme.colors.foreground_muted,
+                                                                )
+                                                                .truncate()
+                                                                .child(task_slug.clone()),
+                                                        )
+                                                    }),
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .flex_row()
+                                                    .items_center()
+                                                    .gap(theme.spacing.md)
+                                                    .child(task_status_chips(
+                                                        state,
+                                                        merge_readiness,
+                                                        agent_status,
+                                                        task_session_state.session_id.is_some(),
+                                                        &theme,
+                                                    ))
+                                                    .child(
+                                                        IconButton::new(
+                                                            close_button_id,
+                                                            div().child("×"),
+                                                        )
+                                                        .tooltip("Collapse")
+                                                        .on_click(collapse),
+                                                    ),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_row()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap(theme.spacing.sm)
+                                            .child(
+                                                div()
+                                                    .min_w_0()
                                                     .when_some(branch_name.clone(), |this, name| {
                                                         this.child(
                                                             div()
@@ -3198,21 +3197,7 @@ impl Render for GraphView {
                                                                 .truncate()
                                                                 .child(name),
                                                         )
-                                                    })
-                                                    .when_some(
-                                                        latest_command
-                                                            .clone()
-                                                            .and_then(|command| command.last_message),
-                                                        |this, message| {
-                                                            this.child(
-                                                                div()
-                                                                    .text_xs()
-                                                                    .text_color(theme.colors.foreground_muted)
-                                                                    .truncate()
-                                                                    .child(message),
-                                                            )
-                                                        },
-                                                    ),
+                                                    }),
                                             )
                                             .child(
                                                 div()
@@ -3220,116 +3205,211 @@ impl Render for GraphView {
                                                     .flex_row()
                                                     .items_center()
                                                     .gap(theme.spacing.sm)
-                                                    .when(show_start, |this| {
-                                                        let button_id = (
-                                                            gpui::ElementId::from((
-                                                                "task_card_action_start",
-                                                                entity_id,
-                                                            )),
-                                                            node_key.clone(),
-                                                        );
-                                                        let graph = graph.clone();
-                                                        this.child(
-                                                            TextButton::new(button_id, "Start agent")
-                                                                .kind(ButtonKind::Ghost)
+                                                    .child(
+                                                        div()
+                                                            .flex()
+                                                            .flex_row()
+                                                            .items_center()
+                                                            .gap(theme.spacing.xs)
+                                                            .child(
+                                                                TextButton::new(
+                                                                    (
+                                                                        gpui::ElementId::from((
+                                                                            "task_card_tab_session",
+                                                                            entity_id,
+                                                                        )),
+                                                                        node_key.clone(),
+                                                                    ),
+                                                                    "Session",
+                                                                )
+                                                                .kind(if active_tab
+                                                                    == ExpandedTaskTab::Session
+                                                                {
+                                                                    ButtonKind::Secondary
+                                                                } else {
+                                                                    ButtonKind::Ghost
+                                                                })
                                                                 .small()
-                                                                .disabled(start_disabled)
-                                                                .disabled_reason("Starting…")
-                                                                .on_click(move |event, _window, cx| {
-                                                                    if event.standard_click() {
-                                                                        graph.update(cx, |this, cx| {
-                                                                            this.trigger_task_quick_action(
-                                                                                task_id,
-                                                                                TaskQuickActionKind::Start,
-                                                                                cx,
-                                                                            );
-                                                                        });
+                                                                .tooltip("Shortcut: Cmd/Ctrl+1")
+                                                                .on_click({
+                                                                    let graph = graph.clone();
+                                                                    move |event, _window, cx| {
+                                                                        if event.standard_click() {
+                                                                            graph.update(cx, |this, cx| {
+                                                                                this.set_expanded_task_tab(
+                                                                                    ExpandedTaskTab::Session,
+                                                                                    cx,
+                                                                                );
+                                                                            });
+                                                                        }
+                                                                        cx.stop_propagation();
                                                                     }
-                                                                    cx.stop_propagation();
                                                                 }),
-                                                        )
-                                                    })
-                                                    .when(show_restart, |this| {
-                                                        let button_id = (
-                                                            gpui::ElementId::from((
-                                                                "task_card_action_restart",
-                                                                entity_id,
-                                                            )),
-                                                            node_key.clone(),
-                                                        );
-                                                        let graph = graph.clone();
-                                                        this.child(
-                                                            TextButton::new(button_id, "Restart")
-                                                                .kind(ButtonKind::Ghost)
-                                                                .small()
-                                                                .disabled(restart_disabled)
-                                                                .disabled_reason("Restarting…")
-                                                                .on_click(move |event, _window, cx| {
-                                                                    if event.standard_click() {
-                                                                        graph.update(cx, |this, cx| {
-                                                                            this.trigger_task_quick_action(
-                                                                                task_id,
-                                                                                TaskQuickActionKind::Restart,
-                                                                                cx,
-                                                                            );
-                                                                        });
-                                                                    }
-                                                                    cx.stop_propagation();
-                                                                }),
-                                                        )
-                                                    })
-                                                    .when(show_stop, |this| {
-                                                        let button_id = (
-                                                            gpui::ElementId::from((
-                                                                "task_card_action_stop",
-                                                                entity_id,
-                                                            )),
-                                                            node_key.clone(),
-                                                        );
-                                                        let graph = graph.clone();
-                                                        this.child(
-                                                            TextButton::new(button_id, "Stop")
-                                                                .kind(ButtonKind::Ghost)
-                                                                .small()
-                                                                .disabled(stop_disabled)
-                                                                .disabled_reason("Stopping…")
-                                                                .on_click(move |event, _window, cx| {
-                                                                    if event.standard_click() {
-                                                                        graph.update(cx, |this, cx| {
-                                                                            this.trigger_task_quick_action(
-                                                                                task_id,
-                                                                                TaskQuickActionKind::Stop,
-                                                                                cx,
-                                                                            );
-                                                                        });
-                                                                    }
-                                                                    cx.stop_propagation();
-                                                                }),
-                                                        )
-                                                    })
-                                                    .when(
-                                                        action_state.is_some_and(|state| {
-                                                            state.start.in_flight
-                                                                || state.restart.in_flight
-                                                                || state.stop.in_flight
-                                                        }),
-                                                        |this| {
-                                                            let label = if action_state
-                                                                .is_some_and(|state| state.start.in_flight)
-                                                            {
-                                                                "Starting"
-                                                            } else if action_state
-                                                                .is_some_and(|state| state.restart.in_flight)
-                                                            {
-                                                                "Restarting"
-                                                            } else {
-                                                                "Stopping"
-                                                            };
-                                                            this.child(
-                                                                ProgressPill::new(label)
-                                                                    .kind(ProgressPillKind::Accent),
                                                             )
-                                                        },
+                                                            .child(
+                                                                TextButton::new(
+                                                                    (
+                                                                        gpui::ElementId::from((
+                                                                            "task_card_tab_readme",
+                                                                            entity_id,
+                                                                        )),
+                                                                        node_key.clone(),
+                                                                    ),
+                                                                    "README",
+                                                                )
+                                                                .kind(if active_tab
+                                                                    == ExpandedTaskTab::Readme
+                                                                {
+                                                                    ButtonKind::Secondary
+                                                                } else {
+                                                                    ButtonKind::Ghost
+                                                                })
+                                                                .small()
+                                                                .tooltip("Shortcut: Cmd/Ctrl+2")
+                                                                .on_click({
+                                                                    let graph = graph.clone();
+                                                                    move |event, _window, cx| {
+                                                                        if event.standard_click() {
+                                                                            graph.update(cx, |this, cx| {
+                                                                                this.set_expanded_task_tab(
+                                                                                    ExpandedTaskTab::Readme,
+                                                                                    cx,
+                                                                                );
+                                                                            });
+                                                                        }
+                                                                        cx.stop_propagation();
+                                                                    }
+                                                                }),
+                                                            ),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .flex()
+                                                            .flex_row()
+                                                            .items_center()
+                                                            .gap(theme.spacing.xs)
+                                                            .when(show_start, |this| {
+                                                                let button_id = (
+                                                                    gpui::ElementId::from((
+                                                                        "task_card_action_start",
+                                                                        entity_id,
+                                                                    )),
+                                                                    node_key.clone(),
+                                                                );
+                                                                let graph = graph.clone();
+                                                                this.child(
+                                                                    TextButton::new(
+                                                                        button_id,
+                                                                        "Start agent",
+                                                                    )
+                                                                    .kind(ButtonKind::Ghost)
+                                                                    .small()
+                                                                    .disabled(start_disabled)
+                                                                    .disabled_reason("Starting…")
+                                                                    .on_click(
+                                                                        move |event, _window, cx| {
+                                                                            if event.standard_click() {
+                                                                                graph.update(cx, |this, cx| {
+                                                                                    this.trigger_task_quick_action(
+                                                                                        task_id,
+                                                                                        TaskQuickActionKind::Start,
+                                                                                        cx,
+                                                                                    );
+                                                                                });
+                                                                            }
+                                                                            cx.stop_propagation();
+                                                                        },
+                                                                    ),
+                                                                )
+                                                            })
+                                                            .when(show_restart, |this| {
+                                                                let button_id = (
+                                                                    gpui::ElementId::from((
+                                                                        "task_card_action_restart",
+                                                                        entity_id,
+                                                                    )),
+                                                                    node_key.clone(),
+                                                                );
+                                                                let graph = graph.clone();
+                                                                this.child(
+                                                                    TextButton::new(button_id, "Restart")
+                                                                        .kind(ButtonKind::Ghost)
+                                                                        .small()
+                                                                        .disabled(restart_disabled)
+                                                                        .disabled_reason("Restarting…")
+                                                                        .on_click(
+                                                                            move |event, _window, cx| {
+                                                                                if event.standard_click() {
+                                                                                    graph.update(cx, |this, cx| {
+                                                                                        this.trigger_task_quick_action(
+                                                                                            task_id,
+                                                                                            TaskQuickActionKind::Restart,
+                                                                                            cx,
+                                                                                        );
+                                                                                    });
+                                                                                }
+                                                                                cx.stop_propagation();
+                                                                            },
+                                                                        ),
+                                                                )
+                                                            })
+                                                            .when(show_stop, |this| {
+                                                                let button_id = (
+                                                                    gpui::ElementId::from((
+                                                                        "task_card_action_stop",
+                                                                        entity_id,
+                                                                    )),
+                                                                    node_key.clone(),
+                                                                );
+                                                                let graph = graph.clone();
+                                                                this.child(
+                                                                    TextButton::new(button_id, "Stop")
+                                                                        .kind(ButtonKind::Ghost)
+                                                                        .small()
+                                                                        .disabled(stop_disabled)
+                                                                        .disabled_reason("Stopping…")
+                                                                        .on_click(
+                                                                            move |event, _window, cx| {
+                                                                                if event.standard_click() {
+                                                                                    graph.update(cx, |this, cx| {
+                                                                                        this.trigger_task_quick_action(
+                                                                                            task_id,
+                                                                                            TaskQuickActionKind::Stop,
+                                                                                            cx,
+                                                                                        );
+                                                                                    });
+                                                                                }
+                                                                                cx.stop_propagation();
+                                                                            },
+                                                                        ),
+                                                                )
+                                                            })
+                                                            .when(
+                                                                action_state.is_some_and(|state| {
+                                                                    state.start.in_flight
+                                                                        || state.restart.in_flight
+                                                                        || state.stop.in_flight
+                                                                }),
+                                                                |this| {
+                                                                    let label = if action_state
+                                                                        .is_some_and(|state| {
+                                                                            state.start.in_flight
+                                                                        }) {
+                                                                        "Starting"
+                                                                    } else if action_state
+                                                                        .is_some_and(|state| {
+                                                                            state.restart.in_flight
+                                                                        }) {
+                                                                        "Restarting"
+                                                                    } else {
+                                                                        "Stopping"
+                                                                    };
+                                                                    this.child(
+                                                                        ProgressPill::new(label)
+                                                                            .kind(ProgressPillKind::Accent),
+                                                                    )
+                                                                },
+                                                            ),
                                                     ),
                                             ),
                                     )
@@ -3345,100 +3425,27 @@ impl Render for GraphView {
                                 div()
                                     .flex_1()
                                     .min_h(px(0.0))
+                                    .min_w_0()
                                     .flex()
                                     .flex_col()
                                     .bg(theme.colors.surface)
                                     .child(
                                         div()
-                                            .px(theme.spacing.md)
-                                            .pt(theme.spacing.sm)
-                                            .pb(theme.spacing.xs)
-                                            .flex()
-                                            .flex_row()
-                                            .items_center()
-                                            .gap(theme.spacing.sm)
-                                            .child(
-                                                TextButton::new(
-                                                    (
-                                                        gpui::ElementId::from((
-                                                            "task_card_tab_session",
-                                                            entity_id,
-                                                        )),
-                                                        node_key.clone(),
-                                                    ),
-                                                    "Session",
-                                                )
-                                                .kind(if active_tab == ExpandedTaskTab::Session {
-                                                    ButtonKind::Secondary
-                                                } else {
-                                                    ButtonKind::Ghost
-                                                })
-                                                .small()
-                                                .tooltip("Shortcut: Cmd/Ctrl+1")
-                                                .on_click({
-                                                    let graph = graph.clone();
-                                                    move |event, _window, cx| {
-                                                        if event.standard_click() {
-                                                            graph.update(cx, |this, cx| {
-                                                                this.set_expanded_task_tab(
-                                                                    ExpandedTaskTab::Session,
-                                                                    cx,
-                                                                );
-                                                            });
-                                                        }
-                                                        cx.stop_propagation();
-                                                    }
-                                                }),
-                                            )
-                                            .child(
-                                                TextButton::new(
-                                                    (
-                                                        gpui::ElementId::from((
-                                                            "task_card_tab_readme",
-                                                            entity_id,
-                                                        )),
-                                                        node_key.clone(),
-                                                    ),
-                                                    "README",
-                                                )
-                                                .kind(if active_tab == ExpandedTaskTab::Readme {
-                                                    ButtonKind::Secondary
-                                                } else {
-                                                    ButtonKind::Ghost
-                                                })
-                                                .small()
-                                                .tooltip("Shortcut: Cmd/Ctrl+2")
-                                                .on_click({
-                                                    let graph = graph.clone();
-                                                    move |event, _window, cx| {
-                                                        if event.standard_click() {
-                                                            graph.update(cx, |this, cx| {
-                                                                this.set_expanded_task_tab(
-                                                                    ExpandedTaskTab::Readme,
-                                                                    cx,
-                                                                );
-                                                            });
-                                                        }
-                                                        cx.stop_propagation();
-                                                    }
-                                                }),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
                                             .flex_1()
                                             .min_h(px(0.0))
                                             .min_w_0()
-                                            .px(theme.spacing.md)
-                                            .pb(theme.spacing.md)
-                                            .pt(theme.spacing.xs)
+                                            .flex()
+                                            .flex_col()
                                             .when(active_tab == ExpandedTaskTab::Session, |this| {
                                                 this.child(
                                                     div()
                                                         .flex_1()
                                                         .min_h(px(0.0))
+                                                        .min_w_0()
                                                         .flex()
                                                         .flex_col()
+                                                        .px(theme.spacing.md)
+                                                        .py(theme.spacing.sm)
                                                         .gap(theme.spacing.sm)
                                                         .when(is_primary_selected, |this| {
                                                             let mut this = this;
@@ -3479,7 +3486,6 @@ impl Render for GraphView {
 
                                                                 this = this.child(
                                                                     div()
-                                                                        .mt(theme.spacing.sm)
                                                                         .child(
                                                                             Callout::new(err)
                                                                                 .kind(CalloutKind::Danger)
@@ -3524,7 +3530,6 @@ impl Render for GraphView {
 
                                                                 this = this.child(
                                                                     div()
-                                                                        .mt(theme.spacing.sm)
                                                                         .child(
                                                                             Callout::new("No session yet.")
                                                                                 .kind(CalloutKind::Info)
@@ -3551,36 +3556,58 @@ impl Render for GraphView {
                                                                 div()
                                                                     .flex_1()
                                                                     .min_h(px(0.0))
-                                                                    .child(self.task_session_view.clone()),
+                                                                    .min_w_0()
+                                                                    .child(
+                                                                        div()
+                                                                            .size_full()
+                                                                            .child(
+                                                                                self.task_session_view
+                                                                                    .clone(),
+                                                                            ),
+                                                                    ),
                                                             )
                                                         }),
                                                 )
                                             })
                                             .when(active_tab == ExpandedTaskTab::Readme, |this| {
                                                 this.child(
-                                                    ScrollArea::new(
-                                                        (
-                                                            gpui::ElementId::from((
-                                                                "task_card_details_scroll",
-                                                                entity_id,
-                                                            )),
-                                                            node_key.clone(),
+                                                    div()
+                                                        .flex_1()
+                                                        .min_h(px(0.0))
+                                                        .min_w_0()
+                                                        .px(theme.spacing.md)
+                                                        .pb(theme.spacing.md)
+                                                        .pt(theme.spacing.sm)
+                                                        .child(
+                                                            ScrollArea::new(
+                                                                (
+                                                                    gpui::ElementId::from((
+                                                                        "task_card_details_scroll",
+                                                                        entity_id,
+                                                                    )),
+                                                                    node_key.clone(),
+                                                                ),
+                                                                right_scroll,
+                                                            )
+                                                            .child(
+                                                                div()
+                                                                    .px(theme.spacing.sm)
+                                                                    .py(theme.spacing.sm)
+                                                                    .child(task_details_description_section(
+                                                                        (
+                                                                            gpui::ElementId::from((
+                                                                                "task_details_description",
+                                                                                entity_id,
+                                                                            )),
+                                                                            node_key.clone(),
+                                                                        ),
+                                                                        title.clone(),
+                                                                        description_state,
+                                                                        &theme,
+                                                                    )),
+                                                            )
+                                                            .child(div().h(theme.spacing.md)),
                                                         ),
-                                                        right_scroll,
-                                                    )
-                                                    .child(task_details_description_section(
-                                                        (
-                                                            gpui::ElementId::from((
-                                                                "task_details_description",
-                                                                entity_id,
-                                                            )),
-                                                            node_key.clone(),
-                                                        ),
-                                                        title.clone(),
-                                                        description_state,
-                                                        &theme,
-                                                    ))
-                                                    .child(div().h(theme.spacing.md)),
                                                 )
                                             }),
                                     ),
@@ -4328,29 +4355,6 @@ fn task_status_chips(
         )
 }
 
-fn details_section(
-    title: &'static str,
-    body: impl IntoElement,
-    theme: &redesmyn_ui::styles::UiTheme,
-) -> impl IntoElement {
-    div()
-        .pt(theme.spacing.md)
-        .child(
-            div()
-                .pb(theme.spacing.sm)
-                .text_xs()
-                .text_color(theme.colors.foreground_muted)
-                .child(title),
-        )
-        .child(body)
-        .child(
-            div()
-                .my(theme.spacing.md)
-                .border_b_1()
-                .border_color(theme.colors.border.opacity(0.35)),
-        )
-}
-
 fn task_details_description_section(
     id: impl Into<gpui::ElementId>,
     title: gpui::SharedString,
@@ -4423,7 +4427,7 @@ fn task_details_description_section(
         }
     };
 
-    details_section("Description", body, theme)
+    body
 }
 #[cfg(test)]
 mod tests {
