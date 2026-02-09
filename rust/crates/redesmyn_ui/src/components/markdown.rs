@@ -74,7 +74,7 @@ impl RenderOnce for MarkdownView {
         for (ix, block) in self.doc.blocks.iter().enumerate() {
             let mut copy_prefixes = CopyLinePrefixes::default();
             if let Some(previous) = previous_block
-                && needs_extra_block_separator(previous)
+                && needs_extra_block_separator(previous, block)
             {
                 copy_prefixes = copy_prefixes.prepend_first_line("\n");
             }
@@ -337,8 +337,8 @@ fn render_block(
     }
 }
 
-fn needs_extra_block_separator(previous: &MarkdownBlock) -> bool {
-    matches!(previous, MarkdownBlock::List { .. })
+fn needs_extra_block_separator(previous: &MarkdownBlock, current: &MarkdownBlock) -> bool {
+    matches!(previous, MarkdownBlock::List { .. }) && !matches!(current, MarkdownBlock::List { .. })
 }
 
 fn first_markdown_inline_single_line_atoms(doc: &MarkdownDoc) -> Vec<InlineAtom> {
