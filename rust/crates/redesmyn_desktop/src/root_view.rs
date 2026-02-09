@@ -389,6 +389,14 @@ impl RootView {
         cx: &mut Context<Self>,
     ) {
         let opening = !self.task_palette.is_open();
+        let has_selected_epic = self
+            .chrome
+            .selected_epic_slug
+            .as_deref()
+            .is_some_and(|selected| self.chrome.epics.iter().any(|epic| epic.slug == selected));
+        if opening && !has_selected_epic {
+            return;
+        }
         if opening && self.command_palette.is_open() {
             self.command_palette.handle_close_action(window, cx);
         }
@@ -704,8 +712,7 @@ impl RootView {
             .selected_epic_slug
             .as_deref()
             .and_then(|slug| self.chrome.epics.iter().find(|epic| epic.slug == slug))
-            .cloned()
-            .or_else(|| self.chrome.epics.first().cloned());
+            .cloned();
         let Some(selected_epic) = selected_epic else {
             self.task_palette
                 .fail_loading("Select an epic before opening the task palette.", cx);
@@ -3733,6 +3740,16 @@ impl Render for RootView {
 
                     if did_close_panel {
                         cx.stop_propagation();
+                        return;
+                    }
+
+                    let did_clear_graph_selection = root.update(cx, |this, cx| {
+                        this.workspace_pane
+                            .update(cx, |pane, cx| pane.clear_graph_selection(cx))
+                    });
+
+                    if did_clear_graph_selection {
+                        cx.stop_propagation();
                     }
                 }
             })
@@ -5237,6 +5254,20 @@ impl WorkspacePaneHost {
     fn focus_task_card_when_ready(&mut self, task_id: TaskId, cx: &mut Context<Self>) {
         self.pending_task_focus = Some(task_id);
         self.try_apply_pending_task_focus(cx);
+    }
+
+    fn clear_graph_selection(&mut self, cx: &mut Context<Self>) -> bool {
+        let state = self.graph_view.read(cx).ui_graph_state();
+        let had_selection = state.selected_node.is_some() || state.selected_edge.is_some();
+        if !had_selection {
+            return false;
+        }
+
+        self.graph_view
+            .update(cx, |view, cx| view.driver_clear_selection(cx));
+        self.ui_updates.bump();
+        cx.notify();
+        true
     }
 
     fn set_sessions_collapsed(&mut self, collapsed: bool, cx: &mut Context<Self>) {
