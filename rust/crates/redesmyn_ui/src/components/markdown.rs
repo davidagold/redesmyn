@@ -77,6 +77,8 @@ impl RenderOnce for MarkdownView {
                 block,
                 base_text_color,
                 &base_id,
+                0,
+                CopyLinePrefixes::default(),
                 window,
                 cx,
             ));
@@ -197,15 +199,23 @@ fn render_block(
     block: &MarkdownBlock,
     base_text_color: Hsla,
     selection_scope: &ElementId,
+    list_depth: usize,
+    copy_prefixes: CopyLinePrefixes,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let theme = theme_for_window(window, cx);
 
     match block {
-        MarkdownBlock::Paragraph { content, .. } => {
-            render_inline_flow(id, content, base_text_color, selection_scope, window, cx)
-        }
+        MarkdownBlock::Paragraph { content, .. } => render_inline_flow(
+            id,
+            content,
+            base_text_color,
+            selection_scope,
+            copy_prefixes,
+            window,
+            cx,
+        ),
         MarkdownBlock::Heading { level, content, .. } => {
             let text_size = match level {
                 1 => div().text_2xl(),
@@ -224,6 +234,7 @@ fn render_block(
                     InlineSegmentsStyle::default().as_heading(*level),
                     base_text_color,
                     selection_scope,
+                    copy_prefixes,
                     window,
                     cx,
                 ))
@@ -253,11 +264,18 @@ fn render_block(
             );
 
             let content_id: ElementId = (id, "content").into();
+            let nested_prefixes = if copy_prefixes.is_empty() {
+                None
+            } else {
+                Some(copy_prefixes)
+            };
             quote = quote.child(render_blocks_column(
                 content_id,
                 blocks,
                 base_text_color,
                 selection_scope,
+                list_depth,
+                nested_prefixes,
                 window,
                 cx,
             ));
@@ -274,19 +292,26 @@ fn render_block(
 
             let start_ix = start.unwrap_or(1);
             for (ix, item) in items.iter().enumerate() {
-                let marker = if *ordered {
+                let display_marker = if *ordered {
                     format!("{}.", start_ix.saturating_add(ix as u64))
                 } else {
                     "•".to_string()
+                };
+                let copy_marker = if *ordered {
+                    format!("{}.", start_ix.saturating_add(ix as u64))
+                } else {
+                    "-".to_string()
                 };
 
                 let item_id: ElementId = (id.clone(), format!("item-{ix}")).into();
                 list = list.child(render_list_item(
                     item_id,
-                    marker,
+                    display_marker,
+                    copy_marker,
                     item,
                     base_text_color,
                     selection_scope,
+                    list_depth,
                     window,
                     cx,
                 ));
@@ -423,6 +448,8 @@ fn render_blocks_column(
     blocks: &[MarkdownBlock],
     base_text_color: Hsla,
     selection_scope: &ElementId,
+    list_depth: usize,
+    first_block_copy_prefixes: Option<CopyLinePrefixes>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -435,13 +462,24 @@ fn render_blocks_column(
         .flex_1()
         .min_w_0();
 
+    let subsequent_block_prefixes = first_block_copy_prefixes
+        .as_ref()
+        .map(CopyLinePrefixes::continuation_only);
+
     for (ix, block) in blocks.iter().enumerate() {
         let block_id: ElementId = (id.clone(), format!("block-{ix}")).into();
+        let copy_prefixes = if ix == 0 {
+            first_block_copy_prefixes.clone().unwrap_or_default()
+        } else {
+            subsequent_block_prefixes.clone().unwrap_or_default()
+        };
         col = col.child(render_block(
             block_id,
             block,
             base_text_color,
             selection_scope,
+            list_depth,
+            copy_prefixes,
             window,
             cx,
         ));
@@ -453,15 +491,18 @@ fn render_blocks_column(
 fn render_list_item(
     id: ElementId,
     marker: String,
+    copy_marker: String,
     item: &redesmyn_markdown::MarkdownListItem,
     base_text_color: Hsla,
     selection_scope: &ElementId,
+    list_depth: usize,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let theme = theme_for_window(window, cx);
 
     let content_id: ElementId = (id.clone(), "content").into();
+    let copy_prefixes = CopyLinePrefixes::for_list_marker(list_depth, &copy_marker);
     div()
         .id(id)
         .flex()
@@ -480,6 +521,8 @@ fn render_list_item(
             &item.blocks,
             base_text_color,
             selection_scope,
+            list_depth.saturating_add(1),
+            Some(copy_prefixes),
             window,
             cx,
         ))
@@ -491,6 +534,7 @@ fn render_inline_flow(
     inlines: &[MarkdownInline],
     base_text_color: Hsla,
     selection_scope: &ElementId,
+    copy_prefixes: CopyLinePrefixes,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -500,6 +544,7 @@ fn render_inline_flow(
         InlineSegmentsStyle::default(),
         base_text_color,
         selection_scope,
+        copy_prefixes,
         window,
         cx,
     )
@@ -540,12 +585,50 @@ struct InlineAtom {
     link: Option<String>,
 }
 
+#[derive(Debug, Clone, Default)]
+struct CopyLinePrefixes {
+    first_line: Option<String>,
+    continuation: Option<String>,
+}
+
+impl CopyLinePrefixes {
+    fn is_empty(&self) -> bool {
+        self.first_line.is_none() && self.continuation.is_none()
+    }
+
+    fn for_line(&self, line_ix: usize) -> Option<String> {
+        if line_ix == 0 {
+            self.first_line.clone()
+        } else {
+            self.continuation.clone()
+        }
+    }
+
+    fn continuation_only(&self) -> Self {
+        Self {
+            first_line: self.continuation.clone(),
+            continuation: self.continuation.clone(),
+        }
+    }
+
+    fn for_list_marker(list_depth: usize, marker: &str) -> Self {
+        let indent = "  ".repeat(list_depth);
+        let first_line = format!("{indent}{marker} ");
+        let continuation = " ".repeat(first_line.len());
+        Self {
+            first_line: Some(first_line),
+            continuation: Some(continuation),
+        }
+    }
+}
+
 fn render_inline_segments(
     id: ElementId,
     inlines: &[MarkdownInline],
     style: InlineSegmentsStyle,
     base_text_color: Hsla,
     selection_scope: &ElementId,
+    copy_prefixes: CopyLinePrefixes,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -556,6 +639,7 @@ fn render_inline_segments(
 
     for (line_ix, atoms) in lines.into_iter().enumerate() {
         let line_id: ElementId = (id.clone(), format!("line-{line_ix}")).into();
+        let line_copy_prefix = copy_prefixes.for_line(line_ix);
 
         if atoms.is_empty() {
             flow = flow.child(styled_text_div(
@@ -568,6 +652,7 @@ fn render_inline_segments(
                 TextFlavor::Body(base_text_color),
                 base_text_color,
                 selection_scope,
+                line_copy_prefix,
                 window,
                 cx,
             ));
@@ -584,6 +669,7 @@ fn render_inline_segments(
                 TextFlavor::Body(base_text_color),
                 base_text_color,
                 selection_scope,
+                line_copy_prefix,
                 window,
                 cx,
             ));
@@ -599,14 +685,22 @@ fn render_inline_segments(
             .w_full();
 
         let chunks = chunk_atoms(atoms);
+        let mut next_chunk_copy_prefix = line_copy_prefix;
         for (chunk_ix, chunk) in chunks.into_iter().enumerate() {
             let chunk_id: ElementId = (line_id.clone(), format!("chunk-{chunk_ix}")).into();
+            let chunk_copy_prefix =
+                if next_chunk_copy_prefix.is_some() && matches!(chunk, InlineChunk::Text(_)) {
+                    next_chunk_copy_prefix.take()
+                } else {
+                    None
+                };
             line = line.child(render_inline_chunk(
                 chunk_id,
                 chunk,
                 style,
                 base_text_color,
                 selection_scope,
+                chunk_copy_prefix,
                 window,
                 cx,
             ));
@@ -649,6 +743,7 @@ fn render_inline_chunk(
     style: InlineSegmentsStyle,
     base_text_color: Hsla,
     selection_scope: &ElementId,
+    copy_prefix: Option<String>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -659,6 +754,7 @@ fn render_inline_chunk(
             TextFlavor::Body(base_text_color),
             base_text_color,
             selection_scope,
+            copy_prefix,
             window,
             cx,
         ),
@@ -693,6 +789,7 @@ fn render_inline_chunk(
                     TextFlavor::Link(link_color),
                     base_text_color,
                     selection_scope,
+                    copy_prefix,
                     window,
                     cx,
                 ))
@@ -707,6 +804,7 @@ fn render_inline_atoms(
     flavor: TextFlavor,
     base_text_color: Hsla,
     selection_scope: &ElementId,
+    copy_prefix: Option<String>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -716,6 +814,7 @@ fn render_inline_atoms(
         flavor,
         base_text_color,
         selection_scope,
+        copy_prefix,
         window,
         cx,
     )
@@ -728,12 +827,22 @@ enum TextFlavor {
     Link(gpui::Hsla),
 }
 
-fn atom_markdown_text(text: &str, style: InlineStyle, link: Option<&str>) -> String {
+fn atom_markdown_text(
+    text: &str,
+    style: InlineStyle,
+    link: Option<&str>,
+    copy_prefix: Option<&str>,
+) -> String {
     let styled = markdown_text_for_style(text, style);
-    if let Some(destination) = link {
+    let markdown = if let Some(destination) = link {
         format!("[{styled}]({destination})")
     } else {
         styled
+    };
+    if let Some(prefix) = copy_prefix {
+        format!("{prefix}{markdown}")
+    } else {
+        markdown
     }
 }
 
@@ -775,6 +884,7 @@ fn styled_text_div(
     flavor: TextFlavor,
     base_text_color: Hsla,
     selection_scope: &ElementId,
+    copy_prefix: Option<String>,
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
@@ -863,9 +973,15 @@ fn styled_text_div(
         text.push_str(&atom_text);
         let end = text.len();
         if selectable {
+            let copy_prefix = if copy_spans.is_empty() {
+                copy_prefix.as_deref()
+            } else {
+                None
+            };
             copy_spans.push(RoundedTextCopySpan {
                 range: start..end,
-                markdown: atom_markdown_text(&atom_text, atom_style, link.as_deref()).into(),
+                markdown: atom_markdown_text(&atom_text, atom_style, link.as_deref(), copy_prefix)
+                    .into(),
             });
         }
     }
@@ -896,6 +1012,7 @@ fn styled_text_block(
     flavor: TextFlavor,
     base_text_color: Hsla,
     selection_scope: &ElementId,
+    copy_prefix: Option<String>,
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
@@ -986,9 +1103,15 @@ fn styled_text_block(
         text.push_str(&atom_text);
         let end = text.len();
         if selectable {
+            let copy_prefix = if copy_spans.is_empty() {
+                copy_prefix.as_deref()
+            } else {
+                None
+            };
             copy_spans.push(RoundedTextCopySpan {
                 range: start..end,
-                markdown: atom_markdown_text(&atom_text, atom_style, link.as_deref()).into(),
+                markdown: atom_markdown_text(&atom_text, atom_style, link.as_deref(), copy_prefix)
+                    .into(),
             });
         }
     }
