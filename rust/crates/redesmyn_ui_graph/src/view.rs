@@ -3425,8 +3425,8 @@ impl Render for GraphView {
                                                                                 this.hover(|this| {
                                                                                     this.bg(
                                                                                         theme.colors
-                                                                                            .surface_elevated
-                                                                                            .opacity(0.3),
+                                                                                            .accent
+                                                                                            .opacity(0.55),
                                                                                     )
                                                                                 })
                                                                             },
@@ -3470,8 +3470,8 @@ impl Render for GraphView {
                                                                             this.hover(|this| {
                                                                                 this.bg(
                                                                                     theme.colors
-                                                                                        .surface_elevated
-                                                                                        .opacity(0.3),
+                                                                                        .accent
+                                                                                        .opacity(0.55),
                                                                                 )
                                                                             })
                                                                         })
@@ -4409,16 +4409,6 @@ fn merge_readiness_badge(readiness: MergeReadiness) -> impl IntoElement {
     )
 }
 
-fn agent_status_badge_kind(status: AgentStatus, continuable: bool) -> BadgeKind {
-    match status {
-        AgentStatus::Running => BadgeKind::Success,
-        AgentStatus::Blocked => BadgeKind::Warning,
-        AgentStatus::Error => BadgeKind::Danger,
-        AgentStatus::Stopped if continuable => BadgeKind::Info,
-        AgentStatus::Stopped | AgentStatus::Unknown => BadgeKind::Neutral,
-    }
-}
-
 fn agent_status_value_label(status: AgentStatus) -> &'static str {
     match status {
         AgentStatus::Running => "Running",
@@ -4443,10 +4433,28 @@ fn task_status_chips(
         .items_center()
         .child(task_state_badge(state))
         .child(merge_readiness_badge(merge_readiness))
-        .child(status_badge(
-            agent_status_value_label(agent_status),
-            agent_status_badge_kind(agent_status, agent_continuable),
-        ))
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(theme.spacing.xs)
+                .child(agent_status_dot_from_key(
+                    AgentStatusDotVisualKey {
+                        task_state: state,
+                        agent_status,
+                        continuable: agent_continuable,
+                    },
+                    theme,
+                    1.0,
+                ))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.colors.foreground_muted)
+                        .child(agent_status_value_label(agent_status)),
+                ),
+        )
 }
 
 fn task_details_description_section(
