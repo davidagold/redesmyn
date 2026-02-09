@@ -20,7 +20,7 @@ pub(crate) const COLLAPSED_TASK_NODE_SIZE: redesmyn_graph_layout::Size =
 pub(crate) const EXPANDED_TASK_NODE_SIZE: redesmyn_graph_layout::Size =
     redesmyn_graph_layout::Size {
         width: 960,
-        height: 640,
+        height: 832,
     };
 
 use crate::constants::{
