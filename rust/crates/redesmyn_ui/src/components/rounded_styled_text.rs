@@ -120,8 +120,8 @@ impl gpui::Global for RoundedTextSelectionGlobal {}
 #[derive(Clone)]
 struct ActiveRoundedTextSelection {
     key: RoundedTextSelectionKey,
-    anchor_position: Point<Pixels>,
-    head_position: Point<Pixels>,
+    anchor: SelectionEndpoint,
+    head: SelectionEndpoint,
     selecting: bool,
 }
 
@@ -129,6 +129,12 @@ struct ActiveRoundedTextSelection {
 struct RoundedTextSelectionKey {
     view_id: EntityId,
     scope_id: ElementId,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+struct SelectionEndpoint {
+    element_id: ElementId,
+    index: usize,
 }
 
 #[derive(Clone, Eq, PartialEq, Hash)]
@@ -139,7 +145,6 @@ struct RegisteredRoundedTextSelectionElementId {
 
 #[derive(Clone)]
 struct RegisteredRoundedTextSelectionElement {
-    key: RoundedTextSelectionKey,
     bounds: Bounds<Pixels>,
     layout: RoundedTextLayout,
     text: SharedString,
@@ -164,7 +169,6 @@ impl RoundedTextSelectionGlobal {
                 element_id,
             },
             RegisteredRoundedTextSelectionElement {
-                key,
                 bounds,
                 layout,
                 text,
@@ -187,6 +191,130 @@ impl RoundedTextSelectionGlobal {
             .retain(|_, element| element.last_seen_revision >= min_seen);
     }
 
+    fn selection_endpoint_for_position(
+        &self,
+        key: &RoundedTextSelectionKey,
+        position: Point<Pixels>,
+    ) -> Option<SelectionEndpoint> {
+        let (id, element) = self
+            .elements
+            .iter()
+            .filter(|(id, _)| &id.key == key)
+            .min_by(|(_, a), (_, b)| {
+                let (a_dy, a_dx) = distance_to_bounds(position, a.bounds);
+                let (b_dy, b_dx) = distance_to_bounds(position, b.bounds);
+                a_dy.partial_cmp(&b_dy)
+                    .unwrap_or(Ordering::Equal)
+                    .then_with(|| a_dx.partial_cmp(&b_dx).unwrap_or(Ordering::Equal))
+                    .then_with(|| compare_element_positions(a.bounds.origin, b.bounds.origin))
+            })?;
+
+        Some(SelectionEndpoint {
+            element_id: id.element_id.clone(),
+            index: element.layout.index_for_position_clamped(position),
+        })
+    }
+
+    fn selection_range_for_element(
+        &self,
+        key: &RoundedTextSelectionKey,
+        element_id: &ElementId,
+    ) -> Option<Range<usize>> {
+        let active = self.active.as_ref()?;
+        if &active.key != key {
+            return None;
+        }
+
+        let anchor_id = RegisteredRoundedTextSelectionElementId {
+            key: key.clone(),
+            element_id: active.anchor.element_id.clone(),
+        };
+        let head_id = RegisteredRoundedTextSelectionElementId {
+            key: key.clone(),
+            element_id: active.head.element_id.clone(),
+        };
+        let target_id = RegisteredRoundedTextSelectionElementId {
+            key: key.clone(),
+            element_id: element_id.clone(),
+        };
+
+        let anchor_element = self.elements.get(&anchor_id)?;
+        let head_element = self.elements.get(&head_id)?;
+        let target_element = self.elements.get(&target_id)?;
+        let target_len = target_element.text.len();
+
+        if anchor_id == head_id {
+            if anchor_id != target_id {
+                return None;
+            }
+            let anchor = active.anchor.index.min(target_len);
+            let head = active.head.index.min(target_len);
+            let start = anchor.min(head);
+            let end = anchor.max(head);
+            return (start < end).then_some(start..end);
+        }
+
+        match compare_element_positions(anchor_element.bounds.origin, head_element.bounds.origin) {
+            Ordering::Less => {
+                let target_cmp_anchor = compare_element_positions(
+                    target_element.bounds.origin,
+                    anchor_element.bounds.origin,
+                );
+                let target_cmp_head = compare_element_positions(
+                    target_element.bounds.origin,
+                    head_element.bounds.origin,
+                );
+                if target_cmp_anchor == Ordering::Less || target_cmp_head == Ordering::Greater {
+                    return None;
+                }
+
+                if target_id == anchor_id {
+                    let start = active.anchor.index.min(target_len);
+                    (start < target_len).then_some(start..target_len)
+                } else if target_id == head_id {
+                    let end = active.head.index.min(target_len);
+                    (0 < end).then_some(0..end)
+                } else {
+                    (0 < target_len).then_some(0..target_len)
+                }
+            }
+            Ordering::Greater => {
+                let target_cmp_anchor = compare_element_positions(
+                    target_element.bounds.origin,
+                    anchor_element.bounds.origin,
+                );
+                let target_cmp_head = compare_element_positions(
+                    target_element.bounds.origin,
+                    head_element.bounds.origin,
+                );
+                if target_cmp_head == Ordering::Less || target_cmp_anchor == Ordering::Greater {
+                    return None;
+                }
+
+                if target_id == head_id {
+                    let start = active.head.index.min(target_len);
+                    (start < target_len).then_some(start..target_len)
+                } else if target_id == anchor_id {
+                    let end = active.anchor.index.min(target_len);
+                    (0 < end).then_some(0..end)
+                } else {
+                    (0 < target_len).then_some(0..target_len)
+                }
+            }
+            Ordering::Equal => {
+                if target_id == anchor_id {
+                    let anchor = active.anchor.index.min(target_len);
+                    let head = active.head.index.min(target_len);
+                    let start = anchor.min(head);
+                    let end = anchor.max(head);
+                    (start < end).then_some(start..end)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
     fn selected_copy_text_for_key(&self, key: &RoundedTextSelectionKey) -> Option<String> {
         let active = self.active.as_ref()?;
         if &active.key != key {
@@ -195,12 +323,10 @@ impl RoundedTextSelectionGlobal {
 
         let mut pieces = self
             .elements
-            .values()
-            .filter(|element| &element.key == key)
-            .filter_map(|element| {
-                let selected = element
-                    .layout
-                    .selection_range_for_positions(active.anchor_position, active.head_position)?;
+            .iter()
+            .filter(|(id, _)| &id.key == key)
+            .filter_map(|(id, element)| {
+                let selected = self.selection_range_for_element(key, &id.element_id)?;
                 let copy_text = copy_text_for_range(
                     element.text.as_ref(),
                     selected,
@@ -250,6 +376,32 @@ struct RegisteredSelectionPiece {
     top: Pixels,
     left: Pixels,
     text: String,
+}
+
+fn compare_element_positions(a: Point<Pixels>, b: Point<Pixels>) -> Ordering {
+    a.y.partial_cmp(&b.y)
+        .unwrap_or(Ordering::Equal)
+        .then_with(|| a.x.partial_cmp(&b.x).unwrap_or(Ordering::Equal))
+}
+
+fn distance_to_bounds(point: Point<Pixels>, bounds: Bounds<Pixels>) -> (Pixels, Pixels) {
+    let dx = if point.x < bounds.left() {
+        bounds.left() - point.x
+    } else if point.x > bounds.right() {
+        point.x - bounds.right()
+    } else {
+        px(0.0)
+    };
+
+    let dy = if point.y < bounds.top() {
+        bounds.top() - point.y
+    } else if point.y > bounds.bottom() {
+        point.y - bounds.bottom()
+    } else {
+        px(0.0)
+    };
+
+    (dy, dx)
 }
 
 impl gpui::IntoElement for RoundedStyledText {
@@ -314,16 +466,17 @@ impl Element for RoundedStyledText {
         if self.selectable
             && let Some(hitbox) = hitbox.as_ref()
             && let Some(scope_id) = self.selection_scope.clone()
+            && let Some(element_id) = self.id.clone()
         {
             let key = RoundedTextSelectionKey {
                 view_id: window.current_view(),
                 scope_id,
             };
 
-            if let (Some(element_id), Some(bounds)) = (self.id.clone(), self.layout.bounds()) {
+            if let Some(bounds) = self.layout.bounds() {
                 let global = cx.default_global::<RoundedTextSelectionGlobal>();
                 global.upsert_element(
-                    element_id,
+                    element_id.clone(),
                     key.clone(),
                     bounds,
                     self.layout.clone(),
@@ -338,6 +491,8 @@ impl Element for RoundedStyledText {
 
             let hitbox_for_down = hitbox.clone();
             let key_for_down = key.clone();
+            let element_id_for_down = element_id.clone();
+            let layout_for_down = self.layout.clone();
             window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
                 if event.button != MouseButton::Left {
                     return;
@@ -361,10 +516,17 @@ impl Element for RoundedStyledText {
                     return;
                 }
 
+                let index = layout_for_down.index_for_position_clamped(event.position);
                 global.active = Some(ActiveRoundedTextSelection {
                     key: key_for_down.clone(),
-                    anchor_position: event.position,
-                    head_position: event.position,
+                    anchor: SelectionEndpoint {
+                        element_id: element_id_for_down.clone(),
+                        index,
+                    },
+                    head: SelectionEndpoint {
+                        element_id: element_id_for_down.clone(),
+                        index,
+                    },
                     selecting: true,
                 });
                 cx.stop_propagation();
@@ -379,6 +541,8 @@ impl Element for RoundedStyledText {
                 }
 
                 let global = cx.default_global::<RoundedTextSelectionGlobal>();
+                let next_head =
+                    global.selection_endpoint_for_position(&key_for_move, event.position);
                 let Some(active) = global.active.as_mut() else {
                     return;
                 };
@@ -386,8 +550,10 @@ impl Element for RoundedStyledText {
                     return;
                 }
 
-                active.head_position = event.position;
-                window.refresh();
+                if let Some(head) = next_head {
+                    active.head = head;
+                    window.refresh();
+                }
             });
 
             let key_for_up = key.clone();
@@ -397,6 +563,7 @@ impl Element for RoundedStyledText {
                 }
 
                 let global = cx.default_global::<RoundedTextSelectionGlobal>();
+                let next_head = global.selection_endpoint_for_position(&key_for_up, event.position);
                 let Some(active) = global.active.as_mut() else {
                     return;
                 };
@@ -404,7 +571,9 @@ impl Element for RoundedStyledText {
                     return;
                 }
 
-                active.head_position = event.position;
+                if let Some(head) = next_head {
+                    active.head = head;
+                }
                 active.selecting = false;
                 window.refresh();
             });
@@ -430,16 +599,7 @@ impl Element for RoundedStyledText {
 
             let selected = {
                 let global = cx.default_global::<RoundedTextSelectionGlobal>();
-                global.active.as_ref().and_then(|active| {
-                    if active.key == key {
-                        self.layout.selection_range_for_positions(
-                            active.anchor_position,
-                            active.head_position,
-                        )
-                    } else {
-                        None
-                    }
-                })
+                global.selection_range_for_element(&key, &element_id)
             };
             self.layout.paint(
                 self.text.as_ref(),
@@ -595,22 +755,6 @@ impl RoundedTextLayout {
     fn index_for_position_clamped(&self, position: Point<Pixels>) -> usize {
         match self.index_for_position(position) {
             Ok(ix) | Err(ix) => ix,
-        }
-    }
-
-    fn selection_range_for_positions(
-        &self,
-        anchor_position: Point<Pixels>,
-        head_position: Point<Pixels>,
-    ) -> Option<Range<usize>> {
-        let anchor = self.index_for_position_clamped(anchor_position);
-        let head = self.index_for_position_clamped(head_position);
-        if anchor == head {
-            None
-        } else if anchor < head {
-            Some(anchor..head)
-        } else {
-            Some(head..anchor)
         }
     }
 
