@@ -223,7 +223,7 @@ impl ControlPlane {
         ensure_task_exists(self.pool(), workspace_id, repo_id, task_id).await?;
 
         let effective_on_conflict = planner::effective_on_conflict(on_conflict, interrupt);
-        let normalized_intent = normalize_task_message_intent(intent.as_deref());
+        let normalized_intent = parse_task_message_intent(intent.as_deref())?;
 
         let recent_sessions = state::load_recent_task_sessions(self.pool(), task_id, 50).await?;
         let resumable_structured =
@@ -237,7 +237,7 @@ impl ControlPlane {
             resumable_structured.as_ref(),
         )?;
 
-        let response = match plan {
+        let mut response = match plan {
             planner::SendTaskAgentMessagePlan::StructuredResume(resume) => {
                 executor::execute_structured_resume(
                     self,
@@ -265,7 +265,7 @@ impl ControlPlane {
             }
         }?;
 
-        executor::append_task_agent_message_sent(
+        if let Err(err) = executor::append_task_agent_message_sent(
             self,
             response.session_id,
             task_id,
@@ -275,7 +275,26 @@ impl ControlPlane {
             response.delivery,
             response.conversation_continuity,
         )
-        .await?;
+        .await
+        {
+            tracing::error!(
+                task_id = %task_id,
+                session_id = %response.session_id,
+                command_id = %response.command.command_id,
+                intent = %normalized_intent,
+                error = ?err,
+                "failed to persist task_agent_message_sent event"
+            );
+            if response
+                .warnings
+                .iter()
+                .all(|warning| warning != "task_agent_message_sent_event_persist_failed")
+            {
+                response
+                    .warnings
+                    .push("task_agent_message_sent_event_persist_failed".to_string());
+            }
+        }
 
         Ok(response)
     }
@@ -414,15 +433,23 @@ async fn ensure_task_exists(
     Ok(())
 }
 
-fn normalize_task_message_intent(raw: Option<&str>) -> String {
+fn parse_task_message_intent(raw: Option<&str>) -> Result<String, ErrorEnvelope> {
     let normalized = raw
         .unwrap_or("unspecified")
         .trim()
         .to_ascii_lowercase()
         .replace('-', "_");
     if normalized.is_empty() {
-        "unspecified".to_string()
-    } else {
-        normalized
+        return Ok("unspecified".to_string());
     }
+    if normalized
+        .chars()
+        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
+    {
+        return Ok(normalized);
+    }
+
+    Err(super::conflicts::invalid_request(
+        "intent must contain only letters, numbers, '-' or '_'",
+    ))
 }

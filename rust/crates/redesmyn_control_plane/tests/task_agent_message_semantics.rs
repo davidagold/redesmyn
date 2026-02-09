@@ -20,6 +20,7 @@ use redesmyn_protocol::daemon::{
 };
 use redesmyn_protocol::session::{
     AssistantMessage, ExternalSessionRef, InterfaceMode, SessionEventKind, SessionScope,
+    TaskAgentMessageAgentKind, TaskAgentMessageConversationContinuity, TaskAgentMessageDelivery,
     TurnCompleted, TurnStarted, UserMessage,
 };
 use redesmyn_protocol::{
@@ -684,11 +685,47 @@ async fn send_task_agent_message_structured_resume_conflict_interrupt() {
         .get_session_events(first.session_id, None, 32, &[])
         .await
         .expect("query persisted session events");
+    let mut sent_events = persisted_events
+        .iter()
+        .filter_map(|event| match &event.kind {
+            SessionEventKind::TaskAgentMessageSent(data) => Some(data),
+            _ => None,
+        });
+
+    let first_sent = sent_events
+        .next()
+        .expect("expected first durable send event");
+    assert_eq!(first_sent.intent, "unspecified");
+    assert_eq!(first_sent.agent_kind, TaskAgentMessageAgentKind::Codex);
+    assert_eq!(
+        first_sent.delivery,
+        TaskAgentMessageDelivery::StructuredStarted
+    );
+    assert_eq!(
+        first_sent.conversation_continuity,
+        TaskAgentMessageConversationContinuity::Broken
+    );
+    assert_eq!(first_sent.message, "hello");
+    assert_eq!(first_sent.message_preview, "hello");
+
+    let second_sent = sent_events
+        .next()
+        .expect("expected second durable send event");
+    assert_eq!(second_sent.intent, "unspecified");
+    assert_eq!(second_sent.agent_kind, TaskAgentMessageAgentKind::Codex);
+    assert_eq!(
+        second_sent.delivery,
+        TaskAgentMessageDelivery::StructuredResumed
+    );
+    assert_eq!(
+        second_sent.conversation_continuity,
+        TaskAgentMessageConversationContinuity::Kept
+    );
+    assert_eq!(second_sent.message, "resume");
+    assert_eq!(second_sent.message_preview, "resume");
     assert!(
-        persisted_events
-            .iter()
-            .any(|event| matches!(event.kind, SessionEventKind::TaskAgentMessageSent(_))),
-        "expected task_agent_message_sent durable event"
+        sent_events.next().is_none(),
+        "expected exactly two durable send events"
     );
 
     // 3) A conflicting message with on_conflict=fail returns 409 and does not dispatch.
@@ -757,6 +794,61 @@ async fn send_task_agent_message_structured_resume_conflict_interrupt() {
 
     // Clean shutdown.
     daemon_link.shutdown().await;
+    drop(shutdown_tx);
+    server.abort();
+}
+
+#[tokio::test]
+async fn send_task_agent_message_rejects_invalid_intent_over_client_api() {
+    redesmyn_logging::init();
+
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let socket_path = tmp.path().join("control_plane.sock");
+
+    let control_plane = ControlPlane::open_test().await.expect("control plane");
+    let (repo_scope, task_id) = seed_repo_and_task(&control_plane).await;
+
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let server = tokio::spawn({
+        let socket_path = socket_path.clone();
+        let control_plane = control_plane.clone();
+        async move {
+            redesmyn_control_plane::client_api::serve_client_api_uds(
+                control_plane,
+                socket_path,
+                ClientApiCodec::Protobuf,
+                &mut shutdown_rx,
+            )
+            .await
+        }
+    });
+
+    let scope = Scope::from(repo_scope);
+    let response = control_plane_request(
+        &socket_path,
+        scope,
+        RequestPayload::SendTaskAgentMessage(SendTaskAgentMessageRequest {
+            task_id,
+            message: "hello".to_string(),
+            intent: Some("invalid intent!".to_string()),
+            on_conflict: AgentMessageConflictAction::Fail,
+            interrupt: None,
+            agent_kind: AgentKind::Codex,
+        }),
+    )
+    .await;
+
+    match response {
+        ResponseResult::Error(err) => {
+            assert_eq!(err.category, ErrorCategory::InvalidRequest);
+            assert_eq!(
+                err.message,
+                "intent must contain only letters, numbers, '-' or '_'"
+            );
+        }
+        other => panic!("expected invalid request error, got {other:?}"),
+    }
+
     drop(shutdown_tx);
     server.abort();
 }
