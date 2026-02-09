@@ -2,9 +2,9 @@ use std::{cell::RefCell, cmp::Ordering, collections::HashMap, ops::Range, rc::Rc
 
 use gpui::{
     App, AvailableSpace, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Element, ElementId,
-    EntityId, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, KeyDownEvent, LayoutId,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size,
-    TextAlign, TextRun, WhiteSpace, Window, fill, point, px, size,
+    EntityId, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, KeyDownEvent,
+    KeystrokeEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    Point, SharedString, Size, TextAlign, TextRun, WhiteSpace, Window, fill, point, px, size,
 };
 
 use crate::utils::theme_for_window;
@@ -240,11 +240,8 @@ impl RoundedTextSelectionGlobal {
         Some(output)
     }
 
-    fn selected_copy_text_for_active_view(&self, view_id: EntityId) -> Option<String> {
+    fn selected_copy_text_for_active(&self) -> Option<String> {
         let active = self.active.as_ref()?;
-        if active.key.view_id != view_id {
-            return None;
-        }
         self.selected_copy_text_for_key(&active.key)
     }
 }
@@ -741,9 +738,13 @@ impl RoundedTextLayout {
 }
 
 fn is_copy_keystroke(event: &KeyDownEvent) -> bool {
-    let modifiers = &event.keystroke.modifiers;
+    is_copy_keystroke_from_keystroke(&event.keystroke)
+}
+
+fn is_copy_keystroke_from_keystroke(keystroke: &gpui::Keystroke) -> bool {
+    let modifiers = &keystroke.modifiers;
     let has_primary_modifier = modifiers.platform || modifiers.control;
-    has_primary_modifier && !modifiers.alt && !modifiers.function && event.keystroke.key == "c"
+    has_primary_modifier && !modifiers.alt && !modifiers.function && keystroke.key == "c"
 }
 
 pub fn copy_active_rounded_text_selection(
@@ -755,14 +756,31 @@ pub fn copy_active_rounded_text_selection(
         return false;
     }
 
-    let view_id = window.current_view();
     let global = cx.default_global::<RoundedTextSelectionGlobal>();
-    let Some(copy_text) = global.selected_copy_text_for_active_view(view_id) else {
+    let Some(copy_text) = global.selected_copy_text_for_active() else {
         return false;
     };
 
     cx.write_to_clipboard(ClipboardItem::new_string(copy_text));
     window.prevent_default();
+    true
+}
+
+pub fn intercept_active_rounded_text_copy(
+    event: &KeystrokeEvent,
+    window: &mut Window,
+    cx: &mut App,
+) -> bool {
+    if !is_copy_keystroke_from_keystroke(&event.keystroke) || window.default_prevented() {
+        return false;
+    }
+
+    let global = cx.default_global::<RoundedTextSelectionGlobal>();
+    let Some(copy_text) = global.selected_copy_text_for_active() else {
+        return false;
+    };
+
+    cx.write_to_clipboard(ClipboardItem::new_string(copy_text));
     true
 }
 

@@ -56,7 +56,7 @@ use redesmyn_ui::components::{
     TextInputPastedImage, Tooltip, cascading_menu_move_left_to_primary,
     cascading_menu_radio_indicator, cascading_menu_row, cascading_menu_row_value,
     cascading_menu_surface, cascading_select_menu_item, clear_open_cascading_menu_for,
-    copy_active_rounded_text_selection, overlay_surface, set_open_cascading_menu_for,
+    intercept_active_rounded_text_copy, overlay_surface, set_open_cascading_menu_for,
 };
 use redesmyn_ui::styles::ThemeMode;
 use redesmyn_ui::utils::{
@@ -1355,6 +1355,9 @@ impl SessionView {
                 }
             }),
         );
+        subscriptions.push(cx.intercept_keystrokes(|event, window, cx| {
+            let _ = intercept_active_rounded_text_copy(event, window, cx);
+        }));
 
         let (client, client_task) = match control_plane_client {
             Some(conn) => {
@@ -8235,12 +8238,6 @@ impl Render for SessionView {
             .on_action(cx.listener(Self::handle_open_session_model_selector))
             .on_action(cx.listener(Self::handle_open_session_reasoning_selector))
             .track_focus(&self.focus_handle(cx));
-
-        root = root.capture_key_down(|event, window, cx| {
-            if copy_active_rounded_text_selection(event, window, cx) {
-                cx.stop_propagation();
-            }
-        });
 
         let any_session_menu_open = matches!(
             open_menu,

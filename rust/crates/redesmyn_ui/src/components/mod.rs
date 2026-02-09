@@ -34,6 +34,7 @@ pub use overlay_surface::{OverlaySurfaceKind, overlay_surface};
 pub use progress::{ProgressPill, ProgressPillKind};
 pub use rounded_styled_text::{
     RoundedBackgroundStyle, RoundedStyledText, copy_active_rounded_text_selection,
+    intercept_active_rounded_text_copy,
 };
 pub use scroll_area::ScrollArea;
 pub use scroll_fade::ScrollFade;
