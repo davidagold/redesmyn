@@ -70,7 +70,15 @@ impl RenderOnce for MarkdownView {
             .text_color(base_text_color)
             .text_size(base_text_size);
 
+        let mut previous_block: Option<&MarkdownBlock> = None;
         for (ix, block) in self.doc.blocks.iter().enumerate() {
+            let mut copy_prefixes = CopyLinePrefixes::default();
+            if let Some(previous) = previous_block
+                && needs_extra_block_separator(previous, block)
+            {
+                copy_prefixes = copy_prefixes.prepend_first_line("\n");
+            }
+
             let block_id: ElementId = (base_id.clone(), format!("block-{ix}")).into();
             container = container.child(render_block(
                 block_id,
@@ -78,10 +86,11 @@ impl RenderOnce for MarkdownView {
                 base_text_color,
                 &base_id,
                 0,
-                CopyLinePrefixes::default(),
+                copy_prefixes,
                 window,
                 cx,
             ));
+            previous_block = Some(block);
         }
 
         if self.show_truncation_notice
@@ -304,6 +313,11 @@ fn render_block(
                 };
 
                 let item_id: ElementId = (id.clone(), format!("item-{ix}")).into();
+                let leading_copy_prefix = if ix == 0 {
+                    copy_prefixes.first_line.as_deref()
+                } else {
+                    None
+                };
                 list = list.child(render_list_item(
                     item_id,
                     display_marker,
@@ -312,6 +326,7 @@ fn render_block(
                     base_text_color,
                     selection_scope,
                     list_depth,
+                    leading_copy_prefix,
                     window,
                     cx,
                 ));
@@ -320,6 +335,10 @@ fn render_block(
             list.into_any_element()
         }
     }
+}
+
+fn needs_extra_block_separator(previous: &MarkdownBlock, current: &MarkdownBlock) -> bool {
+    matches!(previous, MarkdownBlock::List { .. }) || matches!(current, MarkdownBlock::List { .. })
 }
 
 fn first_markdown_inline_single_line_atoms(doc: &MarkdownDoc) -> Vec<InlineAtom> {
@@ -496,13 +515,17 @@ fn render_list_item(
     base_text_color: Hsla,
     selection_scope: &ElementId,
     list_depth: usize,
+    leading_copy_prefix: Option<&str>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let theme = theme_for_window(window, cx);
 
     let content_id: ElementId = (id.clone(), "content").into();
-    let copy_prefixes = CopyLinePrefixes::for_list_marker(list_depth, &copy_marker);
+    let mut copy_prefixes = CopyLinePrefixes::for_list_marker(list_depth, &copy_marker);
+    if let Some(prefix) = leading_copy_prefix {
+        copy_prefixes = copy_prefixes.prepend_first_line(prefix);
+    }
     div()
         .id(id)
         .flex()
@@ -609,6 +632,23 @@ impl CopyLinePrefixes {
             first_line: self.continuation.clone(),
             continuation: self.continuation.clone(),
         }
+    }
+
+    fn prepend_first_line(mut self, prefix: &str) -> Self {
+        if prefix.is_empty() {
+            return self;
+        }
+
+        match self.first_line {
+            Some(first_line) => {
+                self.first_line = Some(format!("{prefix}{first_line}"));
+            }
+            None => {
+                self.first_line = Some(prefix.to_string());
+            }
+        }
+
+        self
     }
 
     fn for_list_marker(list_depth: usize, marker: &str) -> Self {
