@@ -11,6 +11,7 @@ use redesmyn_markdown::{MarkdownBlock, MarkdownDoc, MarkdownInline};
 
 use crate::utils::{theme_for_window, OpenExternalUrl as _};
 
+use super::rounded_styled_text::RoundedTextCopySpan;
 use super::{
     ButtonKind, RoundedBackgroundStyle, RoundedStyledText, ScrollbarAxis, StyledScrollbar,
     TextButton,
@@ -727,6 +728,47 @@ enum TextFlavor {
     Link(gpui::Hsla),
 }
 
+fn atom_markdown_text(text: &str, style: InlineStyle, link: Option<&str>) -> String {
+    let styled = markdown_text_for_style(text, style);
+    if let Some(destination) = link {
+        format!("[{styled}]({destination})")
+    } else {
+        styled
+    }
+}
+
+fn markdown_text_for_style(text: &str, style: InlineStyle) -> String {
+    if style.code {
+        return markdown_code_span(text);
+    }
+
+    if style.bold && style.italic {
+        format!("***{text}***")
+    } else if style.bold {
+        format!("**{text}**")
+    } else if style.italic {
+        format!("*{text}*")
+    } else {
+        text.to_string()
+    }
+}
+
+fn markdown_code_span(text: &str) -> String {
+    let mut longest_run = 0usize;
+    let mut current_run = 0usize;
+    for ch in text.chars() {
+        if ch == '`' {
+            current_run += 1;
+            longest_run = longest_run.max(current_run);
+        } else {
+            current_run = 0;
+        }
+    }
+
+    let fence = "`".repeat(longest_run.saturating_add(1));
+    format!("{fence}{text}{fence}")
+}
+
 fn styled_text_div(
     id: ElementId,
     atoms: Vec<InlineAtom>,
@@ -758,6 +800,7 @@ fn styled_text_div(
     };
     let mut text = String::new();
     let mut runs = Vec::new();
+    let mut copy_spans: Vec<RoundedTextCopySpan> = Vec::new();
 
     let (default_color, underline) = match flavor {
         TextFlavor::Body(color) => (color, None),
@@ -785,7 +828,7 @@ fn styled_text_div(
         let InlineAtom {
             text: atom_text,
             style: atom_style,
-            link: _,
+            link,
         } = atom;
 
         let mut font = if atom_style.code {
@@ -816,7 +859,15 @@ fn styled_text_div(
             underline,
             strikethrough: None,
         });
+        let start = text.len();
         text.push_str(&atom_text);
+        let end = text.len();
+        if selectable {
+            copy_spans.push(RoundedTextCopySpan {
+                range: start..end,
+                markdown: atom_markdown_text(&atom_text, atom_style, link.as_deref()).into(),
+            });
+        }
     }
 
     let mut text_element = RoundedStyledText::new(text)
@@ -832,7 +883,8 @@ fn styled_text_div(
     if selectable {
         text_element = text_element
             .selectable(true)
-            .selection_scope(selection_scope.clone());
+            .selection_scope(selection_scope.clone())
+            .copy_spans(copy_spans);
     }
 
     div().id(id).min_w_0().flex_shrink().child(text_element)
@@ -871,6 +923,7 @@ fn styled_text_block(
     };
     let mut text = String::new();
     let mut runs = Vec::new();
+    let mut copy_spans: Vec<RoundedTextCopySpan> = Vec::new();
 
     let (default_color, underline) = match flavor {
         TextFlavor::Body(color) => (color, None),
@@ -898,7 +951,7 @@ fn styled_text_block(
         let InlineAtom {
             text: atom_text,
             style: atom_style,
-            link: _,
+            link,
         } = atom;
 
         let mut font = if atom_style.code {
@@ -929,7 +982,15 @@ fn styled_text_block(
             underline,
             strikethrough: None,
         });
+        let start = text.len();
         text.push_str(&atom_text);
+        let end = text.len();
+        if selectable {
+            copy_spans.push(RoundedTextCopySpan {
+                range: start..end,
+                markdown: atom_markdown_text(&atom_text, atom_style, link.as_deref()).into(),
+            });
+        }
     }
 
     let mut text_element = RoundedStyledText::new(text)
@@ -945,7 +1006,8 @@ fn styled_text_block(
     if selectable {
         text_element = text_element
             .selectable(true)
-            .selection_scope(selection_scope.clone());
+            .selection_scope(selection_scope.clone())
+            .copy_spans(copy_spans);
     }
 
     div().id(id).min_w_0().w_full().child(text_element)

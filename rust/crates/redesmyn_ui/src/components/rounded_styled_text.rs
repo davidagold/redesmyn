@@ -1,10 +1,10 @@
-use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
+use std::{cell::RefCell, cmp::Ordering, collections::HashMap, ops::Range, rc::Rc, sync::Arc};
 
 use gpui::{
-    fill, point, px, size, App, AvailableSpace, Bounds, CursorStyle, DispatchPhase, Element,
-    ElementId, EntityId, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, LayoutId,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size,
-    TextAlign, TextRun, WhiteSpace, Window,
+    fill, point, px, size, App, AvailableSpace, Bounds, ClipboardItem, CursorStyle, DispatchPhase,
+    Element, ElementId, EntityId, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId,
+    KeyDownEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    Point, SharedString, Size, TextAlign, TextRun, WhiteSpace, Window,
 };
 
 use crate::utils::theme_for_window;
@@ -35,6 +35,12 @@ struct BackgroundSpan {
     color: gpui::Hsla,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct RoundedTextCopySpan {
+    pub range: Range<usize>,
+    pub markdown: SharedString,
+}
+
 /// `StyledText`, but paints any `TextRun.background_color` runs with rounded rects.
 ///
 /// This exists because GPUI currently paints `TextRun.background_color` as square rectangles and
@@ -48,6 +54,7 @@ pub struct RoundedStyledText {
     id: Option<ElementId>,
     selectable: bool,
     selection_scope: Option<ElementId>,
+    copy_spans: Option<Arc<[RoundedTextCopySpan]>>,
 }
 
 impl RoundedStyledText {
@@ -60,6 +67,7 @@ impl RoundedStyledText {
             id: None,
             selectable: false,
             selection_scope: None,
+            copy_spans: None,
         }
     }
 
@@ -92,11 +100,19 @@ impl RoundedStyledText {
         self.selection_scope = Some(scope.into());
         self
     }
+
+    pub(super) fn copy_spans(mut self, copy_spans: Vec<RoundedTextCopySpan>) -> Self {
+        self.copy_spans = Some(copy_spans.into());
+        self
+    }
 }
 
 #[derive(Default)]
 struct RoundedTextSelectionGlobal {
     active: Option<ActiveRoundedTextSelection>,
+    elements:
+        HashMap<RegisteredRoundedTextSelectionElementId, RegisteredRoundedTextSelectionElement>,
+    revision: u64,
 }
 
 impl gpui::Global for RoundedTextSelectionGlobal {}
@@ -109,10 +125,126 @@ struct ActiveRoundedTextSelection {
     selecting: bool,
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 struct RoundedTextSelectionKey {
     view_id: EntityId,
     scope_id: ElementId,
+}
+
+#[derive(Clone, Eq, PartialEq, Hash)]
+struct RegisteredRoundedTextSelectionElementId {
+    key: RoundedTextSelectionKey,
+    element_id: ElementId,
+}
+
+#[derive(Clone)]
+struct RegisteredRoundedTextSelectionElement {
+    key: RoundedTextSelectionKey,
+    bounds: Bounds<Pixels>,
+    layout: RoundedTextLayout,
+    text: SharedString,
+    copy_spans: Option<Arc<[RoundedTextCopySpan]>>,
+    last_seen_revision: u64,
+}
+
+impl RoundedTextSelectionGlobal {
+    fn upsert_element(
+        &mut self,
+        element_id: ElementId,
+        key: RoundedTextSelectionKey,
+        bounds: Bounds<Pixels>,
+        layout: RoundedTextLayout,
+        text: SharedString,
+        copy_spans: Option<Arc<[RoundedTextCopySpan]>>,
+    ) {
+        self.revision = self.revision.saturating_add(1);
+        self.elements.insert(
+            RegisteredRoundedTextSelectionElementId {
+                key: key.clone(),
+                element_id,
+            },
+            RegisteredRoundedTextSelectionElement {
+                key,
+                bounds,
+                layout,
+                text,
+                copy_spans,
+                last_seen_revision: self.revision,
+            },
+        );
+        self.prune_stale_elements();
+    }
+
+    fn prune_stale_elements(&mut self) {
+        const MAX_TRACKED_ELEMENTS: usize = 4096;
+        const MAX_STALE_REVISIONS: u64 = 2048;
+        if self.elements.len() <= MAX_TRACKED_ELEMENTS {
+            return;
+        }
+
+        let min_seen = self.revision.saturating_sub(MAX_STALE_REVISIONS);
+        self.elements
+            .retain(|_, element| element.last_seen_revision >= min_seen);
+    }
+
+    fn selected_copy_text_for_key(&self, key: &RoundedTextSelectionKey) -> Option<String> {
+        let active = self.active.as_ref()?;
+        if &active.key != key {
+            return None;
+        }
+
+        let mut pieces = self
+            .elements
+            .values()
+            .filter(|element| &element.key == key)
+            .filter_map(|element| {
+                let selected = element
+                    .layout
+                    .selection_range_for_positions(active.anchor_position, active.head_position)?;
+                let copy_text = copy_text_for_range(
+                    element.text.as_ref(),
+                    selected,
+                    element.copy_spans.as_deref(),
+                );
+                (!copy_text.is_empty()).then(|| RegisteredSelectionPiece {
+                    top: element.bounds.origin.y,
+                    left: element.bounds.origin.x,
+                    text: copy_text,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        if pieces.is_empty() {
+            return None;
+        }
+
+        pieces.sort_by(|a, b| {
+            a.top
+                .partial_cmp(&b.top)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| a.left.partial_cmp(&b.left).unwrap_or(Ordering::Equal))
+        });
+
+        let mut output = String::new();
+        let mut previous_top = None;
+        for piece in pieces {
+            if let Some(prev_top) = previous_top
+                && (piece.top < prev_top - px(0.5) || piece.top > prev_top + px(0.5))
+            {
+                output.push('\n');
+            }
+            output.push_str(&piece.text);
+            previous_top = Some(piece.top);
+        }
+
+        Some(output)
+    }
+}
+
+struct RegisteredSelectionPiece {
+    top: Pixels,
+    left: Pixels,
+    text: String,
 }
 
 impl gpui::IntoElement for RoundedStyledText {
@@ -182,6 +314,18 @@ impl Element for RoundedStyledText {
                 view_id: window.current_view(),
                 scope_id,
             };
+
+            if let (Some(element_id), Some(bounds)) = (self.id.clone(), self.layout.bounds()) {
+                let global = cx.default_global::<RoundedTextSelectionGlobal>();
+                global.upsert_element(
+                    element_id,
+                    key.clone(),
+                    bounds,
+                    self.layout.clone(),
+                    self.text.clone(),
+                    self.copy_spans.clone(),
+                );
+            }
 
             if hitbox.is_hovered(window) {
                 window.set_cursor_style(CursorStyle::IBeam, hitbox);
@@ -258,6 +402,25 @@ impl Element for RoundedStyledText {
                 active.head_position = event.position;
                 active.selecting = false;
                 window.refresh();
+            });
+
+            let key_for_copy = key.clone();
+            window.on_key_event(move |event: &KeyDownEvent, phase, window, cx| {
+                if phase != DispatchPhase::Bubble
+                    || !is_copy_keystroke(event)
+                    || window.default_prevented()
+                {
+                    return;
+                }
+
+                let global = cx.default_global::<RoundedTextSelectionGlobal>();
+                let Some(copy_text) = global.selected_copy_text_for_key(&key_for_copy) else {
+                    return;
+                };
+
+                cx.write_to_clipboard(ClipboardItem::new_string(copy_text));
+                cx.stop_propagation();
+                window.prevent_default();
             });
 
             let selected = {
@@ -384,6 +547,10 @@ impl RoundedTextLayout {
             .as_mut()
             .unwrap_or_else(|| panic!("measurement has not been performed on {text}"));
         element_state.bounds = Some(bounds);
+    }
+
+    fn bounds(&self) -> Option<Bounds<Pixels>> {
+        self.0.borrow().as_ref().and_then(|state| state.bounds)
     }
 
     fn index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
@@ -563,6 +730,61 @@ impl RoundedTextLayout {
             line_start_ix = line_end_ix + 1;
         }
     }
+}
+
+fn is_copy_keystroke(event: &KeyDownEvent) -> bool {
+    let modifiers = &event.keystroke.modifiers;
+    let has_primary_modifier = modifiers.platform || modifiers.control;
+    has_primary_modifier && !modifiers.alt && !modifiers.function && event.keystroke.key == "c"
+}
+
+fn copy_text_for_range(
+    text: &str,
+    selected_range: Range<usize>,
+    copy_spans: Option<&[RoundedTextCopySpan]>,
+) -> String {
+    let start = selected_range.start.min(text.len());
+    let end = selected_range.end.min(text.len());
+    if start >= end {
+        return String::new();
+    }
+    let selected_range = start..end;
+
+    let Some(copy_spans) = copy_spans else {
+        return text.get(selected_range).unwrap_or("").to_string();
+    };
+
+    let mut output = String::new();
+    let mut cursor = selected_range.start;
+    for span in copy_spans {
+        if span.range.end <= selected_range.start || span.range.start >= selected_range.end {
+            continue;
+        }
+
+        let overlap_start = selected_range.start.max(span.range.start);
+        let overlap_end = selected_range.end.min(span.range.end);
+
+        if cursor < overlap_start {
+            if let Some(slice) = text.get(cursor..overlap_start) {
+                output.push_str(slice);
+            }
+        }
+
+        if overlap_start == span.range.start && overlap_end == span.range.end {
+            output.push_str(span.markdown.as_ref());
+        } else if let Some(slice) = text.get(overlap_start..overlap_end) {
+            output.push_str(slice);
+        }
+        cursor = overlap_end;
+    }
+
+    if cursor < selected_range.end
+        && let Some(slice) = text.get(cursor..selected_range.end)
+    {
+        output.push_str(slice);
+    }
+
+    output
 }
 
 fn compute_background_spans(runs: &[TextRun]) -> Vec<BackgroundSpan> {
