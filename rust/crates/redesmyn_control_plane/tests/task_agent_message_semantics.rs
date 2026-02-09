@@ -7,7 +7,7 @@ use redesmyn_control_plane::client_api::ClientApiCodec;
 use redesmyn_control_plane::{ControlPlane, DaemonLinkHandle};
 use redesmyn_ids::{CommandId, EpicId, RepoId, RequestId, SessionId, TaskId, WorkspaceId};
 use redesmyn_protocol::agent_commands::{
-    ResumeByIdTaskAgentTurnCommand, SESSION_AGENT_RESUME_BY_ID_TURN, StartTaskAgentSessionCommand,
+    ResumeByIdTaskAgentTurnCommand, StartTaskAgentSessionCommand, SESSION_AGENT_RESUME_BY_ID_TURN,
     TASK_AGENT_START,
 };
 use redesmyn_protocol::client::{
@@ -26,9 +26,9 @@ use redesmyn_protocol::session::{
 use redesmyn_protocol::{
     ErrorCategory, ProtocolEnvelope, ProtocolVersion, RepoScope, Scope, SessionEvent, Timestamp,
 };
-use redesmyn_transport::client::ClientConnection;
 use redesmyn_transport::client::codec::ProtobufCodec;
 use redesmyn_transport::client::framed::FramedEndpoint;
+use redesmyn_transport::client::ClientConnection;
 use redesmyn_transport::in_proc::InProcEndpoint;
 use tokio::sync::mpsc;
 
@@ -849,6 +849,117 @@ async fn send_task_agent_message_rejects_invalid_intent_over_client_api() {
         other => panic!("expected invalid request error, got {other:?}"),
     }
 
+    drop(shutdown_tx);
+    server.abort();
+}
+
+#[tokio::test]
+async fn send_task_agent_message_returns_success_with_warning_when_event_persist_fails() {
+    redesmyn_logging::init();
+
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let socket_path = tmp.path().join("control_plane.sock");
+
+    let control_plane = ControlPlane::open_test().await.expect("control plane");
+    let (repo_scope, task_id) = seed_repo_and_task(&control_plane).await;
+
+    sqlx::query(
+        r#"
+        CREATE TRIGGER fail_task_agent_message_sent_insert
+        BEFORE INSERT ON session_events
+        WHEN NEW.kind = 'task_agent_message_sent'
+        BEGIN
+            SELECT RAISE(FAIL, 'forced task_agent_message_sent persistence failure');
+        END
+        "#,
+    )
+    .execute(control_plane.pool())
+    .await
+    .expect("create trigger");
+
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<()>(1);
+    let server = tokio::spawn({
+        let socket_path = socket_path.clone();
+        let control_plane = control_plane.clone();
+        async move {
+            redesmyn_control_plane::client_api::serve_client_api_uds(
+                control_plane,
+                socket_path,
+                ClientApiCodec::Protobuf,
+                &mut shutdown_rx,
+            )
+            .await
+        }
+    });
+
+    let (cp_conn, daemon_conn) = InProcEndpoint::pair(64);
+    let daemon_link = DaemonLinkHandle::start(
+        &tokio::runtime::Handle::current(),
+        control_plane.clone(),
+        cp_conn,
+    );
+
+    let (dispatch_tx, mut dispatch_rx) = mpsc::channel::<DispatchObserved>(32);
+    tokio::spawn(run_mock_daemon(daemon_conn, repo_scope, dispatch_tx));
+
+    let scope = Scope::from(repo_scope);
+    let sent = control_plane_request(
+        &socket_path,
+        scope,
+        RequestPayload::SendTaskAgentMessage(SendTaskAgentMessageRequest {
+            task_id,
+            message: "hello".to_string(),
+            intent: Some("plan".to_string()),
+            on_conflict: AgentMessageConflictAction::Fail,
+            interrupt: None,
+            agent_kind: AgentKind::Codex,
+        }),
+    )
+    .await;
+
+    let ResponseResult::SendTaskAgentMessage(sent) = sent else {
+        panic!("unexpected response: {sent:?}");
+    };
+    assert_eq!(
+        sent.delivery,
+        redesmyn_protocol::client::TaskAgentMessageDelivery::StructuredStarted
+    );
+    assert!(
+        sent.warnings
+            .iter()
+            .any(|warning| warning == "task_agent_message_sent_event_persist_failed"),
+        "expected persistence warning, got: {:?}",
+        sent.warnings
+    );
+
+    let dispatch = dispatch_rx.recv().await.expect("dispatch");
+    assert_eq!(dispatch.command_kind, TASK_AGENT_START);
+
+    let wait = control_plane_request(
+        &socket_path,
+        scope,
+        RequestPayload::WaitForCommand(WaitForCommandRequest {
+            command_id: sent.command.command_id,
+            terminal_states: Vec::new(),
+            timeout_ms: 2_000,
+        }),
+    )
+    .await;
+    assert!(matches!(wait, ResponseResult::WaitForCommand(_)));
+
+    let (persisted_events, _cursor) = control_plane
+        .session_events()
+        .get_session_events(sent.session_id, None, 32, &[])
+        .await
+        .expect("query persisted session events");
+    assert!(
+        persisted_events
+            .iter()
+            .all(|event| !matches!(event.kind, SessionEventKind::TaskAgentMessageSent(_))),
+        "unexpectedly persisted task_agent_message_sent event despite forced failure"
+    );
+
+    daemon_link.shutdown().await;
     drop(shutdown_tx);
     server.abort();
 }
