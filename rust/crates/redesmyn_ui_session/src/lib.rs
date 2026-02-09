@@ -5204,6 +5204,8 @@ impl Render for SessionView {
                     let event_key = session_event_id_key(item.session_event_id);
                     let bubble_id: ElementId = ("session_event", event_key).into();
                     let timeline_item_gap_y = theme.spacing.xs * 2.0;
+                    let timeline_item_gap_top = if ix == 0 { px(0.0) } else { timeline_item_gap_y };
+                    let timeline_item_inset_x = theme.spacing.md;
 
                     let render_tool_group_row = |chevron: &'static str,
                                                  group_id: SessionEventId,
@@ -5220,8 +5222,9 @@ impl Render for SessionView {
                             .flex_row()
                             .items_center()
                             .gap(theme.spacing.sm)
-                            .px(theme.spacing.sm)
-                            .py(timeline_item_gap_y)
+                            .px(timeline_item_inset_x)
+                            .pt(timeline_item_gap_top)
+                            .pb(timeline_item_gap_y)
                             .rounded_sm()
                             .when(is_expanded, |this| {
                                 this.bg(theme.colors.surface_elevated.opacity(0.18))
@@ -5309,8 +5312,9 @@ impl Render for SessionView {
                                 .flex()
                                 .flex_col()
                                 .gap(gap)
-                                .px(theme.spacing.sm)
-                                .py(theme.spacing.sm)
+                                .px(timeline_item_inset_x)
+                                .pt(timeline_item_gap_top)
+                                .pb(theme.spacing.sm)
                                 .rounded_md();
 
                             container = container.child(
@@ -5581,7 +5585,12 @@ impl Render for SessionView {
                                 px(560.0)
                             };
                             let bubble_padding_x = if align_right {
-                                theme.spacing.md
+                                theme.spacing.md + theme.spacing.xs
+                            } else {
+                                theme.spacing.sm + theme.spacing.xs
+                            };
+                            let bubble_padding_y = if align_right {
+                                theme.spacing.sm + theme.spacing.xs
                             } else {
                                 theme.spacing.sm
                             };
@@ -5684,7 +5693,7 @@ impl Render for SessionView {
                                 .max_w(bubble_max_width)
                                 .min_w_0()
                                 .px(bubble_padding_x)
-                                .py(theme.spacing.sm)
+                                .py(bubble_padding_y)
                                 .rounded(theme.radius.xl)
                                 .when_some(bg, |this, bg| this.bg(bg));
 
@@ -5810,14 +5819,14 @@ impl Render for SessionView {
                                 .min_w_0()
                                 .flex()
                                 .flex_row()
-                                .px(theme.spacing.sm);
+                                .px(timeline_item_inset_x);
                             if align_right {
                                 row = row.justify_end();
                             } else {
                                 row = row.justify_start();
                             }
 
-                            row = row.py(timeline_item_gap_y);
+                            row = row.pt(timeline_item_gap_top).pb(timeline_item_gap_y);
 
                             list.child(row.child(bubble))
                         }
@@ -6193,8 +6202,9 @@ impl Render for SessionView {
 
                             list.child(
                                 div()
-                                    .px(theme.spacing.sm)
-                                    .py(timeline_item_gap_y)
+                                    .px(timeline_item_inset_x)
+                                    .pt(timeline_item_gap_top)
+                                    .pb(timeline_item_gap_y)
                                     .child(callout),
                             )
                         }
@@ -6218,8 +6228,9 @@ impl Render for SessionView {
 
                                 list.child(
                                     div()
-                                        .px(theme.spacing.sm)
-                                        .py(timeline_item_gap_y)
+                                        .px(timeline_item_inset_x)
+                                        .pt(timeline_item_gap_top)
+                                        .pb(timeline_item_gap_y)
                                         .child(
                                             Callout::new(format!("{message} ({by})"))
                                                 .kind(kind)
@@ -6394,8 +6405,9 @@ impl Render for SessionView {
                                             .flex()
                                             .flex_col()
                                             .gap(gap)
-                                            .px(theme.spacing.sm)
-                                            .py(timeline_item_gap_y)
+                                            .px(timeline_item_inset_x)
+                                            .pt(timeline_item_gap_top)
+                                            .pb(timeline_item_gap_y)
                                             .child(summary);
 
                                         if expanded || is_animating {
@@ -6740,8 +6752,9 @@ impl Render for SessionView {
                                                 .flex()
                                                 .flex_col()
                                                 .gap(gap)
-                                                .px(theme.spacing.sm)
-                                                .py(timeline_item_gap_y)
+                                                .px(timeline_item_inset_x)
+                                                .pt(timeline_item_gap_top)
+                                                .pb(timeline_item_gap_y)
                                                 .child(summary);
 
                                             if expanded || is_animating {
@@ -6907,7 +6920,7 @@ impl Render for SessionView {
                                         .id(bubble_id)
                                         .w_full()
                                         .min_w_0()
-                                        .px(theme.spacing.sm)
+                                        .px(timeline_item_inset_x)
                                         .py(theme.spacing.sm)
                                         .rounded_sm()
                                         .bg(theme.colors.surface_elevated.opacity(0.35))
