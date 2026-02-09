@@ -2729,6 +2729,8 @@ impl Render for GraphView {
             let entity_id = cx.entity_id();
             let primary_selected = self.visual_selected_node();
             let selection_snapshot = self.scene.selection().clone();
+            let allow_expanded_task_card = selection_snapshot.selected_edge.is_none()
+                && selection_snapshot.selected_nodes.len() == 1;
             let selected_nodes = selection_snapshot.selected_nodes;
             let hovered_node = selection_snapshot.hovered_node;
             let quick_actions_fade_duration = ui_test_mode_animation_duration(theme.animation.fast);
@@ -2764,7 +2766,9 @@ impl Render for GraphView {
                             && animation.to_selected_node != Some(node_id)
                     });
 
-                let expandedness = if is_animating_expand {
+                let expandedness = if !allow_expanded_task_card {
+                    0.0
+                } else if is_animating_expand {
                     t
                 } else if is_animating_collapse {
                     1.0 - t
@@ -3074,7 +3078,11 @@ impl Render for GraphView {
                         }
                     };
 
-                    let right_scroll = self.expanded_details_scroll.clone();
+                    let right_scroll = if is_primary_selected {
+                        self.expanded_details_scroll.clone()
+                    } else {
+                        ScrollHandle::new()
+                    };
                     let latest_session = node.latest_session.clone();
                     let description_state = self.selected_task_description.clone();
                     let active_tab = self.expanded_task_tab;

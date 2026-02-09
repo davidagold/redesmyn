@@ -5206,6 +5206,21 @@ impl Render for SessionView {
                     let timeline_item_gap_y = theme.spacing.xs * 2.0;
                     let timeline_item_gap_top = if ix == 0 { px(0.0) } else { timeline_item_gap_y };
                     let timeline_item_inset_x = theme.spacing.md;
+                    let build_message_row =
+                        |row_id: ElementId, bubble: AnyElement, align_right: bool| {
+                            div()
+                                .id(row_id)
+                                .w_full()
+                                .min_w_0()
+                                .flex()
+                                .flex_row()
+                                .px(timeline_item_inset_x)
+                                .pt(timeline_item_gap_top)
+                                .pb(timeline_item_gap_y)
+                                .when(align_right, |this| this.justify_end())
+                                .when(!align_right, |this| this.justify_start())
+                                .child(bubble)
+                        };
 
                     let render_tool_group_row = |chevron: &'static str,
                                                  group_id: SessionEventId,
@@ -5813,22 +5828,11 @@ impl Render for SessionView {
                                 }
                             }
 
-                            let mut row = div()
-                                .id((bubble_id.clone(), "row"))
-                                .w_full()
-                                .min_w_0()
-                                .flex()
-                                .flex_row()
-                                .px(timeline_item_inset_x);
-                            if align_right {
-                                row = row.justify_end();
-                            } else {
-                                row = row.justify_start();
-                            }
-
-                            row = row.pt(timeline_item_gap_top).pb(timeline_item_gap_y);
-
-                            list.child(row.child(bubble))
+                            list.child(build_message_row(
+                                (bubble_id.clone(), "row").into(),
+                                bubble.into_any_element(),
+                                align_right,
+                            ))
                         }
                         SessionEventItemContent::PermissionsModeChanged(_)
                         | SessionEventItemContent::CodexApprovalPolicyChanged(_)
