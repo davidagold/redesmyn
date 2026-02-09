@@ -110,7 +110,7 @@ async fn insert_stopped_task_session(
             title,
             started_at_ms,
             ended_at_ms,
-            closed_at_ms
+            archived_at_ms
         ) VALUES (
             ?1, ?2, ?3, ?4, ?5, 'task', ?6, 'codex', 'stopped', ?7, NULL, ?8, ?9, NULL
         )

@@ -21,8 +21,10 @@ use crate::session::{
     FileChangePermissionRequest, ImageAttachment, InterfaceMode, PermissionDecided,
     PermissionDecision, PermissionDecisionBy, PermissionRequest, PermissionRequested,
     PermissionsMode, PermissionsModeChanged, SessionEvent, SessionEventKind, SessionModelChanged,
-    SessionModelReasoningEffort, SessionScope, StatusUpdate, ToolInvocation, ToolResult,
-    TurnCompleted, TurnStarted, TurnState, UnknownSessionEvent, UserMessage,
+    SessionModelReasoningEffort, SessionScope, StatusUpdate, TaskAgentMessageAgentKind,
+    TaskAgentMessageConversationContinuity, TaskAgentMessageDelivery, TaskAgentMessageSent,
+    ToolInvocation, ToolResult, TurnCompleted, TurnStarted, TurnState, UnknownSessionEvent,
+    UserMessage,
 };
 use crate::session_live::{
     AssistantMessageDelta, AssistantReasoningRawDelta, AssistantReasoningSummaryDelta,
@@ -1409,6 +1411,133 @@ impl StatusUpdate {
     }
 }
 
+fn encode_session_task_agent_message_agent_kind(value: TaskAgentMessageAgentKind) -> i32 {
+    match value {
+        TaskAgentMessageAgentKind::Codex => pbv1::SessionTaskAgentMessageAgentKind::Codex as i32,
+        TaskAgentMessageAgentKind::ClaudeCode => {
+            pbv1::SessionTaskAgentMessageAgentKind::ClaudeCode as i32
+        }
+        TaskAgentMessageAgentKind::Shell => pbv1::SessionTaskAgentMessageAgentKind::Shell as i32,
+        TaskAgentMessageAgentKind::Unknown => {
+            pbv1::SessionTaskAgentMessageAgentKind::Unspecified as i32
+        }
+    }
+}
+
+fn decode_session_task_agent_message_agent_kind(value: i32) -> TaskAgentMessageAgentKind {
+    match pbv1::SessionTaskAgentMessageAgentKind::try_from(value) {
+        Ok(pbv1::SessionTaskAgentMessageAgentKind::Codex) => TaskAgentMessageAgentKind::Codex,
+        Ok(pbv1::SessionTaskAgentMessageAgentKind::ClaudeCode) => {
+            TaskAgentMessageAgentKind::ClaudeCode
+        }
+        Ok(pbv1::SessionTaskAgentMessageAgentKind::Shell) => TaskAgentMessageAgentKind::Shell,
+        Ok(pbv1::SessionTaskAgentMessageAgentKind::Unspecified) | Err(_) => {
+            TaskAgentMessageAgentKind::Unknown
+        }
+    }
+}
+
+fn encode_session_task_agent_message_delivery(value: TaskAgentMessageDelivery) -> i32 {
+    match value {
+        TaskAgentMessageDelivery::StructuredStarted => {
+            pbv1::SessionTaskAgentMessageDelivery::StructuredStarted as i32
+        }
+        TaskAgentMessageDelivery::StructuredResumed => {
+            pbv1::SessionTaskAgentMessageDelivery::StructuredResumed as i32
+        }
+        TaskAgentMessageDelivery::InteractiveStarted => {
+            pbv1::SessionTaskAgentMessageDelivery::InteractiveStarted as i32
+        }
+        TaskAgentMessageDelivery::InteractiveSent => {
+            pbv1::SessionTaskAgentMessageDelivery::InteractiveSent as i32
+        }
+        TaskAgentMessageDelivery::Unknown => {
+            pbv1::SessionTaskAgentMessageDelivery::Unspecified as i32
+        }
+    }
+}
+
+fn decode_session_task_agent_message_delivery(value: i32) -> TaskAgentMessageDelivery {
+    match pbv1::SessionTaskAgentMessageDelivery::try_from(value) {
+        Ok(pbv1::SessionTaskAgentMessageDelivery::StructuredStarted) => {
+            TaskAgentMessageDelivery::StructuredStarted
+        }
+        Ok(pbv1::SessionTaskAgentMessageDelivery::StructuredResumed) => {
+            TaskAgentMessageDelivery::StructuredResumed
+        }
+        Ok(pbv1::SessionTaskAgentMessageDelivery::InteractiveStarted) => {
+            TaskAgentMessageDelivery::InteractiveStarted
+        }
+        Ok(pbv1::SessionTaskAgentMessageDelivery::InteractiveSent) => {
+            TaskAgentMessageDelivery::InteractiveSent
+        }
+        Ok(pbv1::SessionTaskAgentMessageDelivery::Unspecified) | Err(_) => {
+            TaskAgentMessageDelivery::Unknown
+        }
+    }
+}
+
+fn encode_session_task_agent_message_conversation_continuity(
+    value: TaskAgentMessageConversationContinuity,
+) -> i32 {
+    match value {
+        TaskAgentMessageConversationContinuity::Kept => {
+            pbv1::SessionTaskAgentMessageConversationContinuity::Kept as i32
+        }
+        TaskAgentMessageConversationContinuity::Broken => {
+            pbv1::SessionTaskAgentMessageConversationContinuity::Broken as i32
+        }
+        TaskAgentMessageConversationContinuity::Unknown => {
+            pbv1::SessionTaskAgentMessageConversationContinuity::Unspecified as i32
+        }
+    }
+}
+
+fn decode_session_task_agent_message_conversation_continuity(
+    value: i32,
+) -> TaskAgentMessageConversationContinuity {
+    match pbv1::SessionTaskAgentMessageConversationContinuity::try_from(value) {
+        Ok(pbv1::SessionTaskAgentMessageConversationContinuity::Kept) => {
+            TaskAgentMessageConversationContinuity::Kept
+        }
+        Ok(pbv1::SessionTaskAgentMessageConversationContinuity::Broken) => {
+            TaskAgentMessageConversationContinuity::Broken
+        }
+        Ok(pbv1::SessionTaskAgentMessageConversationContinuity::Unspecified) | Err(_) => {
+            TaskAgentMessageConversationContinuity::Unknown
+        }
+    }
+}
+
+impl TaskAgentMessageSent {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::TaskAgentMessageSent {
+        pbv1::TaskAgentMessageSent {
+            intent: self.intent.clone(),
+            message: self.message.clone(),
+            message_preview: self.message_preview.clone(),
+            agent_kind: encode_session_task_agent_message_agent_kind(self.agent_kind),
+            delivery: encode_session_task_agent_message_delivery(self.delivery),
+            conversation_continuity: encode_session_task_agent_message_conversation_continuity(
+                self.conversation_continuity,
+            ),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::TaskAgentMessageSent) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            intent: proto.intent,
+            message: proto.message,
+            message_preview: proto.message_preview,
+            agent_kind: decode_session_task_agent_message_agent_kind(proto.agent_kind),
+            delivery: decode_session_task_agent_message_delivery(proto.delivery),
+            conversation_continuity: decode_session_task_agent_message_conversation_continuity(
+                proto.conversation_continuity,
+            ),
+        })
+    }
+}
+
 fn encode_permissions_mode(value: PermissionsMode) -> i32 {
     match value {
         PermissionsMode::Ask => pbv1::PermissionsMode::Ask as i32,
@@ -2088,6 +2217,9 @@ impl SessionEvent {
                 SessionEventKind::StatusUpdate(ev) => {
                     pbv1::session_event::Kind::StatusUpdate(ev.to_protobuf())
                 }
+                SessionEventKind::TaskAgentMessageSent(ev) => {
+                    pbv1::session_event::Kind::TaskAgentMessageSent(ev.to_protobuf())
+                }
                 SessionEventKind::PermissionsModeChanged(ev) => {
                     pbv1::session_event::Kind::PermissionsModeChanged(ev.to_protobuf())
                 }
@@ -2147,6 +2279,9 @@ impl SessionEvent {
             }
             Some(pbv1::session_event::Kind::StatusUpdate(ev)) => {
                 SessionEventKind::StatusUpdate(StatusUpdate::try_from_protobuf(ev)?)
+            }
+            Some(pbv1::session_event::Kind::TaskAgentMessageSent(ev)) => {
+                SessionEventKind::TaskAgentMessageSent(TaskAgentMessageSent::try_from_protobuf(ev)?)
             }
             Some(pbv1::session_event::Kind::PermissionsModeChanged(ev)) => {
                 SessionEventKind::PermissionsModeChanged(PermissionsModeChanged::try_from_protobuf(
@@ -3064,6 +3199,9 @@ fn encode_session_event_kind_filter(value: crate::client::SessionEventKindFilter
         crate::client::SessionEventKindFilter::StatusUpdate => {
             pbv1::SessionEventKindFilter::StatusUpdate as i32
         }
+        crate::client::SessionEventKindFilter::TaskAgentMessageSent => {
+            pbv1::SessionEventKindFilter::TaskAgentMessageSent as i32
+        }
         crate::client::SessionEventKindFilter::ArtifactEmitted => {
             pbv1::SessionEventKindFilter::ArtifactEmitted as i32
         }
@@ -3122,6 +3260,9 @@ fn decode_session_event_kind_filter(value: i32) -> crate::client::SessionEventKi
         }
         Ok(pbv1::SessionEventKindFilter::StatusUpdate) => {
             crate::client::SessionEventKindFilter::StatusUpdate
+        }
+        Ok(pbv1::SessionEventKindFilter::TaskAgentMessageSent) => {
+            crate::client::SessionEventKindFilter::TaskAgentMessageSent
         }
         Ok(pbv1::SessionEventKindFilter::ArtifactEmitted) => {
             crate::client::SessionEventKindFilter::ArtifactEmitted
@@ -3759,6 +3900,7 @@ impl crate::client::SendTaskAgentMessageRequest {
             on_conflict: encode_agent_message_conflict_action(self.on_conflict),
             interrupt: self.interrupt,
             agent_kind: encode_agent_kind(self.agent_kind),
+            intent: self.intent.clone(),
         }
     }
 
@@ -3768,6 +3910,7 @@ impl crate::client::SendTaskAgentMessageRequest {
         Ok(Self {
             task_id: decode_required_ulid::<TaskId>("task_id", &proto.task_id)?,
             message: proto.message,
+            intent: proto.intent,
             on_conflict: decode_agent_message_conflict_action(proto.on_conflict)?,
             interrupt: proto.interrupt,
             agent_kind: decode_agent_kind(proto.agent_kind)?,

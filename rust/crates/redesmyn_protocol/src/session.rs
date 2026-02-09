@@ -198,6 +198,47 @@ pub struct StatusUpdate {
     pub message: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskAgentMessageAgentKind {
+    Codex,
+    ClaudeCode,
+    Shell,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskAgentMessageDelivery {
+    StructuredStarted,
+    StructuredResumed,
+    InteractiveStarted,
+    InteractiveSent,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskAgentMessageConversationContinuity {
+    Kept,
+    Broken,
+    #[serde(other)]
+    Unknown,
+}
+
+/// Durable metadata for task-agent message sends (intent + delivery context).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TaskAgentMessageSent {
+    pub intent: String,
+    pub message: String,
+    pub message_preview: String,
+    pub agent_kind: TaskAgentMessageAgentKind,
+    pub delivery: TaskAgentMessageDelivery,
+    pub conversation_continuity: TaskAgentMessageConversationContinuity,
+}
+
 /// Codex app-server approval policy (provider-native).
 ///
 /// Mirrors the Codex `AskForApproval` enum (`"untrusted"`, `"on-request"`, ...).
@@ -413,6 +454,7 @@ pub enum SessionEventKind {
     ToolInvocation(ToolInvocation),
     ToolResult(ToolResult),
     StatusUpdate(StatusUpdate),
+    TaskAgentMessageSent(TaskAgentMessageSent),
     PermissionsModeChanged(PermissionsModeChanged),
     CodexApprovalPolicyChanged(CodexApprovalPolicyChanged),
     CodexSandboxPolicyChanged(CodexSandboxPolicyChanged),

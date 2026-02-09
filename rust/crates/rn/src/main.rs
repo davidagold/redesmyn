@@ -14,15 +14,19 @@ use redesmyn_client_api::uds::{UdsConnectOptions, connect_uds};
 use redesmyn_config::{
     discover_repo_root_from, global_config_path, legacy_db_path, repo_config_path, rust_db_path,
 };
+use redesmyn_ids::{RepoId, TaskId, WorkspaceId};
 use redesmyn_protocol::client::{
     AgentKind, AgentMessageConflictAction, CommandState, CreateCommandRequest, GetEpicGraphRequest,
-    ModelReasoningEffort, RequestPayload, ResponseResult, SessionModelSelection, StartAgentRequest,
-    WaitForCommandRequest,
+    GetLatestTaskSessionRequest, GetSessionEventsRequest, ModelReasoningEffort, RequestPayload,
+    ResponseResult, SendTaskAgentMessageRequest, SessionEventCursor, SessionEventKindFilter,
+    SessionModelSelection, StartAgentRequest, TaskAgentMessageConversationContinuity,
+    TaskAgentMessageDelivery, WaitForCommandRequest,
 };
 use redesmyn_protocol::prelude::BUILT_IN_PRELUDE_TEMPLATE;
 use redesmyn_protocol::sync_commands::{LOCAL_SYNC_FROM_DOCS_KIND, LocalSyncFromDocsCommand};
 use redesmyn_protocol::{
     CodexApprovalPolicy, CodexSandboxPolicy, ErrorCategory, ErrorEnvelope, ProtocolEnvelope, Scope,
+    SessionEvent, SessionEventKind, TurnState,
 };
 use serde::Serialize;
 use toml_edit::DocumentMut;
@@ -226,6 +230,10 @@ struct SyncArgs {
 enum TaskCommands {
     /// Start a task agent session (same control-plane request path as the desktop UI).
     Start(TaskStartArgs),
+    /// Send a durable message to a task agent through the control plane.
+    Send(TaskSendArgs),
+    /// Read durable task session history through the control plane.
+    History(TaskHistoryArgs),
 }
 
 #[derive(Debug, Args)]
@@ -249,6 +257,84 @@ struct TaskStartArgs {
     /// Timeout waiting for the start command to reach a terminal state.
     #[arg(long, default_value_t = 30_000)]
     timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+enum TaskSendConflictAction {
+    Fail,
+    InterruptTurn,
+    StopSessionAndStartNew,
+}
+
+impl From<TaskSendConflictAction> for AgentMessageConflictAction {
+    fn from(value: TaskSendConflictAction) -> Self {
+        match value {
+            TaskSendConflictAction::Fail => AgentMessageConflictAction::Fail,
+            TaskSendConflictAction::InterruptTurn => AgentMessageConflictAction::InterruptTurn,
+            TaskSendConflictAction::StopSessionAndStartNew => {
+                AgentMessageConflictAction::StopSessionAndStartNew
+            }
+        }
+    }
+}
+
+#[derive(Debug, Args)]
+struct TaskSendArgs {
+    /// Epic slug (defaults only if exactly one local epic exists).
+    #[arg(long)]
+    epic: Option<String>,
+
+    /// Task slug within the epic (e.g. `T-3`).
+    #[arg(long)]
+    task: String,
+
+    /// Message text to send.
+    #[arg(long)]
+    message: String,
+
+    /// Intent metadata for orchestration/UI interpretation.
+    #[arg(long, default_value = "unspecified")]
+    intent: String,
+
+    /// Conflict behavior if another turn/session is in flight.
+    #[arg(long, value_enum, default_value_t = TaskSendConflictAction::Fail)]
+    on_conflict: TaskSendConflictAction,
+
+    /// Shorthand for `--on-conflict interrupt_turn`.
+    #[arg(long)]
+    interrupt: bool,
+
+    /// Path within the repo to operate in (defaults to current directory).
+    #[arg(long)]
+    repo: Option<PathBuf>,
+
+    /// Timeout waiting for the resulting command to reach a terminal state.
+    #[arg(long, default_value_t = 30_000)]
+    timeout_ms: u64,
+}
+
+#[derive(Debug, Args)]
+struct TaskHistoryArgs {
+    /// Epic slug (defaults only if exactly one local epic exists).
+    #[arg(long)]
+    epic: Option<String>,
+
+    /// Task slug within the epic (e.g. `T-3`).
+    #[arg(long)]
+    task: String,
+
+    /// Number of events to read (newest N, rendered chronologically).
+    #[arg(long, default_value_t = 100)]
+    limit: u32,
+
+    /// Include all durable event kinds instead of transcript-only kinds.
+    #[arg(long)]
+    all: bool,
+
+    /// Path within the repo to operate in (defaults to current directory).
+    #[arg(long)]
+    repo: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -562,6 +648,8 @@ fn sync(args: SyncArgs, output: &Output) -> CommandOutcome {
 fn task(cmd: TaskCommands, output: &Output) -> CommandOutcome {
     match cmd {
         TaskCommands::Start(args) => task_start(args, output),
+        TaskCommands::Send(args) => task_send(args, output),
+        TaskCommands::History(args) => task_history(args, output),
     }
 }
 
@@ -707,6 +795,868 @@ fn task_start(args: TaskStartArgs, output: &Output) -> CommandOutcome {
                 .message
                 .unwrap_or_else(|| format!("failed to start task agent (state={})", report.state)),
         ))
+    }
+}
+
+fn task_send(args: TaskSendArgs, output: &Output) -> CommandOutcome {
+    let start = match args.repo {
+        Some(path) => path,
+        None => match env::current_dir() {
+            Ok(cwd) => cwd,
+            Err(err) => {
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    format!("failed to read cwd: {err}"),
+                ));
+            }
+        },
+    };
+
+    let repo_root = match discover_repo_root_from(&start) {
+        Some(repo_root) => repo_root,
+        None => {
+            return CommandOutcome::Failure(ErrorEnvelope::new(
+                ErrorCategory::InvalidRequest,
+                format!(
+                    "no .git directory found from {} (pass --repo to specify a repo)",
+                    start.display()
+                ),
+            ));
+        }
+    };
+
+    let epic_slug = if let Some(epic) = args.epic {
+        epic
+    } else if let Some(inferred) = infer_single_epic_slug_from_fs(&repo_root) {
+        inferred
+    } else {
+        return CommandOutcome::Failure(ErrorEnvelope::new(
+            ErrorCategory::InvalidRequest,
+            "multiple epics found; pass --epic <slug>",
+        ));
+    };
+
+    let intent = match normalize_task_message_intent(&args.intent) {
+        Some(intent) => intent,
+        None => {
+            return CommandOutcome::Failure(ErrorEnvelope::new(
+                ErrorCategory::InvalidRequest,
+                "intent must contain only letters, numbers, '-' or '_'",
+            ));
+        }
+    };
+    if args.message.trim().is_empty() {
+        return CommandOutcome::Failure(ErrorEnvelope::new(
+            ErrorCategory::InvalidRequest,
+            "message text is required",
+        ));
+    }
+
+    if args.interrupt && args.on_conflict != TaskSendConflictAction::Fail {
+        return CommandOutcome::Failure(ErrorEnvelope::new(
+            ErrorCategory::InvalidRequest,
+            "--interrupt cannot be combined with --on-conflict (set one or the other)",
+        ));
+    }
+
+    #[derive(Debug, Serialize)]
+    struct TaskSendReport {
+        repo_root: String,
+        epic_slug: String,
+        task_slug: String,
+        intent: String,
+        session_id: String,
+        command_id: String,
+        state: String,
+        delivery: String,
+        conversation_continuity: String,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        warnings: Vec<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    }
+
+    let on_conflict = if args.interrupt {
+        AgentMessageConflictAction::InterruptTurn
+    } else {
+        args.on_conflict.into()
+    };
+
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .enable_io()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            return CommandOutcome::Failure(ErrorEnvelope::new(
+                ErrorCategory::Internal,
+                format!("failed to initialize async runtime: {err}"),
+            ));
+        }
+    };
+
+    let result = match runtime.block_on(send_task_agent_message_via_control_plane(
+        &epic_slug,
+        &args.task,
+        &args.message,
+        &intent,
+        on_conflict,
+        args.timeout_ms,
+    )) {
+        Ok(result) => result,
+        Err(err) => return CommandOutcome::Failure(err),
+    };
+
+    let report = TaskSendReport {
+        repo_root: repo_root.display().to_string(),
+        epic_slug,
+        task_slug: result.task_slug,
+        intent,
+        session_id: result.session_id,
+        command_id: result.command_id,
+        state: result.state,
+        delivery: task_agent_message_delivery_label(result.delivery).to_string(),
+        conversation_continuity: task_agent_message_conversation_continuity_label(
+            result.conversation_continuity,
+        )
+        .to_string(),
+        warnings: result.warnings,
+        message: result.message.clone(),
+    };
+
+    match output.format {
+        OutputFormat::Human => {
+            if report.state == "succeeded" {
+                println!(
+                    "message delivered: session={} command={} delivery={}",
+                    report.session_id, report.command_id, report.delivery
+                );
+            } else if let Some(message) = &report.message {
+                println!("{message}");
+            } else {
+                println!("message delivery failed: state={}", report.state);
+            }
+            for warning in &report.warnings {
+                println!("warning: {warning}");
+            }
+        }
+        OutputFormat::Json => {
+            if let Err(err) = output.print_json_stdout(&report) {
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    format!("failed to write output: {err}"),
+                ));
+            }
+        }
+    }
+
+    if report.state == "succeeded" {
+        CommandOutcome::Success
+    } else {
+        CommandOutcome::Failure(ErrorEnvelope::new(
+            ErrorCategory::Unavailable,
+            report
+                .message
+                .unwrap_or_else(|| format!("failed to deliver message (state={})", report.state)),
+        ))
+    }
+}
+
+fn task_history(args: TaskHistoryArgs, output: &Output) -> CommandOutcome {
+    if args.limit == 0 {
+        return CommandOutcome::Failure(ErrorEnvelope::new(
+            ErrorCategory::InvalidRequest,
+            "--limit must be greater than 0",
+        ));
+    }
+
+    let start = match args.repo {
+        Some(path) => path,
+        None => match env::current_dir() {
+            Ok(cwd) => cwd,
+            Err(err) => {
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    format!("failed to read cwd: {err}"),
+                ));
+            }
+        },
+    };
+
+    let repo_root = match discover_repo_root_from(&start) {
+        Some(repo_root) => repo_root,
+        None => {
+            return CommandOutcome::Failure(ErrorEnvelope::new(
+                ErrorCategory::InvalidRequest,
+                format!(
+                    "no .git directory found from {} (pass --repo to specify a repo)",
+                    start.display()
+                ),
+            ));
+        }
+    };
+
+    let epic_slug = if let Some(epic) = args.epic {
+        epic
+    } else if let Some(inferred) = infer_single_epic_slug_from_fs(&repo_root) {
+        inferred
+    } else {
+        return CommandOutcome::Failure(ErrorEnvelope::new(
+            ErrorCategory::InvalidRequest,
+            "multiple epics found; pass --epic <slug>",
+        ));
+    };
+
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .enable_io()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            return CommandOutcome::Failure(ErrorEnvelope::new(
+                ErrorCategory::Internal,
+                format!("failed to initialize async runtime: {err}"),
+            ));
+        }
+    };
+
+    let result = match runtime.block_on(load_task_history_via_control_plane(
+        &epic_slug, &args.task, args.limit, args.all,
+    )) {
+        Ok(result) => result,
+        Err(err) => return CommandOutcome::Failure(err),
+    };
+
+    #[derive(Debug, Serialize)]
+    struct TaskHistoryEventReport {
+        session_event_id: String,
+        created_at: String,
+        kind: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        role: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct TaskHistoryReport {
+        repo_root: String,
+        epic_slug: String,
+        task_slug: String,
+        session_id: String,
+        limit: u32,
+        returned: usize,
+        has_more: bool,
+        events: Vec<TaskHistoryEventReport>,
+    }
+
+    let events: Vec<TaskHistoryEventReport> = result
+        .events
+        .iter()
+        .map(|event| TaskHistoryEventReport {
+            session_event_id: event.session_event_id.to_string(),
+            created_at: format_timestamp(event.created_at),
+            kind: session_event_kind_label(&event.kind).to_string(),
+            role: transcript_role_for_event(event),
+            text: transcript_text_for_event(event),
+        })
+        .collect();
+
+    let report = TaskHistoryReport {
+        repo_root: repo_root.display().to_string(),
+        epic_slug,
+        task_slug: result.task_slug,
+        session_id: result.session_id,
+        limit: args.limit,
+        returned: events.len(),
+        has_more: result.has_more,
+        events,
+    };
+
+    match output.format {
+        OutputFormat::Human => {
+            println!("session: {}", report.session_id);
+            for event in &result.events {
+                if let Some(line) = render_history_line(event) {
+                    println!("{line}");
+                }
+            }
+        }
+        OutputFormat::Json => {
+            if let Err(err) = output.print_json_stdout(&report) {
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    format!("failed to write output: {err}"),
+                ));
+            }
+        }
+    }
+
+    CommandOutcome::Success
+}
+
+fn normalize_task_message_intent(raw: &str) -> Option<String> {
+    let normalized = raw.trim().to_ascii_lowercase().replace('-', "_");
+    if normalized.is_empty() {
+        return None;
+    }
+    if normalized
+        .chars()
+        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
+    {
+        Some(normalized)
+    } else {
+        None
+    }
+}
+
+#[derive(Debug)]
+struct ResolvedTaskTarget {
+    task_slug: String,
+    task_id: TaskId,
+    workspace_id: WorkspaceId,
+    repo_id: RepoId,
+}
+
+fn resolve_task_target_from_epic_graph(
+    graph: &redesmyn_protocol::client::EpicGraph,
+    epic_slug: &str,
+    task_slug: &str,
+) -> Result<ResolvedTaskTarget, ErrorEnvelope> {
+    let workspace_id = graph.workspace_id.ok_or_else(|| {
+        ErrorEnvelope::new(
+            ErrorCategory::Internal,
+            "GetEpicGraph response missing workspace_id",
+        )
+    })?;
+    let repo_id = graph.repo_id.ok_or_else(|| {
+        ErrorEnvelope::new(
+            ErrorCategory::Internal,
+            "GetEpicGraph response missing repo_id",
+        )
+    })?;
+
+    let desired_slug = task_slug.trim();
+    let desired_slug_lower = desired_slug.to_ascii_lowercase();
+    let (resolved_slug, task_id) = graph
+        .nodes
+        .iter()
+        .find(|node| node.task_slug == desired_slug)
+        .or_else(|| {
+            graph
+                .nodes
+                .iter()
+                .find(|node| node.task_slug.to_ascii_lowercase() == desired_slug_lower)
+        })
+        .map(|node| (node.task_slug.clone(), node.task_id))
+        .ok_or_else(|| {
+            let mut known: Vec<String> = graph
+                .nodes
+                .iter()
+                .map(|node| node.task_slug.clone())
+                .collect();
+            known.sort();
+            ErrorEnvelope::new(
+                ErrorCategory::NotFound,
+                format!(
+                    "task not found in epic {epic_slug}: {desired_slug} (known: {})",
+                    known.join(", ")
+                ),
+            )
+        })?;
+
+    let task_id = task_id.ok_or_else(|| {
+        ErrorEnvelope::new(
+            ErrorCategory::Internal,
+            format!("epic graph node is missing task_id for task {resolved_slug}"),
+        )
+    })?;
+
+    Ok(ResolvedTaskTarget {
+        task_slug: resolved_slug,
+        task_id,
+        workspace_id,
+        repo_id,
+    })
+}
+
+fn session_event_kind_filters_for_history(all: bool) -> Vec<SessionEventKindFilter> {
+    if all {
+        Vec::new()
+    } else {
+        vec![
+            SessionEventKindFilter::UserMessage,
+            SessionEventKindFilter::AssistantMessage,
+            SessionEventKindFilter::StatusUpdate,
+        ]
+    }
+}
+
+#[derive(Debug)]
+struct TaskSendCommandResult {
+    task_slug: String,
+    session_id: String,
+    command_id: String,
+    state: String,
+    message: Option<String>,
+    delivery: TaskAgentMessageDelivery,
+    conversation_continuity: TaskAgentMessageConversationContinuity,
+    warnings: Vec<String>,
+}
+
+async fn send_task_agent_message_via_control_plane(
+    epic_slug: &str,
+    task_slug: &str,
+    message: &str,
+    intent: &str,
+    on_conflict: AgentMessageConflictAction,
+    timeout_ms: u64,
+) -> Result<TaskSendCommandResult, ErrorEnvelope> {
+    #[cfg(not(unix))]
+    {
+        let _ = (
+            epic_slug,
+            task_slug,
+            message,
+            intent,
+            on_conflict,
+            timeout_ms,
+        );
+        return Err(ErrorEnvelope::new(
+            ErrorCategory::Unavailable,
+            "client API socket is only supported on unix platforms",
+        ));
+    }
+
+    #[cfg(unix)]
+    {
+        let socket_path = load_default_client_socket_path()?;
+        let options = UdsConnectOptions::new(socket_path);
+        let (client, task) = connect_uds(options, 64).await?;
+        tokio::spawn(task.run());
+
+        let graph = match client
+            .request(RequestPayload::GetEpicGraph(GetEpicGraphRequest {
+                epic_slug: epic_slug.to_string(),
+            }))
+            .await?
+        {
+            ResponseResult::GetEpicGraph(resp) => resp.graph,
+            ResponseResult::Error(err) => return Err(err),
+            _ => {
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    "unexpected response for GetEpicGraph",
+                ));
+            }
+        };
+
+        let resolved = resolve_task_target_from_epic_graph(&graph, epic_slug, task_slug)?;
+
+        let envelope = ProtocolEnvelope::new().with_scope(Scope::from(
+            redesmyn_protocol::RepoScope::new(resolved.workspace_id, resolved.repo_id),
+        ));
+
+        let sent = match client
+            .request_with_envelope(
+                envelope.clone(),
+                RequestPayload::SendTaskAgentMessage(SendTaskAgentMessageRequest {
+                    task_id: resolved.task_id,
+                    message: message.trim_end().to_string(),
+                    intent: Some(intent.to_string()),
+                    on_conflict,
+                    interrupt: None,
+                    agent_kind: AgentKind::Codex,
+                }),
+            )
+            .await?
+        {
+            ResponseResult::SendTaskAgentMessage(resp) => resp,
+            ResponseResult::Error(err) => return Err(err),
+            _ => {
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    "unexpected response for SendTaskAgentMessage",
+                ));
+            }
+        };
+
+        let waited = match client
+            .request_with_envelope(
+                envelope,
+                RequestPayload::WaitForCommand(WaitForCommandRequest {
+                    command_id: sent.command.command_id,
+                    terminal_states: vec![
+                        CommandState::Succeeded,
+                        CommandState::Failed,
+                        CommandState::Canceled,
+                    ],
+                    timeout_ms,
+                }),
+            )
+            .await?
+        {
+            ResponseResult::WaitForCommand(resp) => resp.command,
+            ResponseResult::Error(err) => return Err(err),
+            _ => {
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    "unexpected response for WaitForCommand",
+                ));
+            }
+        };
+
+        Ok(TaskSendCommandResult {
+            task_slug: resolved.task_slug,
+            session_id: sent.session_id.to_string(),
+            command_id: waited.command_id.to_string(),
+            state: command_state_label(waited.state).to_string(),
+            message: waited.last_update.and_then(|update| update.message),
+            delivery: sent.delivery,
+            conversation_continuity: sent.conversation_continuity,
+            warnings: sent.warnings,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct TaskHistoryResult {
+    task_slug: String,
+    session_id: String,
+    events: Vec<SessionEvent>,
+    has_more: bool,
+}
+
+async fn load_task_history_via_control_plane(
+    epic_slug: &str,
+    task_slug: &str,
+    limit: u32,
+    all: bool,
+) -> Result<TaskHistoryResult, ErrorEnvelope> {
+    const MAX_SESSION_EVENTS_PAGE_LIMIT: u32 = 512;
+
+    #[cfg(not(unix))]
+    {
+        let _ = (epic_slug, task_slug, limit, all);
+        return Err(ErrorEnvelope::new(
+            ErrorCategory::Unavailable,
+            "client API socket is only supported on unix platforms",
+        ));
+    }
+
+    #[cfg(unix)]
+    {
+        let socket_path = load_default_client_socket_path()?;
+        let options = UdsConnectOptions::new(socket_path);
+        let (client, task) = connect_uds(options, 64).await?;
+        tokio::spawn(task.run());
+
+        let graph = match client
+            .request(RequestPayload::GetEpicGraph(GetEpicGraphRequest {
+                epic_slug: epic_slug.to_string(),
+            }))
+            .await?
+        {
+            ResponseResult::GetEpicGraph(resp) => resp.graph,
+            ResponseResult::Error(err) => return Err(err),
+            _ => {
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    "unexpected response for GetEpicGraph",
+                ));
+            }
+        };
+
+        let resolved = resolve_task_target_from_epic_graph(&graph, epic_slug, task_slug)?;
+        let envelope = ProtocolEnvelope::new().with_scope(Scope::from(
+            redesmyn_protocol::RepoScope::new(resolved.workspace_id, resolved.repo_id),
+        ));
+
+        let session_id = match client
+            .request_with_envelope(
+                envelope.clone(),
+                RequestPayload::GetLatestTaskSession(GetLatestTaskSessionRequest {
+                    task_id: resolved.task_id,
+                }),
+            )
+            .await?
+        {
+            ResponseResult::GetLatestTaskSession(resp) => resp.session_id,
+            ResponseResult::Error(err) => return Err(err),
+            _ => {
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    "unexpected response for GetLatestTaskSession",
+                ));
+            }
+        }
+        .ok_or_else(|| {
+            ErrorEnvelope::new(
+                ErrorCategory::NotFound,
+                format!("no task session found for {}", resolved.task_slug),
+            )
+        })?;
+
+        let kinds = session_event_kind_filters_for_history(all);
+        let mut remaining = limit.max(1);
+        let mut before: Option<SessionEventCursor> = None;
+        let mut pages: Vec<Vec<SessionEvent>> = Vec::new();
+
+        loop {
+            if remaining == 0 {
+                break;
+            }
+            let page_limit = remaining.min(MAX_SESSION_EVENTS_PAGE_LIMIT);
+            let response = match client
+                .request_with_envelope(
+                    envelope.clone(),
+                    RequestPayload::GetSessionEvents(GetSessionEventsRequest {
+                        session_id,
+                        before,
+                        limit: page_limit,
+                        kinds: kinds.clone(),
+                    }),
+                )
+                .await?
+            {
+                ResponseResult::GetSessionEvents(resp) => resp,
+                ResponseResult::Error(err) => return Err(err),
+                _ => {
+                    return Err(ErrorEnvelope::new(
+                        ErrorCategory::Internal,
+                        "unexpected response for GetSessionEvents",
+                    ));
+                }
+            };
+
+            if response.events.is_empty() {
+                before = response.next_cursor;
+                break;
+            }
+
+            let fetched = response.events.len() as u32;
+            remaining = remaining.saturating_sub(fetched);
+            before = response.next_cursor;
+            pages.push(response.events);
+
+            if before.is_none() {
+                break;
+            }
+        }
+
+        let has_more = remaining == 0 && before.is_some();
+        let mut events = Vec::new();
+        for mut page in pages.into_iter().rev() {
+            events.append(&mut page);
+        }
+
+        Ok(TaskHistoryResult {
+            task_slug: resolved.task_slug,
+            session_id: session_id.to_string(),
+            events,
+            has_more,
+        })
+    }
+}
+
+fn session_event_kind_label(kind: &SessionEventKind) -> &'static str {
+    match kind {
+        SessionEventKind::SessionStarted(_) => "session_started",
+        SessionEventKind::SessionEnded(_) => "session_ended",
+        SessionEventKind::TurnStarted(_) => "turn_started",
+        SessionEventKind::TurnCompleted(_) => "turn_completed",
+        SessionEventKind::UserMessage(_) => "user_message",
+        SessionEventKind::AssistantMessage(_) => "assistant_message",
+        SessionEventKind::AssistantReasoning(_) => "assistant_reasoning",
+        SessionEventKind::ToolInvocation(_) => "tool_invocation",
+        SessionEventKind::ToolResult(_) => "tool_result",
+        SessionEventKind::StatusUpdate(_) => "status_update",
+        SessionEventKind::TaskAgentMessageSent(_) => "task_agent_message_sent",
+        SessionEventKind::PermissionsModeChanged(_) => "permissions_mode_changed",
+        SessionEventKind::CodexApprovalPolicyChanged(_) => "codex_approval_policy_changed",
+        SessionEventKind::CodexSandboxPolicyChanged(_) => "codex_sandbox_policy_changed",
+        SessionEventKind::SessionModelChanged(_) => "session_model_changed",
+        SessionEventKind::PermissionRequested(_) => "permission_requested",
+        SessionEventKind::PermissionDecided(_) => "permission_decided",
+        SessionEventKind::ArtifactEmitted(_) => "artifact_emitted",
+        SessionEventKind::Unknown(_) => "unknown",
+    }
+}
+
+fn transcript_role_for_event(event: &SessionEvent) -> Option<String> {
+    match event.kind {
+        SessionEventKind::UserMessage(_) => Some("user".to_string()),
+        SessionEventKind::AssistantMessage(_) => Some("assistant".to_string()),
+        SessionEventKind::StatusUpdate(_) => Some("status".to_string()),
+        _ => None,
+    }
+}
+
+fn transcript_text_for_event(event: &SessionEvent) -> Option<String> {
+    match &event.kind {
+        SessionEventKind::UserMessage(data) => Some(compact_text(&data.text, 240)),
+        SessionEventKind::AssistantMessage(data) => Some(compact_text(&data.text, 240)),
+        SessionEventKind::StatusUpdate(data) => Some(compact_status_update(data)),
+        _ => None,
+    }
+}
+
+fn render_history_line(event: &SessionEvent) -> Option<String> {
+    let ts = format_timestamp(event.created_at);
+    match &event.kind {
+        SessionEventKind::UserMessage(data) => {
+            Some(format!("[{ts}] user: {}", compact_text(&data.text, 240)))
+        }
+        SessionEventKind::AssistantMessage(data) => Some(format!(
+            "[{ts}] assistant: {}",
+            compact_text(&data.text, 240)
+        )),
+        SessionEventKind::StatusUpdate(data) => {
+            Some(format!("[{ts}] status: {}", compact_status_update(data)))
+        }
+        SessionEventKind::TaskAgentMessageSent(data) => Some(format!(
+            "[{ts}] task_agent_message_sent: intent={} {}",
+            data.intent,
+            compact_text(&data.message_preview, 200)
+        )),
+        SessionEventKind::AssistantReasoning(data) => Some(format!(
+            "[{ts}] assistant_reasoning: {}",
+            compact_text(&data.summary.preview, 240)
+        )),
+        SessionEventKind::ToolInvocation(data) => Some(format!(
+            "[{ts}] tool_invocation:{} {}",
+            data.tool_name,
+            compact_text(&data.input_preview, 200)
+        )),
+        SessionEventKind::ToolResult(data) => Some(format!(
+            "[{ts}] tool_result:{} {}",
+            data.tool_name,
+            compact_text(&data.output_preview, 200)
+        )),
+        SessionEventKind::SessionStarted(_) => Some(format!("[{ts}] session_started")),
+        SessionEventKind::SessionEnded(_) => Some(format!("[{ts}] session_ended")),
+        SessionEventKind::TurnStarted(_) => Some(format!("[{ts}] turn_started")),
+        SessionEventKind::TurnCompleted(data) => {
+            let mut line = String::from("turn_completed");
+            if let Some(code) = data.exit_code {
+                line.push_str(&format!(" exit_code={code}"));
+            }
+            if let Some(error) = &data.error {
+                line.push_str(&format!(" error={}", compact_text(&error.message, 160)));
+            }
+            Some(format!("[{ts}] {line}"))
+        }
+        SessionEventKind::PermissionsModeChanged(data) => {
+            Some(format!("[{ts}] permissions_mode_changed: {:?}", data.mode))
+        }
+        SessionEventKind::CodexApprovalPolicyChanged(data) => Some(format!(
+            "[{ts}] codex_approval_policy_changed: {:?}",
+            data.approval_policy
+        )),
+        SessionEventKind::CodexSandboxPolicyChanged(data) => Some(format!(
+            "[{ts}] codex_sandbox_policy_changed: {:?}",
+            data.sandbox_policy
+        )),
+        SessionEventKind::SessionModelChanged(data) => Some(format!(
+            "[{ts}] session_model_changed: model_id={:?} reasoning_effort={:?}",
+            data.model_id, data.reasoning_effort
+        )),
+        SessionEventKind::PermissionRequested(data) => Some(format!(
+            "[{ts}] permission_requested: {}",
+            compact_text(&data.summary, 200)
+        )),
+        SessionEventKind::PermissionDecided(data) => Some(format!(
+            "[{ts}] permission_decided: request_id={} decision={:?}",
+            data.request_id, data.decision
+        )),
+        SessionEventKind::ArtifactEmitted(data) => Some(format!(
+            "[{ts}] artifact_emitted: {}",
+            data.label.clone().unwrap_or_else(|| "artifact".to_string())
+        )),
+        SessionEventKind::Unknown(data) => Some(format!(
+            "[{ts}] unknown_event: {}",
+            compact_text(&data.event_type, 120)
+        )),
+    }
+}
+
+fn compact_status_update(data: &redesmyn_protocol::StatusUpdate) -> String {
+    let mut parts = vec![turn_state_label(data.turn_state).to_string()];
+    if let Some(progress) = data.progress_percent {
+        parts.push(format!("{progress}%"));
+    }
+    if data.blocking == Some(true) {
+        parts.push("blocking".to_string());
+    }
+    if let Some(message) = &data.message {
+        parts.push(compact_text(message, 200));
+    }
+    parts.join(" | ")
+}
+
+fn turn_state_label(state: TurnState) -> &'static str {
+    match state {
+        TurnState::Running => "running",
+        TurnState::Blocked => "blocked",
+        TurnState::Completed => "completed",
+        TurnState::Unknown => "unknown",
+    }
+}
+
+fn compact_text(value: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    let mut count = 0_usize;
+    let mut last_was_space = false;
+    let mut truncated = false;
+    for ch in value.trim().chars() {
+        if ch.is_whitespace() {
+            if !last_was_space && !out.is_empty() {
+                out.push(' ');
+                count += 1;
+                last_was_space = true;
+            }
+            continue;
+        }
+        if count >= max_chars {
+            truncated = true;
+            break;
+        }
+
+        out.push(ch);
+        count += 1;
+        last_was_space = false;
+    }
+
+    if truncated {
+        out.push_str("...");
+    }
+
+    out
+}
+
+fn format_timestamp(value: redesmyn_protocol::Timestamp) -> String {
+    serde_json::to_string(&value)
+        .map(|value| value.trim_matches('"').to_string())
+        .unwrap_or_else(|_| "unknown".to_string())
+}
+
+fn task_agent_message_delivery_label(value: TaskAgentMessageDelivery) -> &'static str {
+    match value {
+        TaskAgentMessageDelivery::StructuredStarted => "structured_started",
+        TaskAgentMessageDelivery::StructuredResumed => "structured_resumed",
+        TaskAgentMessageDelivery::InteractiveStarted => "interactive_started",
+        TaskAgentMessageDelivery::InteractiveSent => "interactive_sent",
+    }
+}
+
+fn task_agent_message_conversation_continuity_label(
+    value: TaskAgentMessageConversationContinuity,
+) -> &'static str {
+    match value {
+        TaskAgentMessageConversationContinuity::Kept => "kept",
+        TaskAgentMessageConversationContinuity::Broken => "broken",
     }
 }
 

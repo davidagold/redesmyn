@@ -16,7 +16,9 @@ use redesmyn_protocol::prelude::{
 use redesmyn_protocol::session::{
     CodexApprovalPolicy, CodexApprovalPolicyChanged, CodexSandboxPolicy, CodexSandboxPolicyChanged,
     SessionEnded, SessionEventKind, SessionModelChanged, SessionModelReasoningEffort, SessionScope,
-    SessionStarted,
+    SessionStarted, TaskAgentMessageAgentKind as SessionTaskAgentMessageAgentKind,
+    TaskAgentMessageConversationContinuity as SessionTaskAgentMessageConversationContinuity,
+    TaskAgentMessageDelivery as SessionTaskAgentMessageDelivery, TaskAgentMessageSent,
 };
 use redesmyn_protocol::task_events::TASK_STATE_CHANGED_EVENT;
 use redesmyn_protocol::{
@@ -288,6 +290,46 @@ fn message_preview(text: &str) -> String {
     text.chars().take(MAX).collect()
 }
 
+fn session_task_agent_kind_from_client(kind: AgentKind) -> SessionTaskAgentMessageAgentKind {
+    match kind {
+        AgentKind::Codex => SessionTaskAgentMessageAgentKind::Codex,
+        AgentKind::ClaudeCode => SessionTaskAgentMessageAgentKind::ClaudeCode,
+        AgentKind::Shell => SessionTaskAgentMessageAgentKind::Shell,
+    }
+}
+
+fn session_task_delivery_from_client(
+    delivery: TaskAgentMessageDelivery,
+) -> SessionTaskAgentMessageDelivery {
+    match delivery {
+        TaskAgentMessageDelivery::StructuredStarted => {
+            SessionTaskAgentMessageDelivery::StructuredStarted
+        }
+        TaskAgentMessageDelivery::StructuredResumed => {
+            SessionTaskAgentMessageDelivery::StructuredResumed
+        }
+        TaskAgentMessageDelivery::InteractiveStarted => {
+            SessionTaskAgentMessageDelivery::InteractiveStarted
+        }
+        TaskAgentMessageDelivery::InteractiveSent => {
+            SessionTaskAgentMessageDelivery::InteractiveSent
+        }
+    }
+}
+
+fn session_task_conversation_continuity_from_client(
+    continuity: TaskAgentMessageConversationContinuity,
+) -> SessionTaskAgentMessageConversationContinuity {
+    match continuity {
+        TaskAgentMessageConversationContinuity::Kept => {
+            SessionTaskAgentMessageConversationContinuity::Kept
+        }
+        TaskAgentMessageConversationContinuity::Broken => {
+            SessionTaskAgentMessageConversationContinuity::Broken
+        }
+    }
+}
+
 async fn append_user_message(
     control_plane: &ControlPlane,
     session_id: SessionId,
@@ -308,6 +350,45 @@ async fn append_user_message(
             preview,
             full_text_artifact: None,
             image_attachments: Vec::new(),
+        }),
+    };
+
+    control_plane
+        .session_events()
+        .append_session_event(&event)
+        .await
+        .map_err(|err| {
+            ErrorEnvelope::new(ErrorCategory::Internal, "Failed to persist session event.")
+                .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
+        })?;
+    Ok(())
+}
+
+pub(super) async fn append_task_agent_message_sent(
+    control_plane: &ControlPlane,
+    session_id: SessionId,
+    task_id: TaskId,
+    intent: &str,
+    message: &str,
+    agent_kind: AgentKind,
+    delivery: TaskAgentMessageDelivery,
+    conversation_continuity: TaskAgentMessageConversationContinuity,
+) -> Result<(), ErrorEnvelope> {
+    let event = SessionEvent {
+        session_event_id: SessionEventId::new(),
+        created_at: Timestamp::now_utc(),
+        scope: SessionScope::Task { task_id },
+        session_id,
+        turn_id: None,
+        kind: SessionEventKind::TaskAgentMessageSent(TaskAgentMessageSent {
+            intent: intent.to_string(),
+            message: message.to_string(),
+            message_preview: message_preview(message),
+            agent_kind: session_task_agent_kind_from_client(agent_kind),
+            delivery: session_task_delivery_from_client(delivery),
+            conversation_continuity: session_task_conversation_continuity_from_client(
+                conversation_continuity,
+            ),
         }),
     };
 

@@ -139,15 +139,16 @@ message SessionEvent {
     ToolResult tool_result = 17;
     StatusUpdate status_update = 18;
     ArtifactEmitted artifact_emitted = 19;
-  AssistantReasoning assistant_reasoning = 20;
-  PermissionsModeChanged permissions_mode_changed = 21;
-  PermissionRequested permission_requested = 22;
-  PermissionDecided permission_decided = 23;
-  CodexApprovalPolicyChanged codex_approval_policy_changed = 24;
-  CodexSandboxPolicyChanged codex_sandbox_policy_changed = 25;
-  SessionModelChanged session_model_changed = 26;
-  UnknownSessionEvent unknown = 100;
-}
+    AssistantReasoning assistant_reasoning = 20;
+    PermissionsModeChanged permissions_mode_changed = 21;
+    PermissionRequested permission_requested = 22;
+    PermissionDecided permission_decided = 23;
+    CodexApprovalPolicyChanged codex_approval_policy_changed = 24;
+    CodexSandboxPolicyChanged codex_sandbox_policy_changed = 25;
+    SessionModelChanged session_model_changed = 26;
+    TaskAgentMessageSent task_agent_message_sent = 27;
+    UnknownSessionEvent unknown = 100;
+  }
 }
 
 message SessionStarted {}
@@ -292,6 +293,36 @@ message StatusUpdate {
   optional bool blocking = 2;
   optional uint32 progress_percent = 3;
   optional string message = 4;
+}
+
+enum SessionTaskAgentMessageAgentKind {
+  SESSION_TASK_AGENT_MESSAGE_AGENT_KIND_UNSPECIFIED = 0;
+  SESSION_TASK_AGENT_MESSAGE_AGENT_KIND_CODEX = 1;
+  SESSION_TASK_AGENT_MESSAGE_AGENT_KIND_CLAUDE_CODE = 2;
+  SESSION_TASK_AGENT_MESSAGE_AGENT_KIND_SHELL = 3;
+}
+
+enum SessionTaskAgentMessageDelivery {
+  SESSION_TASK_AGENT_MESSAGE_DELIVERY_UNSPECIFIED = 0;
+  SESSION_TASK_AGENT_MESSAGE_DELIVERY_STRUCTURED_STARTED = 1;
+  SESSION_TASK_AGENT_MESSAGE_DELIVERY_STRUCTURED_RESUMED = 2;
+  SESSION_TASK_AGENT_MESSAGE_DELIVERY_INTERACTIVE_STARTED = 3;
+  SESSION_TASK_AGENT_MESSAGE_DELIVERY_INTERACTIVE_SENT = 4;
+}
+
+enum SessionTaskAgentMessageConversationContinuity {
+  SESSION_TASK_AGENT_MESSAGE_CONVERSATION_CONTINUITY_UNSPECIFIED = 0;
+  SESSION_TASK_AGENT_MESSAGE_CONVERSATION_CONTINUITY_KEPT = 1;
+  SESSION_TASK_AGENT_MESSAGE_CONVERSATION_CONTINUITY_BROKEN = 2;
+}
+
+message TaskAgentMessageSent {
+  string intent = 1;
+  string message = 2;
+  string message_preview = 3;
+  SessionTaskAgentMessageAgentKind agent_kind = 4;
+  SessionTaskAgentMessageDelivery delivery = 5;
+  SessionTaskAgentMessageConversationContinuity conversation_continuity = 6;
 }
 
 // How the session handles permission/approval requests.

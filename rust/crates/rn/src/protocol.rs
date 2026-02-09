@@ -750,6 +750,9 @@ fn session_event_kind_label(kind: &redesmyn_protocol::session::SessionEventKind)
         redesmyn_protocol::session::SessionEventKind::ToolInvocation(_) => "tool_invocation",
         redesmyn_protocol::session::SessionEventKind::ToolResult(_) => "tool_result",
         redesmyn_protocol::session::SessionEventKind::StatusUpdate(_) => "status_update",
+        redesmyn_protocol::session::SessionEventKind::TaskAgentMessageSent(_) => {
+            "task_agent_message_sent"
+        }
         redesmyn_protocol::session::SessionEventKind::PermissionsModeChanged(_) => {
             "permissions_mode_changed"
         }

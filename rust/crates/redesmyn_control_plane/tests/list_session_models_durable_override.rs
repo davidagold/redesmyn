@@ -13,7 +13,9 @@ use redesmyn_protocol::client::{
 use redesmyn_protocol::daemon::{
     CommandState as DaemonCommandState, CommandUpdate as DaemonCommandUpdate, DaemonMessage,
 };
-use redesmyn_protocol::session::{SessionEventKind, SessionModelChanged, SessionModelReasoningEffort, SessionScope};
+use redesmyn_protocol::session::{
+    SessionEventKind, SessionModelChanged, SessionModelReasoningEffort, SessionScope,
+};
 use redesmyn_protocol::{ErrorDetail, ProtocolEnvelope, RepoScope, Scope, Timestamp};
 use redesmyn_storage::schema::{
     AgentSessionScopeKind as StorageAgentSessionScopeKind,
@@ -127,7 +129,12 @@ async fn seed_repo_task(
     .await
     .expect("insert task");
 
-    (workspace_id, repo_id, task_id, RepoScope::new(workspace_id, repo_id))
+    (
+        workspace_id,
+        repo_id,
+        task_id,
+        RepoScope::new(workspace_id, repo_id),
+    )
 }
 
 #[tokio::test]
@@ -150,13 +157,15 @@ async fn list_session_models_prefers_durable_selection_for_stale_running_session
             scope_repo_id: repo_id,
             scope_kind: StorageAgentSessionScopeKind::Task,
             task_id: Some(task_id),
+            epic_id: None,
             agent_kind: redesmyn_storage::schema::AgentKind::Codex,
             status: StorageAgentSessionStatus::Running,
             external_session_ref: r#"{"type":"none"}"#.to_owned(),
             title: None,
             started_at_ms: Some(2),
             ended_at_ms: None,
-            closed_at_ms: None,
+            archived_at_ms: None,
+            repo_name: None,
         },
     )
     .await

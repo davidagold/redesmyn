@@ -603,6 +603,7 @@ async fn send_task_agent_message_structured_resume_conflict_interrupt() {
         RequestPayload::SendTaskAgentMessage(SendTaskAgentMessageRequest {
             task_id,
             message: "hello".to_string(),
+            intent: None,
             on_conflict: AgentMessageConflictAction::Fail,
             interrupt: None,
             agent_kind: AgentKind::Codex,
@@ -649,6 +650,7 @@ async fn send_task_agent_message_structured_resume_conflict_interrupt() {
         RequestPayload::SendTaskAgentMessage(SendTaskAgentMessageRequest {
             task_id,
             message: "resume".to_string(),
+            intent: None,
             on_conflict: AgentMessageConflictAction::Fail,
             interrupt: None,
             agent_kind: AgentKind::Codex,
@@ -677,6 +679,18 @@ async fn send_task_agent_message_structured_resume_conflict_interrupt() {
         "expected a turn to be in progress"
     );
 
+    let (persisted_events, _cursor) = control_plane
+        .session_events()
+        .get_session_events(first.session_id, None, 32, &[])
+        .await
+        .expect("query persisted session events");
+    assert!(
+        persisted_events
+            .iter()
+            .any(|event| matches!(event.kind, SessionEventKind::TaskAgentMessageSent(_))),
+        "expected task_agent_message_sent durable event"
+    );
+
     // 3) A conflicting message with on_conflict=fail returns 409 and does not dispatch.
     let conflict = control_plane_request(
         &socket_path,
@@ -684,6 +698,7 @@ async fn send_task_agent_message_structured_resume_conflict_interrupt() {
         RequestPayload::SendTaskAgentMessage(SendTaskAgentMessageRequest {
             task_id,
             message: "should conflict".to_string(),
+            intent: None,
             on_conflict: AgentMessageConflictAction::Fail,
             interrupt: None,
             agent_kind: AgentKind::Codex,
@@ -718,6 +733,7 @@ async fn send_task_agent_message_structured_resume_conflict_interrupt() {
         RequestPayload::SendTaskAgentMessage(SendTaskAgentMessageRequest {
             task_id,
             message: "interrupt".to_string(),
+            intent: None,
             on_conflict: AgentMessageConflictAction::InterruptTurn,
             interrupt: None,
             agent_kind: AgentKind::Codex,

@@ -191,49 +191,59 @@ impl ControlPlane {
         repo_id: RepoId,
         req: SendTaskAgentMessageRequest,
     ) -> Result<SendTaskAgentMessageResponse, ErrorEnvelope> {
+        let SendTaskAgentMessageRequest {
+            task_id,
+            message,
+            intent,
+            on_conflict,
+            interrupt,
+            agent_kind,
+        } = req;
+
         let span = tracing::debug_span!(
             "control_plane.agent.send_task_agent_message",
-            task_id = %req.task_id,
-            agent_kind = ?req.agent_kind,
-            on_conflict = ?req.on_conflict,
-            interrupt = ?req.interrupt,
+            task_id = %task_id,
+            agent_kind = ?agent_kind,
+            on_conflict = ?on_conflict,
+            interrupt = ?interrupt,
+            intent = ?intent,
         );
         let _enter = span.enter();
 
-        let trimmed = req.message.trim();
+        let trimmed = message.trim();
         if trimmed.is_empty() {
             return Err(super::conflicts::invalid_request("Message is empty."));
         }
-        if !state::is_daemon_supported_agent_kind(req.agent_kind) {
+        if !state::is_daemon_supported_agent_kind(agent_kind) {
             return Err(super::conflicts::invalid_request(
                 "Unsupported agent kind for daemon execution.",
             ));
         }
 
-        ensure_task_exists(self.pool(), workspace_id, repo_id, req.task_id).await?;
+        ensure_task_exists(self.pool(), workspace_id, repo_id, task_id).await?;
 
-        let effective_on_conflict = planner::effective_on_conflict(req.on_conflict, req.interrupt);
+        let effective_on_conflict = planner::effective_on_conflict(on_conflict, interrupt);
+        let normalized_intent = normalize_task_message_intent(intent.as_deref());
 
-        let recent_sessions =
-            state::load_recent_task_sessions(self.pool(), req.task_id, 50).await?;
+        let recent_sessions = state::load_recent_task_sessions(self.pool(), task_id, 50).await?;
         let resumable_structured =
-            state::load_resumable_structured_session(self.pool(), &recent_sessions, req.agent_kind)
+            state::load_resumable_structured_session(self.pool(), &recent_sessions, agent_kind)
                 .await?;
 
         let plan = planner::plan_send_task_agent_message(
             &recent_sessions,
-            req.agent_kind,
+            agent_kind,
             effective_on_conflict,
             resumable_structured.as_ref(),
         )?;
 
-        match plan {
+        let response = match plan {
             planner::SendTaskAgentMessagePlan::StructuredResume(resume) => {
                 executor::execute_structured_resume(
                     self,
                     workspace_id,
                     repo_id,
-                    req.task_id,
+                    task_id,
                     trimmed,
                     resume,
                 )
@@ -246,14 +256,28 @@ impl ControlPlane {
                         workspace_id,
                         repo_id,
                     },
-                    req.task_id,
-                    req.agent_kind,
+                    task_id,
+                    agent_kind,
                     trimmed,
                     plan,
                 )
                 .await
             }
-        }
+        }?;
+
+        executor::append_task_agent_message_sent(
+            self,
+            response.session_id,
+            task_id,
+            &normalized_intent,
+            trimmed,
+            agent_kind,
+            response.delivery,
+            response.conversation_continuity,
+        )
+        .await?;
+
+        Ok(response)
     }
 }
 
@@ -388,4 +412,17 @@ async fn ensure_task_exists(
         );
     }
     Ok(())
+}
+
+fn normalize_task_message_intent(raw: Option<&str>) -> String {
+    let normalized = raw
+        .unwrap_or("unspecified")
+        .trim()
+        .to_ascii_lowercase()
+        .replace('-', "_");
+    if normalized.is_empty() {
+        "unspecified".to_string()
+    } else {
+        normalized
+    }
 }

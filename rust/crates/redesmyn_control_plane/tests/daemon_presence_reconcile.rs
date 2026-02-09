@@ -130,7 +130,7 @@ async fn register_daemon_presence_reconciles_sessions_from_stale_instance() {
             title,
             started_at_ms,
             ended_at_ms,
-            closed_at_ms,
+            archived_at_ms,
             runner_host_id,
             runner_host_instance_id
         )
@@ -157,13 +157,12 @@ async fn register_daemon_presence_reconciles_sessions_from_stale_instance() {
         .await
         .expect("register daemon presence");
 
-    let (status, ended_at_ms): (String, Option<i64>) = sqlx::query_as(
-        "SELECT status, ended_at_ms FROM agent_sessions WHERE session_id = ?1",
-    )
-    .bind(session_id)
-    .fetch_one(&pool)
-    .await
-    .expect("fetch reconciled session");
+    let (status, ended_at_ms): (String, Option<i64>) =
+        sqlx::query_as("SELECT status, ended_at_ms FROM agent_sessions WHERE session_id = ?1")
+            .bind(session_id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch reconciled session");
     assert_eq!(status, "error");
     assert!(ended_at_ms.is_some());
 
@@ -213,7 +212,12 @@ async fn task_agent_start_dispatch_assigns_runner_ownership() {
     let (outbound_tx, _outbound_rx) = mpsc::channel(8);
     control_plane
         .daemons()
-        .register_connection(host_id, host_instance_id, ProtocolVersion::CURRENT, outbound_tx)
+        .register_connection(
+            host_id,
+            host_instance_id,
+            ProtocolVersion::CURRENT,
+            outbound_tx,
+        )
         .await;
 
     let session_id = SessionId::new();
@@ -233,7 +237,7 @@ async fn task_agent_start_dispatch_assigns_runner_ownership() {
             title,
             started_at_ms,
             ended_at_ms,
-            closed_at_ms
+            archived_at_ms
         )
         VALUES (
             ?1, ?2, ?2, ?3, ?4, 'task', ?5, 'codex', 'running', '{"type":"none"}',
@@ -319,7 +323,7 @@ async fn register_daemon_presence_reconciles_legacy_unowned_running_sessions() {
             title,
             started_at_ms,
             ended_at_ms,
-            closed_at_ms,
+            archived_at_ms,
             runner_host_id,
             runner_host_instance_id
         )
@@ -343,13 +347,12 @@ async fn register_daemon_presence_reconciles_legacy_unowned_running_sessions() {
         .await
         .expect("register daemon presence");
 
-    let (status, ended_at_ms): (String, Option<i64>) = sqlx::query_as(
-        "SELECT status, ended_at_ms FROM agent_sessions WHERE session_id = ?1",
-    )
-    .bind(session_id)
-    .fetch_one(&pool)
-    .await
-    .expect("fetch reconciled legacy session");
+    let (status, ended_at_ms): (String, Option<i64>) =
+        sqlx::query_as("SELECT status, ended_at_ms FROM agent_sessions WHERE session_id = ?1")
+            .bind(session_id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch reconciled legacy session");
     assert_eq!(status, "error");
     assert!(ended_at_ms.is_some());
 

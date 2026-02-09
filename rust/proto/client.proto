@@ -472,6 +472,7 @@ enum SessionEventKindFilter {
   SESSION_EVENT_KIND_FILTER_CODEX_APPROVAL_POLICY_CHANGED = 15;
   SESSION_EVENT_KIND_FILTER_CODEX_SANDBOX_POLICY_CHANGED = 16;
   SESSION_EVENT_KIND_FILTER_SESSION_MODEL_CHANGED = 17;
+  SESSION_EVENT_KIND_FILTER_TASK_AGENT_MESSAGE_SENT = 18;
 }
 
 message GetSessionEventsRequest {
@@ -588,6 +589,7 @@ message SendTaskAgentMessageRequest {
   AgentMessageConflictAction on_conflict = 3;
   optional bool interrupt = 4;
   AgentKind agent_kind = 5;
+  optional string intent = 6;
 }
 
 message SendTaskAgentMessageResponse {

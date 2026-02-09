@@ -450,6 +450,7 @@ pub enum SessionEventKindFilter {
     ToolInvocation,
     ToolResult,
     StatusUpdate,
+    TaskAgentMessageSent,
     ArtifactEmitted,
     PermissionsModeChanged,
     PermissionRequested,
@@ -732,6 +733,8 @@ pub struct RestartAgentResponse {
 pub struct SendTaskAgentMessageRequest {
     pub task_id: TaskId,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent: Option<String>,
     #[serde(default)]
     pub on_conflict: AgentMessageConflictAction,
     #[serde(default, skip_serializing_if = "Option::is_none")]

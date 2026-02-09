@@ -875,6 +875,7 @@ fn kinds_to_db_values(kinds: &[SessionEventKindFilter]) -> Vec<&'static str> {
             SessionEventKindFilter::ToolInvocation => Some("tool_invocation"),
             SessionEventKindFilter::ToolResult => Some("tool_result"),
             SessionEventKindFilter::StatusUpdate => Some("status_update"),
+            SessionEventKindFilter::TaskAgentMessageSent => Some("task_agent_message_sent"),
             SessionEventKindFilter::PermissionsModeChanged => Some("permissions_mode_changed"),
             SessionEventKindFilter::CodexApprovalPolicyChanged => {
                 Some("codex_approval_policy_changed")
@@ -903,6 +904,7 @@ fn kind_db_value_from_kind(kind: &SessionEventKind) -> &'static str {
         SessionEventKind::ToolInvocation(_) => "tool_invocation",
         SessionEventKind::ToolResult(_) => "tool_result",
         SessionEventKind::StatusUpdate(_) => "status_update",
+        SessionEventKind::TaskAgentMessageSent(_) => "task_agent_message_sent",
         SessionEventKind::PermissionsModeChanged(_) => "permissions_mode_changed",
         SessionEventKind::CodexApprovalPolicyChanged(_) => "codex_approval_policy_changed",
         SessionEventKind::CodexSandboxPolicyChanged(_) => "codex_sandbox_policy_changed",
@@ -922,6 +924,7 @@ fn message_preview_from_kind(kind: &SessionEventKind) -> Option<String> {
         SessionEventKind::ToolInvocation(ev) => Some(ev.input_preview.clone()),
         SessionEventKind::ToolResult(ev) => Some(ev.output_preview.clone()),
         SessionEventKind::StatusUpdate(ev) => ev.message.clone(),
+        SessionEventKind::TaskAgentMessageSent(ev) => Some(ev.message_preview.clone()),
         SessionEventKind::PermissionsModeChanged(ev) => Some(
             match ev.mode {
                 redesmyn_protocol::session::PermissionsMode::Ask => "ask",

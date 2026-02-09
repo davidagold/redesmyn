@@ -38,8 +38,10 @@ pub use session::{
     ImageAttachment, InterfaceMode, PermissionDecided, PermissionDecision, PermissionDecisionBy,
     PermissionRequest, PermissionRequested, PermissionsMode, PermissionsModeChanged, SessionEnded,
     SessionEvent, SessionEventKind, SessionModelChanged, SessionModelReasoningEffort, SessionScope,
-    SessionStarted, StatusUpdate, ToolInvocation, ToolResult, TurnCompleted, TurnStarted,
-    TurnState, UnknownSessionEvent, UserMessage,
+    SessionStarted, StatusUpdate, TaskAgentMessageAgentKind,
+    TaskAgentMessageConversationContinuity, TaskAgentMessageDelivery, TaskAgentMessageSent,
+    ToolInvocation, ToolResult, TurnCompleted, TurnStarted, TurnState, UnknownSessionEvent,
+    UserMessage,
 };
 pub use session_live::{
     AssistantMessageDelta, SessionLiveEvent, SessionLiveEventKind, UnknownSessionLiveEvent,
