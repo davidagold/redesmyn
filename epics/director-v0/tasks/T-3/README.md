@@ -9,8 +9,15 @@ rn:
 
 ## Status
 
-- Deferred from `director-v0` delivery scope.
+- **Deferred from `director-v0` delivery scope.**
+- **Do not implement/start this task as part of `director-v0`.**
 - Keep this task as a placeholder/spec stub for a follow-up epic or `director-v1`.
+
+## v0 Scope Note
+
+- `T-3` is intentionally out-of-scope for Director v0.
+- Director v0 should ship with gates excluded; this task exists only to preserve the future contract.
+- If execution planning tooling proposes `T-3` during v0, treat that as a planning mismatch and skip it.
 
 ## Implementation Boundary
 
