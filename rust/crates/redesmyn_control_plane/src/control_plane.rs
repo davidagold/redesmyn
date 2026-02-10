@@ -15,9 +15,9 @@ use crate::task_manager::TaskManager;
 
 use redesmyn_ids::{CommandId, HostId, HostInstanceId, SessionId, TaskId, WorkspaceId};
 use redesmyn_protocol::agent_commands::{
-    AttachTaskAgentSessionCommand, ResumeByIdTaskAgentTurnCommand, StartAgentSessionCommand,
-    StartTaskAgentSessionCommand, SESSION_AGENT_ATTACH_SESSION, SESSION_AGENT_RESUME_BY_ID_TURN,
-    SESSION_AGENT_START, TASK_AGENT_START, TASK_AGENT_STOP,
+    AttachTaskAgentSessionCommand, ResumeByIdTaskAgentTurnCommand, SESSION_AGENT_ATTACH_SESSION,
+    SESSION_AGENT_RESUME_BY_ID_TURN, SESSION_AGENT_START, StartAgentSessionCommand,
+    StartTaskAgentSessionCommand, TASK_AGENT_START, TASK_AGENT_STOP,
 };
 use redesmyn_protocol::daemon::{
     CommandUpdate as DaemonCommandUpdate, SessionEventBatch, SessionLiveEventBatch,
@@ -328,7 +328,8 @@ impl ControlPlane {
 
         match dispatch_result {
             Ok(host_instance_id) => {
-                if let Some(session_id) = extract_session_id_for_owner_assignment(&kind, &json_payload)
+                if let Some(session_id) =
+                    extract_session_id_for_owner_assignment(&kind, &json_payload)
                 {
                     if let Err(err) = self
                         .assign_session_runner_instance(session_id, host_instance_id)
@@ -825,9 +826,11 @@ fn extract_session_id_for_owner_assignment(kind: &str, payload: &[u8]) -> Option
                 .ok()
                 .map(|command| command.session_id)
         }
-        SESSION_AGENT_ATTACH_SESSION => serde_json::from_slice::<AttachTaskAgentSessionCommand>(payload)
-            .ok()
-            .map(|command| command.session_id),
+        SESSION_AGENT_ATTACH_SESSION => {
+            serde_json::from_slice::<AttachTaskAgentSessionCommand>(payload)
+                .ok()
+                .map(|command| command.session_id)
+        }
         _ => None,
     }
 }

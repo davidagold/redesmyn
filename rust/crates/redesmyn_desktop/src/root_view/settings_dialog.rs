@@ -248,7 +248,8 @@ impl SettingsDialog {
 
         let repo_root = {
             let config = cx.entity().read(cx).model.read(cx).config.clone();
-            super::repo_root_from_desktop_config(config.as_ref()).or_else(|| repo_root_from_cwd().ok())
+            super::repo_root_from_desktop_config(config.as_ref())
+                .or_else(|| repo_root_from_cwd().ok())
         };
 
         match self.load_defaults(repo_root) {

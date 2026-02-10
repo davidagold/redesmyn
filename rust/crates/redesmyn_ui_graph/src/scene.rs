@@ -1254,7 +1254,9 @@ fn agent_status_by_task_id(
             .or_insert((summary.updated_at, status));
     }
 
-    out.into_iter().map(|(id, (_, status))| (id, status)).collect()
+    out.into_iter()
+        .map(|(id, (_, status))| (id, status))
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

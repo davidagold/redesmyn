@@ -7,7 +7,7 @@ use redesmyn_control_plane::client_api::ClientApiCodec;
 use redesmyn_control_plane::{ControlPlane, DaemonLinkHandle};
 use redesmyn_ids::{CommandId, EpicId, RepoId, RequestId, SessionId, TaskId, WorkspaceId};
 use redesmyn_protocol::agent_commands::{
-    ResumeByIdTaskAgentTurnCommand, StartTaskAgentSessionCommand, SESSION_AGENT_RESUME_BY_ID_TURN,
+    ResumeByIdTaskAgentTurnCommand, SESSION_AGENT_RESUME_BY_ID_TURN, StartTaskAgentSessionCommand,
     TASK_AGENT_START,
 };
 use redesmyn_protocol::client::{
@@ -26,9 +26,9 @@ use redesmyn_protocol::session::{
 use redesmyn_protocol::{
     ErrorCategory, ProtocolEnvelope, ProtocolVersion, RepoScope, Scope, SessionEvent, Timestamp,
 };
+use redesmyn_transport::client::ClientConnection;
 use redesmyn_transport::client::codec::ProtobufCodec;
 use redesmyn_transport::client::framed::FramedEndpoint;
-use redesmyn_transport::client::ClientConnection;
 use redesmyn_transport::in_proc::InProcEndpoint;
 use tokio::sync::mpsc;
 

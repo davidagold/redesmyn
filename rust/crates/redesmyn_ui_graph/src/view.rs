@@ -4468,7 +4468,7 @@ fn task_status_chips(
                     },
                     theme,
                     1.0,
-                ))
+                )),
         )
 }
 
