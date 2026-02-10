@@ -12,6 +12,11 @@ use redesmyn_ids::{
 use sqlx::{Executor, Sqlite};
 
 use crate::StorageError;
+use crate::director_mode::{
+    DirectorActivationIntent, DirectorModeLifecycle, DirectorModeStateRecord,
+    MergeAuthorityPolicyRecord, MergeAuthorityPolicySource, load_or_default_director_mode_state,
+    resolve_merge_authority_policy,
+};
 use crate::schema::{CommandState, MergeReadiness, TaskState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +88,20 @@ pub struct SessionSummaryRecord {
     pub message_preview: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DirectorModeSummaryRecord {
+    pub lifecycle: DirectorModeLifecycle,
+    pub director_session_id: Option<SessionId>,
+    pub activation_intent: Option<DirectorActivationIntent>,
+    pub resume_required_at_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectorMergeAuthorityPolicyRecord {
+    pub yolo_merge: bool,
+    pub source: MergeAuthorityPolicySource,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EpicGraphData {
     pub epic: EpicRecord,
@@ -91,6 +110,8 @@ pub struct EpicGraphData {
     pub command_last_updates: HashMap<CommandId, CommandUpdateRecord>,
     pub daemon_presences: Vec<DaemonPresenceRecord>,
     pub session_summaries: Vec<SessionSummaryRecord>,
+    pub director_mode: DirectorModeSummaryRecord,
+    pub merge_authority_policy: DirectorMergeAuthorityPolicyRecord,
     pub as_of_event_id: Option<EventId>,
 }
 
@@ -186,6 +207,9 @@ where
     let command_last_updates = load_command_last_updates(executor, &commands).await?;
     let daemon_presences = load_daemon_presences(executor).await?;
     let session_summaries = load_session_summaries(executor, epic.epic_id).await?;
+    let director_mode = load_director_mode_summary(executor, epic.epic_id).await?;
+    let merge_authority_policy =
+        load_merge_authority_policy_summary(executor, epic.epic_id).await?;
     let as_of_event_id = load_as_of_event_id(executor, epic.scope).await?;
 
     Ok(Some(EpicGraphData {
@@ -195,8 +219,45 @@ where
         command_last_updates,
         daemon_presences,
         session_summaries,
+        director_mode,
+        merge_authority_policy,
         as_of_event_id,
     }))
+}
+
+async fn load_director_mode_summary<'e, E>(
+    executor: E,
+    epic_id: EpicId,
+) -> Result<DirectorModeSummaryRecord, StorageError>
+where
+    E: Executor<'e, Database = Sqlite>,
+{
+    let DirectorModeStateRecord {
+        lifecycle,
+        director_session_id,
+        activation_intent,
+        resume_required_at_ms,
+        ..
+    } = load_or_default_director_mode_state(executor, epic_id).await?;
+
+    Ok(DirectorModeSummaryRecord {
+        lifecycle,
+        director_session_id,
+        activation_intent,
+        resume_required_at_ms,
+    })
+}
+
+async fn load_merge_authority_policy_summary<'e, E>(
+    executor: E,
+    epic_id: EpicId,
+) -> Result<DirectorMergeAuthorityPolicyRecord, StorageError>
+where
+    E: Executor<'e, Database = Sqlite> + Copy,
+{
+    let MergeAuthorityPolicyRecord { yolo_merge, source } =
+        resolve_merge_authority_policy(executor, epic_id).await?;
+    Ok(DirectorMergeAuthorityPolicyRecord { yolo_merge, source })
 }
 
 async fn load_epic<'e, E>(

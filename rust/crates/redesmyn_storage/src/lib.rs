@@ -20,6 +20,7 @@
 mod error;
 
 pub mod commands;
+pub mod director_mode;
 pub mod epic_graph;
 pub mod events;
 pub mod legacy_import;

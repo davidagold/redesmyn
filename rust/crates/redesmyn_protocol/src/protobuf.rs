@@ -2565,6 +2565,98 @@ fn decode_merge_readiness(value: i32) -> crate::client::MergeReadiness {
     }
 }
 
+fn encode_director_mode_lifecycle(value: crate::client::DirectorModeLifecycle) -> i32 {
+    match value {
+        crate::client::DirectorModeLifecycle::Unknown => {
+            pbv1::DirectorModeLifecycle::Unspecified as i32
+        }
+        crate::client::DirectorModeLifecycle::Inactive => {
+            pbv1::DirectorModeLifecycle::Inactive as i32
+        }
+        crate::client::DirectorModeLifecycle::Active => pbv1::DirectorModeLifecycle::Active as i32,
+        crate::client::DirectorModeLifecycle::Paused => pbv1::DirectorModeLifecycle::Paused as i32,
+        crate::client::DirectorModeLifecycle::ResumeRequired => {
+            pbv1::DirectorModeLifecycle::ResumeRequired as i32
+        }
+        crate::client::DirectorModeLifecycle::Error => pbv1::DirectorModeLifecycle::Error as i32,
+    }
+}
+
+fn decode_director_mode_lifecycle(value: i32) -> crate::client::DirectorModeLifecycle {
+    match pbv1::DirectorModeLifecycle::try_from(value) {
+        Ok(pbv1::DirectorModeLifecycle::Inactive) => crate::client::DirectorModeLifecycle::Inactive,
+        Ok(pbv1::DirectorModeLifecycle::Active) => crate::client::DirectorModeLifecycle::Active,
+        Ok(pbv1::DirectorModeLifecycle::Paused) => crate::client::DirectorModeLifecycle::Paused,
+        Ok(pbv1::DirectorModeLifecycle::ResumeRequired) => {
+            crate::client::DirectorModeLifecycle::ResumeRequired
+        }
+        Ok(pbv1::DirectorModeLifecycle::Error) => crate::client::DirectorModeLifecycle::Error,
+        Ok(pbv1::DirectorModeLifecycle::Unspecified) | Err(_) => {
+            crate::client::DirectorModeLifecycle::Unknown
+        }
+    }
+}
+
+fn encode_director_activation_intent(value: crate::client::DirectorActivationIntent) -> i32 {
+    match value {
+        crate::client::DirectorActivationIntent::RunInCurrentSession => {
+            pbv1::DirectorActivationIntent::RunInCurrentSession as i32
+        }
+        crate::client::DirectorActivationIntent::RunInNewSession => {
+            pbv1::DirectorActivationIntent::RunInNewSession as i32
+        }
+        crate::client::DirectorActivationIntent::Unknown => {
+            pbv1::DirectorActivationIntent::Unspecified as i32
+        }
+    }
+}
+
+fn decode_director_activation_intent(
+    value: i32,
+) -> Option<crate::client::DirectorActivationIntent> {
+    match pbv1::DirectorActivationIntent::try_from(value) {
+        Ok(pbv1::DirectorActivationIntent::RunInCurrentSession) => {
+            Some(crate::client::DirectorActivationIntent::RunInCurrentSession)
+        }
+        Ok(pbv1::DirectorActivationIntent::RunInNewSession) => {
+            Some(crate::client::DirectorActivationIntent::RunInNewSession)
+        }
+        Ok(pbv1::DirectorActivationIntent::Unspecified) | Err(_) => None,
+    }
+}
+
+fn encode_director_merge_authority_policy_source(
+    value: crate::client::DirectorMergeAuthorityPolicySource,
+) -> i32 {
+    match value {
+        crate::client::DirectorMergeAuthorityPolicySource::GlobalDefault => {
+            pbv1::DirectorMergeAuthorityPolicySource::GlobalDefault as i32
+        }
+        crate::client::DirectorMergeAuthorityPolicySource::EpicOverride => {
+            pbv1::DirectorMergeAuthorityPolicySource::EpicOverride as i32
+        }
+        crate::client::DirectorMergeAuthorityPolicySource::Unknown => {
+            pbv1::DirectorMergeAuthorityPolicySource::Unspecified as i32
+        }
+    }
+}
+
+fn decode_director_merge_authority_policy_source(
+    value: i32,
+) -> crate::client::DirectorMergeAuthorityPolicySource {
+    match pbv1::DirectorMergeAuthorityPolicySource::try_from(value) {
+        Ok(pbv1::DirectorMergeAuthorityPolicySource::GlobalDefault) => {
+            crate::client::DirectorMergeAuthorityPolicySource::GlobalDefault
+        }
+        Ok(pbv1::DirectorMergeAuthorityPolicySource::EpicOverride) => {
+            crate::client::DirectorMergeAuthorityPolicySource::EpicOverride
+        }
+        Ok(pbv1::DirectorMergeAuthorityPolicySource::Unspecified) | Err(_) => {
+            crate::client::DirectorMergeAuthorityPolicySource::Unknown
+        }
+    }
+}
+
 fn encode_client_command_state(value: crate::client::CommandState) -> i32 {
     match value {
         crate::client::CommandState::Unknown => pbv1::CommandState::Unspecified as i32,
@@ -4601,6 +4693,56 @@ impl crate::client::SessionSummary {
     }
 }
 
+impl crate::client::DirectorModeSummary {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::DirectorModeSummary {
+        pbv1::DirectorModeSummary {
+            lifecycle: encode_director_mode_lifecycle(self.lifecycle),
+            director_session_id: self
+                .director_session_id
+                .map(|id| id.to_bytes().to_vec())
+                .unwrap_or_default(),
+            activation_intent: self
+                .activation_intent
+                .map(encode_director_activation_intent)
+                .unwrap_or(pbv1::DirectorActivationIntent::Unspecified as i32),
+            resume_required_at: self.resume_required_at.map(encode_timestamp),
+        }
+    }
+
+    pub fn try_from_protobuf(proto: pbv1::DirectorModeSummary) -> Result<Self, ErrorEnvelope> {
+        Ok(Self {
+            lifecycle: decode_director_mode_lifecycle(proto.lifecycle),
+            director_session_id: decode_optional_ulid::<SessionId>(
+                "director_session_id",
+                &proto.director_session_id,
+            )?,
+            activation_intent: decode_director_activation_intent(proto.activation_intent),
+            resume_required_at: proto
+                .resume_required_at
+                .map(|ts| decode_timestamp("resume_required_at", ts))
+                .transpose()?,
+        })
+    }
+}
+
+impl crate::client::DirectorMergeAuthorityPolicy {
+    #[must_use]
+    pub fn to_protobuf(&self) -> pbv1::DirectorMergeAuthorityPolicy {
+        pbv1::DirectorMergeAuthorityPolicy {
+            yolo_merge: self.yolo_merge,
+            source: encode_director_merge_authority_policy_source(self.source),
+        }
+    }
+
+    pub fn from_protobuf(proto: pbv1::DirectorMergeAuthorityPolicy) -> Self {
+        Self {
+            yolo_merge: proto.yolo_merge,
+            source: decode_director_merge_authority_policy_source(proto.source),
+        }
+    }
+}
+
 impl crate::client::EpicGraph {
     #[must_use]
     pub fn to_protobuf(&self) -> pbv1::EpicGraph {
@@ -4646,6 +4788,14 @@ impl crate::client::EpicGraph {
                 .iter()
                 .map(crate::client::SessionSummary::to_protobuf)
                 .collect(),
+            director_mode: self
+                .director_mode
+                .as_ref()
+                .map(crate::client::DirectorModeSummary::to_protobuf),
+            merge_authority_policy: self
+                .merge_authority_policy
+                .as_ref()
+                .map(crate::client::DirectorMergeAuthorityPolicy::to_protobuf),
             as_of_event_id: self
                 .as_of_event_id
                 .map(|id| id.to_bytes().to_vec())
@@ -4699,6 +4849,13 @@ impl crate::client::EpicGraph {
                 .into_iter()
                 .map(crate::client::SessionSummary::try_from_protobuf)
                 .collect::<Result<Vec<_>, _>>()?,
+            director_mode: proto
+                .director_mode
+                .map(crate::client::DirectorModeSummary::try_from_protobuf)
+                .transpose()?,
+            merge_authority_policy: proto
+                .merge_authority_policy
+                .map(crate::client::DirectorMergeAuthorityPolicy::from_protobuf),
             as_of_event_id: decode_optional_ulid::<EventId>(
                 "as_of_event_id",
                 &proto.as_of_event_id,

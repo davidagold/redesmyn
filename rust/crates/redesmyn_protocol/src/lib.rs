@@ -848,6 +848,8 @@ mod tests {
                             command_summaries: Vec::new(),
                             daemon_presences: Vec::new(),
                             session_summaries: Vec::new(),
+                            director_mode: None,
+                            merge_authority_policy: None,
                             as_of_event_id: None,
                         },
                     }),

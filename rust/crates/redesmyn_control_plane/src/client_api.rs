@@ -26,10 +26,11 @@ use redesmyn_protocol::client::{
     AgentKind, AgentMessageConflictAction, AgentSessionScopeKind, AgentSessionStatus,
     AgentSessionSummary, ArchiveChatSessionResponse, ClientFrame, ClientMessage, CommandState,
     CommandSummary, CommandUpdateSummary, CreateChatSessionResponse, CreateCommandResponse,
-    DaemonPresenceSummary, EpicGraph, EpicSummary, Event, EventLogEvent, EventWaitFilter,
-    GetCommandResponse, GetEpicGraphResponse, GetEpicPinnedChatSessionResponse,
-    GetLatestTaskSessionResponse, GetSessionEventsResponse, HealthResponse,
-    ListAgentModelsResponse, ListChatSessionsResponse, ListEpicsResponse,
+    DaemonPresenceSummary, DirectorActivationIntent, DirectorMergeAuthorityPolicy,
+    DirectorMergeAuthorityPolicySource, DirectorModeLifecycle, DirectorModeSummary, EpicGraph,
+    EpicSummary, Event, EventLogEvent, EventWaitFilter, GetCommandResponse, GetEpicGraphResponse,
+    GetEpicPinnedChatSessionResponse, GetLatestTaskSessionResponse, GetSessionEventsResponse,
+    HealthResponse, ListAgentModelsResponse, ListChatSessionsResponse, ListEpicsResponse,
     ListSessionModelsResponse, ListTaskSessionsResponse, MergeReadiness,
     PinChatSessionToEpicResponse, RegenerateChatSessionTitleResponse,
     RespondPermissionRequestResponse, Response, ResponseResult,
@@ -3456,6 +3457,23 @@ fn build_epic_graph(
         command_summaries,
         daemon_presences,
         session_summaries,
+        director_mode: Some(DirectorModeSummary {
+            lifecycle: map_director_mode_lifecycle(graph.director_mode.lifecycle),
+            director_session_id: graph.director_mode.director_session_id,
+            activation_intent: graph
+                .director_mode
+                .activation_intent
+                .map(map_director_activation_intent),
+            resume_required_at: graph
+                .director_mode
+                .resume_required_at_ms
+                .map(timestamp_from_unix_ms)
+                .transpose()?,
+        }),
+        merge_authority_policy: Some(DirectorMergeAuthorityPolicy {
+            yolo_merge: graph.merge_authority_policy.yolo_merge,
+            source: map_director_merge_authority_policy_source(graph.merge_authority_policy.source),
+        }),
         as_of_event_id: graph.as_of_event_id,
     })
 }
@@ -3470,5 +3488,53 @@ fn map_command_state(state: redesmyn_storage::schema::CommandState) -> CommandSt
         redesmyn_storage::schema::CommandState::Succeeded => CommandState::Succeeded,
         redesmyn_storage::schema::CommandState::Failed => CommandState::Failed,
         redesmyn_storage::schema::CommandState::Canceled => CommandState::Canceled,
+    }
+}
+
+fn map_director_mode_lifecycle(
+    value: redesmyn_storage::director_mode::DirectorModeLifecycle,
+) -> DirectorModeLifecycle {
+    match value {
+        redesmyn_storage::director_mode::DirectorModeLifecycle::Inactive => {
+            DirectorModeLifecycle::Inactive
+        }
+        redesmyn_storage::director_mode::DirectorModeLifecycle::Active => {
+            DirectorModeLifecycle::Active
+        }
+        redesmyn_storage::director_mode::DirectorModeLifecycle::Paused => {
+            DirectorModeLifecycle::Paused
+        }
+        redesmyn_storage::director_mode::DirectorModeLifecycle::ResumeRequired => {
+            DirectorModeLifecycle::ResumeRequired
+        }
+        redesmyn_storage::director_mode::DirectorModeLifecycle::Error => {
+            DirectorModeLifecycle::Error
+        }
+    }
+}
+
+fn map_director_activation_intent(
+    value: redesmyn_storage::director_mode::DirectorActivationIntent,
+) -> DirectorActivationIntent {
+    match value {
+        redesmyn_storage::director_mode::DirectorActivationIntent::RunInCurrentSession => {
+            DirectorActivationIntent::RunInCurrentSession
+        }
+        redesmyn_storage::director_mode::DirectorActivationIntent::RunInNewSession => {
+            DirectorActivationIntent::RunInNewSession
+        }
+    }
+}
+
+fn map_director_merge_authority_policy_source(
+    value: redesmyn_storage::director_mode::MergeAuthorityPolicySource,
+) -> DirectorMergeAuthorityPolicySource {
+    match value {
+        redesmyn_storage::director_mode::MergeAuthorityPolicySource::GlobalDefault => {
+            DirectorMergeAuthorityPolicySource::GlobalDefault
+        }
+        redesmyn_storage::director_mode::MergeAuthorityPolicySource::EpicOverride => {
+            DirectorMergeAuthorityPolicySource::EpicOverride
+        }
     }
 }

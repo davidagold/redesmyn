@@ -417,6 +417,40 @@ message SessionSummary {
   string message_preview = 7;
 }
 
+enum DirectorModeLifecycle {
+  DIRECTOR_MODE_LIFECYCLE_UNSPECIFIED = 0;
+  DIRECTOR_MODE_LIFECYCLE_INACTIVE = 1;
+  DIRECTOR_MODE_LIFECYCLE_ACTIVE = 2;
+  DIRECTOR_MODE_LIFECYCLE_PAUSED = 3;
+  DIRECTOR_MODE_LIFECYCLE_RESUME_REQUIRED = 4;
+  DIRECTOR_MODE_LIFECYCLE_ERROR = 5;
+}
+
+enum DirectorActivationIntent {
+  DIRECTOR_ACTIVATION_INTENT_UNSPECIFIED = 0;
+  DIRECTOR_ACTIVATION_INTENT_RUN_IN_CURRENT_SESSION = 1;
+  DIRECTOR_ACTIVATION_INTENT_RUN_IN_NEW_SESSION = 2;
+}
+
+message DirectorModeSummary {
+  DirectorModeLifecycle lifecycle = 1;
+  // SessionId (ULID bytes, length = 16). Empty => none.
+  bytes director_session_id = 2;
+  DirectorActivationIntent activation_intent = 3;
+  google.protobuf.Timestamp resume_required_at = 4;
+}
+
+enum DirectorMergeAuthorityPolicySource {
+  DIRECTOR_MERGE_AUTHORITY_POLICY_SOURCE_UNSPECIFIED = 0;
+  DIRECTOR_MERGE_AUTHORITY_POLICY_SOURCE_GLOBAL_DEFAULT = 1;
+  DIRECTOR_MERGE_AUTHORITY_POLICY_SOURCE_EPIC_OVERRIDE = 2;
+}
+
+message DirectorMergeAuthorityPolicy {
+  bool yolo_merge = 1;
+  DirectorMergeAuthorityPolicySource source = 2;
+}
+
 // Minimal, typed graph representation (schema will evolve; additive changes only).
 message EpicGraph {
   string epic_slug = 1;
@@ -435,6 +469,8 @@ message EpicGraph {
   repeated CommandSummary command_summaries = 20;
   repeated DaemonPresenceSummary daemon_presences = 21;
   repeated SessionSummary session_summaries = 22;
+  DirectorModeSummary director_mode = 23;
+  DirectorMergeAuthorityPolicy merge_authority_policy = 24;
 
   // EventId (ULID bytes, length = 16). Snapshot cursor for subscriptions.
   bytes as_of_event_id = 30;

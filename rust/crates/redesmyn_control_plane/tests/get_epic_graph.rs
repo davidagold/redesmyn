@@ -10,8 +10,8 @@ use redesmyn_ids::{
 };
 use redesmyn_protocol::ProtocolEnvelope;
 use redesmyn_protocol::client::{
-    ClientFrame, ClientMessage, CommandState, GetEpicGraphRequest, Request, RequestPayload,
-    ResponseResult, TaskState,
+    ClientFrame, ClientMessage, CommandState, DirectorMergeAuthorityPolicySource,
+    DirectorModeLifecycle, GetEpicGraphRequest, Request, RequestPayload, ResponseResult, TaskState,
 };
 use redesmyn_transport::client::ClientConnection;
 use redesmyn_transport::client::codec::ProtobufCodec;
@@ -272,6 +272,22 @@ async fn get_epic_graph_returns_typed_projection() {
     assert_eq!(payload.graph.workspace_id, Some(workspace_id));
     assert_eq!(payload.graph.repo_id, Some(repo_id));
     assert_eq!(payload.graph.as_of_event_id, Some(event_id));
+    assert_eq!(
+        payload
+            .graph
+            .director_mode
+            .as_ref()
+            .map(|mode| mode.lifecycle),
+        Some(DirectorModeLifecycle::Inactive)
+    );
+    assert_eq!(
+        payload
+            .graph
+            .merge_authority_policy
+            .as_ref()
+            .map(|policy| (policy.yolo_merge, policy.source)),
+        Some((false, DirectorMergeAuthorityPolicySource::GlobalDefault))
+    );
 
     assert_eq!(payload.graph.nodes.len(), 1);
     assert_eq!(payload.graph.nodes[0].task_id, Some(task_id));

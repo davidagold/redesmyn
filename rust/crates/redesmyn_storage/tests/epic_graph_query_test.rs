@@ -2,6 +2,9 @@ use redesmyn_ids::{
     CommandId, CommandUpdateId, EpicId, EventId, HostId, HostInstanceId, RepoId, SessionEventId,
     SessionId, TaskId, WorkspaceId,
 };
+use redesmyn_storage::director_mode::{
+    DirectorModeLifecycle, MergeAuthorityPolicySource, set_epic_merge_authority_override,
+};
 use redesmyn_storage::epic_graph::load_epic_graph;
 use redesmyn_storage::open_test_sqlite_pool;
 
@@ -412,6 +415,29 @@ async fn epic_graph_query_returns_compact_projection() {
     assert_eq!(
         graph.session_summaries[0].session_event_id,
         session_event_id_new
+    );
+    assert_eq!(
+        graph.director_mode.lifecycle,
+        DirectorModeLifecycle::Inactive
+    );
+    assert_eq!(graph.director_mode.director_session_id, None);
+    assert_eq!(graph.merge_authority_policy.yolo_merge, false);
+    assert_eq!(
+        graph.merge_authority_policy.source,
+        MergeAuthorityPolicySource::GlobalDefault
+    );
+
+    set_epic_merge_authority_override(&pool, epic_id, true)
+        .await
+        .expect("set epic policy override");
+    let graph_with_override = load_epic_graph(&pool, "gpui", None)
+        .await
+        .expect("reload graph")
+        .expect("graph with override present");
+    assert_eq!(graph_with_override.merge_authority_policy.yolo_merge, true);
+    assert_eq!(
+        graph_with_override.merge_authority_policy.source,
+        MergeAuthorityPolicySource::EpicOverride
     );
 
     assert_eq!(graph.as_of_event_id, Some(event_id));

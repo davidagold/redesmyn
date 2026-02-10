@@ -295,6 +295,72 @@ impl Default for MergeReadiness {
     }
 }
 
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DirectorModeLifecycle {
+    Unknown,
+    Inactive,
+    Active,
+    Paused,
+    ResumeRequired,
+    Error,
+}
+
+impl Default for DirectorModeLifecycle {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DirectorActivationIntent {
+    RunInCurrentSession,
+    RunInNewSession,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DirectorModeSummary {
+    #[serde(default)]
+    pub lifecycle: DirectorModeLifecycle,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub director_session_id: Option<SessionId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activation_intent: Option<DirectorActivationIntent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_required_at: Option<Timestamp>,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum DirectorMergeAuthorityPolicySource {
+    GlobalDefault,
+    EpicOverride,
+    #[serde(other)]
+    Unknown,
+}
+
+impl Default for DirectorMergeAuthorityPolicySource {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DirectorMergeAuthorityPolicy {
+    pub yolo_merge: bool,
+    #[serde(default)]
+    pub source: DirectorMergeAuthorityPolicySource,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EpicTaskNode {
     pub task_slug: String,
@@ -417,6 +483,10 @@ pub struct EpicGraph {
     pub daemon_presences: Vec<DaemonPresenceSummary>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub session_summaries: Vec<SessionSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub director_mode: Option<DirectorModeSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_authority_policy: Option<DirectorMergeAuthorityPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub as_of_event_id: Option<EventId>,
 }
