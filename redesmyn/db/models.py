@@ -39,6 +39,11 @@ from redesmyn.domain.enums import (
     BlockPolicy,
     CommandState,
     LaunchConfigurationSource,
+    MergeQueueActionAuthority,
+    MergeQueueActionType,
+    MergeQueueConductorDecision,
+    MergeQueueDependencyKind,
+    MergeQueueItemState,
     MergeRunStatus,
     TaskAuthority,
     TaskSource,
@@ -757,6 +762,136 @@ class MergeRun(Base):
         if value == "restack":
             return "restack"
         return "merge"
+
+
+class MergeQueueItem(Base):
+    __tablename__ = "merge_queue_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    epic_id: Mapped[int] = mapped_column(
+        ForeignKey("epics.id"), nullable=False, index=True
+    )
+    task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tasks.id"), nullable=True, index=True
+    )
+    candidate_ref: Mapped[str] = mapped_column(String, nullable=False)
+    state: Mapped[MergeQueueItemState] = mapped_column(
+        _enum_type(MergeQueueItemState, "merge_queue_item_state"),
+        default=MergeQueueItemState.Draft,
+        nullable=False,
+        index=True,
+    )
+    conductor_decision: Mapped[MergeQueueConductorDecision] = mapped_column(
+        _enum_type(MergeQueueConductorDecision, "merge_queue_conductor_decision"),
+        default=MergeQueueConductorDecision.Pending,
+        nullable=False,
+        index=True,
+    )
+    order_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    blocked_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    deferred_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    merged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "candidate_ref <> ''", name="ck_merge_queue_items_candidate_ref"
+        ),
+    )
+
+
+class MergeQueueDependency(Base):
+    __tablename__ = "merge_queue_dependencies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    epic_id: Mapped[int] = mapped_column(
+        ForeignKey("epics.id"), nullable=False, index=True
+    )
+    queue_item_id: Mapped[int] = mapped_column(
+        ForeignKey("merge_queue_items.id"), nullable=False, index=True
+    )
+    depends_on_item_id: Mapped[int] = mapped_column(
+        ForeignKey("merge_queue_items.id"), nullable=False, index=True
+    )
+    kind: Mapped[MergeQueueDependencyKind] = mapped_column(
+        _enum_type(MergeQueueDependencyKind, "merge_queue_dependency_kind"),
+        default=MergeQueueDependencyKind.Hard,
+        nullable=False,
+    )
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    satisfied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "queue_item_id <> depends_on_item_id",
+            name="ck_merge_queue_dependencies_no_self_dependency",
+        ),
+        UniqueConstraint(
+            "queue_item_id",
+            "depends_on_item_id",
+            "kind",
+            name="uq_merge_queue_dependencies_unique_edge",
+        ),
+    )
+
+
+class MergeQueueAction(Base):
+    __tablename__ = "merge_queue_actions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    epic_id: Mapped[int] = mapped_column(
+        ForeignKey("epics.id"), nullable=False, index=True
+    )
+    queue_item_id: Mapped[int] = mapped_column(
+        ForeignKey("merge_queue_items.id"), nullable=False, index=True
+    )
+    authority: Mapped[MergeQueueActionAuthority] = mapped_column(
+        _enum_type(MergeQueueActionAuthority, "merge_queue_action_authority"),
+        nullable=False,
+        index=True,
+    )
+    action: Mapped[MergeQueueActionType] = mapped_column(
+        _enum_type(MergeQueueActionType, "merge_queue_action_type"),
+        nullable=False,
+        index=True,
+    )
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    data: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE,
+        nullable=False,
+        default=dict,
+    )
+    from_state: Mapped[MergeQueueItemState | None] = mapped_column(
+        _enum_type(MergeQueueItemState, "merge_queue_action_from_state"),
+        nullable=True,
+    )
+    to_state: Mapped[MergeQueueItemState | None] = mapped_column(
+        _enum_type(MergeQueueItemState, "merge_queue_action_to_state"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
 
 class RepoExecutorLease(Base):

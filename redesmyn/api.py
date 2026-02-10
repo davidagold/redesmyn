@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
-from sqlalchemy import delete, desc, select, update
+from sqlalchemy import delete, desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
@@ -47,6 +47,9 @@ from redesmyn.db import (
     LaunchConfiguration,
     Host,
     LinearAuth,
+    MergeQueueAction,
+    MergeQueueDependency,
+    MergeQueueItem,
     MergeRun,
     Repository,
     Task,
@@ -60,6 +63,11 @@ from redesmyn.domain.enums import (
     AgentKindSelection,
     BlockPolicy,
     CommandState,
+    MergeQueueActionAuthority,
+    MergeQueueActionType,
+    MergeQueueConductorDecision,
+    MergeQueueDependencyKind,
+    MergeQueueItemState,
     MergeRunStatus,
 )
 from redesmyn.event_stream import run_event_stream
@@ -170,6 +178,12 @@ from redesmyn.schemas.core import (
     MergeRunResumeResponse,
     MergeRunCancelRequest,
     MergeRunCancelResponse,
+    MergeQueueActionRequest,
+    MergeQueueActionResponse,
+    MergeQueueDependencyCreateRequest,
+    MergeQueueDependencyResponse,
+    MergeQueueItemCreateRequest,
+    MergeQueueItemResponse,
     MergeRunSummaryResponse,
     OrchestrationDefaultsResponse,
     OrchestrationFleetDefaultsResponse,
@@ -730,6 +744,118 @@ def _should_update_last_seen(
     return (now - _utc_aware(last_seen_at)) >= min_interval
 
 
+def _merge_queue_dependency_response(
+    row: MergeQueueDependency,
+) -> MergeQueueDependencyResponse:
+    return MergeQueueDependencyResponse.model_validate(row, from_attributes=True)
+
+
+def _merge_queue_item_response(
+    *,
+    row: MergeQueueItem,
+    dependencies: list[MergeQueueDependency],
+) -> MergeQueueItemResponse:
+    dep_responses = [
+        _merge_queue_dependency_response(dep)
+        for dep in dependencies
+        if dep.queue_item_id == row.id
+    ]
+    approval_pending_on_item_ids = sorted(
+        dep.depends_on_item_id
+        for dep in dependencies
+        if dep.queue_item_id == row.id
+        and dep.kind == MergeQueueDependencyKind.ApprovalPending
+        and dep.satisfied_at is None
+    )
+    payload = MergeQueueItemResponse.model_validate(row, from_attributes=True)
+    payload.dependencies = dep_responses
+    payload.approval_pending_on_item_ids = approval_pending_on_item_ids
+    return payload
+
+
+def _merge_queue_action_response(row: MergeQueueAction) -> MergeQueueActionResponse:
+    return MergeQueueActionResponse.model_validate(row, from_attributes=True)
+
+
+async def _record_merge_queue_action(
+    session: AsyncSession,
+    *,
+    epic_id: int,
+    item_id: int,
+    authority: MergeQueueActionAuthority,
+    action: MergeQueueActionType,
+    reason: str | None,
+    data: dict[str, Any] | None,
+    from_state: MergeQueueItemState | None,
+    to_state: MergeQueueItemState | None,
+) -> MergeQueueAction:
+    row = MergeQueueAction(
+        epic_id=epic_id,
+        queue_item_id=item_id,
+        authority=authority,
+        action=action,
+        reason=reason,
+        data=data or {},
+        from_state=from_state,
+        to_state=to_state,
+    )
+    session.add(row)
+    await session.flush()
+    return row
+
+
+async def _validate_merge_queue_dependency_target(
+    session: AsyncSession,
+    *,
+    epic_id: int,
+    queue_item_id: int,
+) -> MergeQueueItem:
+    item = await session.get(MergeQueueItem, queue_item_id)
+    if item is None or item.epic_id != epic_id:
+        raise HTTPException(status_code=404, detail="Merge queue item not found")
+    return item
+
+
+async def _add_merge_queue_dependencies(
+    session: AsyncSession,
+    *,
+    epic_id: int,
+    item_id: int,
+    dependency_item_ids: list[int],
+    kind: MergeQueueDependencyKind,
+    note: str | None,
+) -> list[int]:
+    added_dependency_ids: list[int] = []
+    for depends_on_item_id in sorted(set(dependency_item_ids)):
+        if depends_on_item_id == item_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Merge queue items cannot depend on themselves.",
+            )
+        await _validate_merge_queue_dependency_target(
+            session, epic_id=epic_id, queue_item_id=depends_on_item_id
+        )
+        existing = await session.scalar(
+            select(MergeQueueDependency)
+            .where(MergeQueueDependency.queue_item_id == item_id)
+            .where(MergeQueueDependency.depends_on_item_id == depends_on_item_id)
+            .where(MergeQueueDependency.kind == kind)
+        )
+        if existing is not None:
+            continue
+        dependency = MergeQueueDependency(
+            epic_id=epic_id,
+            queue_item_id=item_id,
+            depends_on_item_id=depends_on_item_id,
+            kind=kind,
+            note=note,
+        )
+        session.add(dependency)
+        await session.flush()
+        added_dependency_ids.append(dependency.id)
+    return added_dependency_ids
+
+
 @v1.get("/epics", response_model=list[EpicResponse])
 async def list_epics(request: Request) -> list[EpicResponse]:
     app = _app_from_request(request)
@@ -853,6 +979,35 @@ async def epic_graph(request: Request, epic: str) -> EpicGraphResponse:
                 .order_by(desc(MergeRun.id))
             )
         )
+        merge_queue_items = list(
+            await session.scalars(
+                select(MergeQueueItem)
+                .where(MergeQueueItem.epic_id == epic_row.id)
+                .order_by(MergeQueueItem.order_index, MergeQueueItem.id)
+            )
+        )
+        merge_queue_item_ids = [row.id for row in merge_queue_items]
+        merge_queue_dependencies: list[MergeQueueDependency] = []
+        merge_queue_actions: list[MergeQueueAction] = []
+        if merge_queue_item_ids:
+            merge_queue_dependencies = list(
+                await session.scalars(
+                    select(MergeQueueDependency)
+                    .where(MergeQueueDependency.epic_id == epic_row.id)
+                    .where(MergeQueueDependency.queue_item_id.in_(merge_queue_item_ids))
+                    .order_by(
+                        MergeQueueDependency.queue_item_id,
+                        MergeQueueDependency.id,
+                    )
+                )
+            )
+            merge_queue_actions = list(
+                await session.scalars(
+                    select(MergeQueueAction)
+                    .where(MergeQueueAction.epic_id == epic_row.id)
+                    .order_by(MergeQueueAction.id)
+                )
+            )
         trunk_row = (
             await session.get(
                 GitTrunkTimelineByInstance,
@@ -900,15 +1055,404 @@ async def epic_graph(request: Request, epic: str) -> EpicGraphResponse:
         if supervisor is not None:
             resp.conflict_assist = supervisor.snapshot(run_id=merge_run.run_id)
         merge_run_responses.append(resp)
+    merge_queue_responses = [
+        _merge_queue_item_response(row=row, dependencies=merge_queue_dependencies)
+        for row in merge_queue_items
+    ]
+    merge_queue_action_responses = [
+        _merge_queue_action_response(row) for row in merge_queue_actions
+    ]
 
     return EpicGraphResponse(
         epic=EpicResponse.model_validate(epic_row, from_attributes=True),
         tasks=task_responses,
         agent_sessions=latest_sessions,
         merge_runs=merge_run_responses,
+        merge_queue=merge_queue_responses,
+        merge_queue_actions=merge_queue_action_responses,
         trunk=trunk,
         repo_executor=repo_executor,
     )
+
+
+@v1.post(
+    "/epics/{epic}/merge-queue/items",
+    response_model=MergeQueueItemResponse,
+)
+async def enqueue_merge_queue_item(
+    http_request: Request,
+    epic: str,
+    request: MergeQueueItemCreateRequest,
+) -> MergeQueueItemResponse:
+    app = _app_from_request(http_request)
+    sessionmaker = app.state.sessionmaker
+    event: EventResponse | None = None
+    async with sessionmaker() as session:
+        epic_row = await _resolve_epic_row(session, app=app, epic=epic)
+        candidate_ref = request.candidate_ref.strip()
+        if not candidate_ref:
+            raise HTTPException(status_code=400, detail="candidate_ref is required.")
+
+        if request.task_id is not None:
+            task_row = await session.get(Task, request.task_id)
+            if task_row is None or task_row.epic_id != epic_row.id:
+                raise HTTPException(status_code=404, detail="Task not found for epic.")
+
+        order_index = request.order_index
+        if order_index is None:
+            max_order = await session.scalar(
+                select(func.max(MergeQueueItem.order_index)).where(
+                    MergeQueueItem.epic_id == epic_row.id
+                )
+            )
+            order_index = 0 if max_order is None else int(max_order) + 1
+
+        row = MergeQueueItem(
+            epic_id=epic_row.id,
+            task_id=request.task_id,
+            candidate_ref=candidate_ref,
+            state=request.state,
+            order_index=order_index,
+        )
+        session.add(row)
+        await session.flush()
+
+        await _record_merge_queue_action(
+            session,
+            epic_id=epic_row.id,
+            item_id=row.id,
+            authority=request.authority,
+            action=MergeQueueActionType.Enqueue,
+            reason=request.reason,
+            data={
+                "candidate_ref": candidate_ref,
+                "task_id": request.task_id,
+                "order_index": order_index,
+            },
+            from_state=None,
+            to_state=row.state,
+        )
+        await session.commit()
+        await session.refresh(row)
+
+        response = _merge_queue_item_response(row=row, dependencies=[])
+        event = await _append_event(
+            session,
+            event_type="merge_queue.item",
+            data={
+                "item_id": row.id,
+                "epic_id": row.epic_id,
+                "task_id": row.task_id,
+                "candidate_ref": row.candidate_ref,
+                "state": row.state.value,
+            },
+        )
+
+    if event is not None:
+        await _broadcast_event(app, event)
+    return response
+
+
+@v1.post(
+    "/merge-queue/items/{item_id}/dependencies",
+    response_model=MergeQueueDependencyResponse,
+)
+async def add_merge_queue_dependency(
+    http_request: Request,
+    item_id: int,
+    request: MergeQueueDependencyCreateRequest,
+) -> MergeQueueDependencyResponse:
+    app = _app_from_request(http_request)
+    sessionmaker = app.state.sessionmaker
+    event: EventResponse | None = None
+    async with sessionmaker() as session:
+        item = await session.get(MergeQueueItem, item_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="Merge queue item not found")
+
+        await _validate_merge_queue_dependency_target(
+            session,
+            epic_id=item.epic_id,
+            queue_item_id=request.depends_on_item_id,
+        )
+
+        existing = await session.scalar(
+            select(MergeQueueDependency)
+            .where(MergeQueueDependency.queue_item_id == item.id)
+            .where(
+                MergeQueueDependency.depends_on_item_id == request.depends_on_item_id
+            )
+            .where(MergeQueueDependency.kind == request.kind)
+        )
+        if existing is not None:
+            return _merge_queue_dependency_response(existing)
+
+        dep = MergeQueueDependency(
+            epic_id=item.epic_id,
+            queue_item_id=item.id,
+            depends_on_item_id=request.depends_on_item_id,
+            kind=request.kind,
+            note=request.note,
+        )
+        session.add(dep)
+        await session.flush()
+
+        await _record_merge_queue_action(
+            session,
+            epic_id=item.epic_id,
+            item_id=item.id,
+            authority=request.authority,
+            action=MergeQueueActionType.DependencyAdded,
+            reason=request.reason,
+            data={
+                "depends_on_item_id": request.depends_on_item_id,
+                "kind": request.kind.value,
+                "note": request.note,
+            },
+            from_state=item.state,
+            to_state=item.state,
+        )
+        await session.commit()
+        await session.refresh(dep)
+
+        response = _merge_queue_dependency_response(dep)
+        event = await _append_event(
+            session,
+            event_type="merge_queue.action",
+            data={
+                "item_id": item.id,
+                "epic_id": item.epic_id,
+                "authority": request.authority.value,
+                "action": MergeQueueActionType.DependencyAdded.value,
+                "reason": request.reason,
+            },
+        )
+
+    if event is not None:
+        await _broadcast_event(app, event)
+    return response
+
+
+@v1.post(
+    "/merge-queue/items/{item_id}/actions",
+    response_model=MergeQueueItemResponse,
+)
+async def apply_merge_queue_action(
+    http_request: Request,
+    item_id: int,
+    request: MergeQueueActionRequest,
+) -> MergeQueueItemResponse:
+    app = _app_from_request(http_request)
+    sessionmaker = app.state.sessionmaker
+    event: EventResponse | None = None
+    async with sessionmaker() as session:
+        item = await session.get(MergeQueueItem, item_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="Merge queue item not found")
+
+        from_state = item.state
+        action_data = dict(request.data)
+        now = datetime.now(UTC)
+
+        if request.action == MergeQueueActionType.StateUpdated:
+            if request.state is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="state is required for state_updated action.",
+                )
+            item.state = request.state
+            action_data["state"] = request.state.value
+
+        elif request.action == MergeQueueActionType.CandidateUpdated:
+            if request.candidate_ref is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="candidate_ref is required for candidate_updated action.",
+                )
+            next_ref = request.candidate_ref.strip()
+            if not next_ref:
+                raise HTTPException(
+                    status_code=400, detail="candidate_ref is required."
+                )
+            action_data["from_candidate_ref"] = item.candidate_ref
+            action_data["to_candidate_ref"] = next_ref
+            item.candidate_ref = next_ref
+
+        elif request.action == MergeQueueActionType.DependencyAdded:
+            if not request.dependency_item_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail="dependency_item_ids is required for dependency_added.",
+                )
+            added = await _add_merge_queue_dependencies(
+                session,
+                epic_id=item.epic_id,
+                item_id=item.id,
+                dependency_item_ids=request.dependency_item_ids,
+                kind=request.dependency_kind,
+                note=request.dependency_note,
+            )
+            action_data["dependency_item_ids"] = sorted(
+                set(request.dependency_item_ids)
+            )
+            action_data["dependency_kind"] = request.dependency_kind.value
+            action_data["added_dependency_ids"] = added
+
+        elif request.action == MergeQueueActionType.DependencyRemoved:
+            if not request.dependency_item_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail="dependency_item_ids is required for dependency_removed.",
+                )
+            dependency_item_ids = sorted(set(request.dependency_item_ids))
+            remove_ids = list(
+                await session.scalars(
+                    select(MergeQueueDependency.id)
+                    .where(MergeQueueDependency.queue_item_id == item.id)
+                    .where(
+                        MergeQueueDependency.depends_on_item_id.in_(dependency_item_ids)
+                    )
+                    .where(MergeQueueDependency.kind == request.dependency_kind)
+                )
+            )
+            await session.execute(
+                delete(MergeQueueDependency).where(
+                    MergeQueueDependency.id.in_(remove_ids)
+                )
+            )
+            action_data["dependency_item_ids"] = dependency_item_ids
+            action_data["dependency_kind"] = request.dependency_kind.value
+            action_data["removed_count"] = len(remove_ids)
+
+        elif request.action == MergeQueueActionType.Approve:
+            item.conductor_decision = MergeQueueConductorDecision.Approved
+            action_data["conductor_decision"] = item.conductor_decision.value
+
+        elif request.action == MergeQueueActionType.ApprovePending:
+            if not request.dependency_item_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail="dependency_item_ids is required for approve_pending.",
+                )
+            item.conductor_decision = MergeQueueConductorDecision.ApprovedPending
+            await session.execute(
+                delete(MergeQueueDependency)
+                .where(MergeQueueDependency.queue_item_id == item.id)
+                .where(
+                    MergeQueueDependency.kind
+                    == MergeQueueDependencyKind.ApprovalPending
+                )
+            )
+            await _add_merge_queue_dependencies(
+                session,
+                epic_id=item.epic_id,
+                item_id=item.id,
+                dependency_item_ids=request.dependency_item_ids,
+                kind=MergeQueueDependencyKind.ApprovalPending,
+                note=request.dependency_note,
+            )
+            action_data["conductor_decision"] = item.conductor_decision.value
+            action_data["approval_pending_on_item_ids"] = sorted(
+                set(request.dependency_item_ids)
+            )
+
+        elif request.action == MergeQueueActionType.RequestChanges:
+            item.conductor_decision = MergeQueueConductorDecision.ChangesRequested
+            item.state = MergeQueueItemState.Blocked
+            if request.blocked_reason:
+                item.blocked_reason = request.blocked_reason
+            elif request.reason:
+                item.blocked_reason = request.reason
+
+        elif request.action == MergeQueueActionType.Reject:
+            item.conductor_decision = MergeQueueConductorDecision.Rejected
+            item.state = MergeQueueItemState.Blocked
+            if request.blocked_reason:
+                item.blocked_reason = request.blocked_reason
+            elif request.reason:
+                item.blocked_reason = request.reason
+
+        elif request.action == MergeQueueActionType.Defer:
+            item.conductor_decision = MergeQueueConductorDecision.Deferred
+            item.state = MergeQueueItemState.Deferred
+            item.deferred_until = request.deferred_until
+
+        elif request.action == MergeQueueActionType.Requeue:
+            item.state = MergeQueueItemState.Ready
+            item.blocked_reason = None
+            item.deferred_until = None
+            if item.conductor_decision == MergeQueueConductorDecision.Deferred:
+                item.conductor_decision = MergeQueueConductorDecision.Pending
+
+        elif request.action == MergeQueueActionType.Pause:
+            item.paused = True
+
+        elif request.action == MergeQueueActionType.Resume:
+            item.paused = False
+
+        elif request.action == MergeQueueActionType.Reorder:
+            if request.order_index is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="order_index is required for reorder action.",
+                )
+            item.order_index = request.order_index
+            action_data["order_index"] = request.order_index
+
+        elif request.action == MergeQueueActionType.MarkMerged:
+            item.state = MergeQueueItemState.Merged
+            item.merged_at = now
+
+        elif request.action == MergeQueueActionType.MarkBlocked:
+            item.state = MergeQueueItemState.Blocked
+            if request.blocked_reason:
+                item.blocked_reason = request.blocked_reason
+
+        elif request.action == MergeQueueActionType.Enqueue:
+            # No-op: enqueue is recorded at item creation time.
+            pass
+
+        if request.conductor_decision is not None:
+            item.conductor_decision = request.conductor_decision
+            action_data["conductor_decision"] = request.conductor_decision.value
+
+        await _record_merge_queue_action(
+            session,
+            epic_id=item.epic_id,
+            item_id=item.id,
+            authority=request.authority,
+            action=request.action,
+            reason=request.reason,
+            data=action_data,
+            from_state=from_state,
+            to_state=item.state,
+        )
+
+        await session.commit()
+        await session.refresh(item)
+        dependencies = list(
+            await session.scalars(
+                select(MergeQueueDependency)
+                .where(MergeQueueDependency.queue_item_id == item.id)
+                .order_by(MergeQueueDependency.id)
+            )
+        )
+        response = _merge_queue_item_response(row=item, dependencies=dependencies)
+        event = await _append_event(
+            session,
+            event_type="merge_queue.action",
+            data={
+                "item_id": item.id,
+                "epic_id": item.epic_id,
+                "authority": request.authority.value,
+                "action": request.action.value,
+                "reason": request.reason,
+            },
+        )
+
+    if event is not None:
+        await _broadcast_event(app, event)
+    return response
 
 
 @v1.get("/hosts", response_model=list[HostResponse])

@@ -107,3 +107,53 @@ class MergeRunStatus(StrEnum):
     Succeeded = "succeeded"
     Failed = "failed"
     Canceled = "canceled"
+
+
+class MergeQueueItemState(StrEnum):
+    Draft = "draft"
+    Ready = "ready"
+    Gated = "gated"
+    Mergeable = "mergeable"
+    Merged = "merged"
+    Blocked = "blocked"
+    Deferred = "deferred"
+
+
+class MergeQueueConductorDecision(StrEnum):
+    Pending = "pending"
+    Approved = "approved"
+    ApprovedPending = "approved_pending"
+    ChangesRequested = "changes_requested"
+    Rejected = "rejected"
+    Deferred = "deferred"
+
+
+class MergeQueueDependencyKind(StrEnum):
+    Hard = "hard"
+    ApprovalPending = "approval_pending"
+    FollowUp = "follow_up"
+
+
+class MergeQueueActionAuthority(StrEnum):
+    Director = "director"
+    Conductor = "conductor"
+    System = "system"
+
+
+class MergeQueueActionType(StrEnum):
+    Enqueue = "enqueue"
+    CandidateUpdated = "candidate_updated"
+    StateUpdated = "state_updated"
+    DependencyAdded = "dependency_added"
+    DependencyRemoved = "dependency_removed"
+    Approve = "approve"
+    ApprovePending = "approve_pending"
+    RequestChanges = "request_changes"
+    Reject = "reject"
+    Defer = "defer"
+    Requeue = "requeue"
+    Pause = "pause"
+    Resume = "resume"
+    Reorder = "reorder"
+    MarkMerged = "mark_merged"
+    MarkBlocked = "mark_blocked"

@@ -18,6 +18,11 @@ from redesmyn.domain.enums import (
     BlockPolicy,
     CommandState,
     LaunchConfigurationSource,
+    MergeQueueActionAuthority,
+    MergeQueueActionType,
+    MergeQueueConductorDecision,
+    MergeQueueDependencyKind,
+    MergeQueueItemState,
     MergeRunStatus,
     TaskAgentMessageConversationContinuity,
     TaskAgentMessageConflictAction,
@@ -387,6 +392,49 @@ class MergeRunSummaryResponse(ApiResponse):
     updated_at: datetime
 
 
+class MergeQueueDependencyResponse(ApiResponse):
+    id: int
+    epic_id: int
+    queue_item_id: int
+    depends_on_item_id: int
+    kind: MergeQueueDependencyKind
+    note: str | None = None
+    satisfied_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class MergeQueueActionResponse(ApiResponse):
+    id: int
+    epic_id: int
+    queue_item_id: int
+    authority: MergeQueueActionAuthority
+    action: MergeQueueActionType
+    reason: str | None = None
+    data: dict[str, Any] = Field(default_factory=dict)
+    from_state: MergeQueueItemState | None = None
+    to_state: MergeQueueItemState | None = None
+    created_at: datetime
+
+
+class MergeQueueItemResponse(ApiResponse):
+    id: int
+    epic_id: int
+    task_id: int | None = None
+    candidate_ref: str
+    state: MergeQueueItemState
+    conductor_decision: MergeQueueConductorDecision
+    order_index: int
+    paused: bool = False
+    blocked_reason: str | None = None
+    deferred_until: datetime | None = None
+    merged_at: datetime | None = None
+    approval_pending_on_item_ids: list[int] = Field(default_factory=list)
+    dependencies: list[MergeQueueDependencyResponse] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
 class TaskMergePlanStepResponse(ApiResponse):
     kind: Literal["rebase", "merge_ff"]
     task_id: int | None
@@ -436,6 +484,39 @@ class HostUpsertRequest(ApiResponse):
     host_key: str
     display_name: str
     capabilities: HostCapabilitiesResponse | None = None
+
+
+class MergeQueueItemCreateRequest(ApiRequest):
+    task_id: int | None = None
+    candidate_ref: str
+    state: MergeQueueItemState = MergeQueueItemState.Draft
+    order_index: int | None = None
+    authority: MergeQueueActionAuthority = MergeQueueActionAuthority.Director
+    reason: str | None = None
+
+
+class MergeQueueDependencyCreateRequest(ApiRequest):
+    depends_on_item_id: int
+    kind: MergeQueueDependencyKind = MergeQueueDependencyKind.Hard
+    note: str | None = None
+    authority: MergeQueueActionAuthority = MergeQueueActionAuthority.Director
+    reason: str | None = None
+
+
+class MergeQueueActionRequest(ApiRequest):
+    authority: MergeQueueActionAuthority = MergeQueueActionAuthority.Director
+    action: MergeQueueActionType
+    reason: str | None = None
+    data: dict[str, Any] = Field(default_factory=dict)
+    state: MergeQueueItemState | None = None
+    conductor_decision: MergeQueueConductorDecision | None = None
+    order_index: int | None = None
+    candidate_ref: str | None = None
+    blocked_reason: str | None = None
+    deferred_until: datetime | None = None
+    dependency_item_ids: list[int] = Field(default_factory=list)
+    dependency_kind: MergeQueueDependencyKind = MergeQueueDependencyKind.ApprovalPending
+    dependency_note: str | None = None
 
 
 class LaunchConfigurationUpsertRequest(ApiResponse):
@@ -630,6 +711,24 @@ class MergeRunEventDataResponse(ApiResponse):
     blocked_branch_name: str | None = None
 
 
+class MergeQueueItemEventDataResponse(ApiResponse):
+    type: Literal["merge_queue.item"] = "merge_queue.item"
+    item_id: int
+    epic_id: int
+    task_id: int | None = None
+    candidate_ref: str
+    state: MergeQueueItemState
+
+
+class MergeQueueActionEventDataResponse(ApiResponse):
+    type: Literal["merge_queue.action"] = "merge_queue.action"
+    item_id: int
+    epic_id: int
+    authority: MergeQueueActionAuthority
+    action: MergeQueueActionType
+    reason: str | None = None
+
+
 class UnknownEventDataResponse(ApiResponse):
     type: Literal["unknown"] = "unknown"
     event_type: str
@@ -650,6 +749,8 @@ EventDataResponse = Annotated[
     | AgentAssistantMessageEventDataResponse
     | TaskMergeEventDataResponse
     | MergeRunEventDataResponse
+    | MergeQueueItemEventDataResponse
+    | MergeQueueActionEventDataResponse
     | UnknownEventDataResponse,
     Field(discriminator="type"),
 ]
@@ -950,5 +1051,7 @@ class EpicGraphResponse(ApiResponse):
     tasks: list[TaskResponse]
     agent_sessions: list[AgentSessionResponse]
     merge_runs: list[MergeRunSummaryResponse] = Field(default_factory=list)
+    merge_queue: list[MergeQueueItemResponse] = Field(default_factory=list)
+    merge_queue_actions: list[MergeQueueActionResponse] = Field(default_factory=list)
     trunk: TrunkTimelineResponse | None = None
     repo_executor: RepoExecutorStatusResponse | None = None
