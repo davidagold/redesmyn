@@ -1609,6 +1609,8 @@ impl GraphView {
         let show_stop = matches!(agent_status, AgentStatus::Running | AgentStatus::Blocked);
         let show_restart = has_session || show_stop;
         let show_start = !show_restart;
+        let quick_action_icon_size = collapsed_task_icon_size(zoom);
+        let quick_action_icon_gap = collapsed_task_icon_gap(zoom);
 
         let button = |kind: TaskQuickActionKind,
                       label: &'static str,
@@ -1631,7 +1633,7 @@ impl GraphView {
                 .flex()
                 .items_center()
                 .justify_center()
-                .size(px(22.0 * zoom))
+                .size(quick_action_icon_size)
                 .rounded(px(f32::from(theme.radius.md) * zoom))
                 .text_size(quantized_zoom_text_size(rem_size, 0.70, zoom))
                 .text_color(fg)
@@ -1668,7 +1670,7 @@ impl GraphView {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(2.0 * zoom))
+            .gap(quick_action_icon_gap)
             .opacity(opacity);
 
         if show_start {
@@ -2878,8 +2880,11 @@ impl Render for GraphView {
 
                     let branch_slug_text_size = quantized_zoom_text_size(rem_size, 0.60, zoom);
                     let preview_text_size = quantized_zoom_text_size(rem_size, 0.66, zoom);
-                    let quick_actions_slot_width = px(46.0 * zoom);
-                    let quick_actions_slot_height = px(22.0 * zoom);
+                    let quick_action_icon_size = collapsed_task_icon_size(zoom);
+                    let quick_action_icon_gap = collapsed_task_icon_gap(zoom);
+                    let quick_actions_slot_width =
+                        quick_action_icon_size * 2.0 + quick_action_icon_gap;
+                    let quick_actions_slot_height = quick_action_icon_size;
 
                     let preview_content = latest_session.as_ref().and_then(|session| {
                         let preview = session.message_preview.as_ref()?;
@@ -2955,7 +2960,7 @@ impl Render for GraphView {
                                         .flex()
                                         .flex_row()
                                         .items_center()
-                                        .gap(px(4.0 * zoom))
+                                        .gap(quick_action_icon_gap)
                                         .child(
                                             div()
                                                 .relative()
@@ -4141,12 +4146,20 @@ fn collapsed_task_border_color(
     theme.colors.border
 }
 
+fn collapsed_task_icon_size(zoom: f32) -> gpui::Pixels {
+    px(12.0 * zoom)
+}
+
+fn collapsed_task_icon_gap(zoom: f32) -> gpui::Pixels {
+    px(4.0 * zoom)
+}
+
 fn agent_status_dot_from_key(
     key: AgentStatusDotVisualKey,
     theme: &redesmyn_ui::styles::UiTheme,
     zoom: f32,
 ) -> gpui::Div {
-    let size = px(12.0 * zoom);
+    let size = collapsed_task_icon_size(zoom);
     let radius = px(999.0);
     let transparent = theme.colors.surface.opacity(0.0);
 
@@ -4181,7 +4194,7 @@ fn collapsed_agent_status_dot_crossfade(
     theme: &redesmyn_ui::styles::UiTheme,
     zoom: f32,
 ) -> gpui::Div {
-    let dot_size = px(12.0 * zoom);
+    let dot_size = collapsed_task_icon_size(zoom);
     let current_opacity = crossfade_progress.clamp(0.0, 1.0);
     let previous_opacity = (1.0 - current_opacity).clamp(0.0, 1.0);
 
