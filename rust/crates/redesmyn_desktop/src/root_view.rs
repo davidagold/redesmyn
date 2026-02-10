@@ -40,10 +40,11 @@ use redesmyn_ui::UiContext;
 use redesmyn_ui::components::{
     ButtonKind, Callout, CalloutKind, CascadingMenu, CascadingMenuId, CascadingMenuMetrics,
     CascadingMenuRowStyle, CascadingMenuSecondarySide, CascadingMenuState,
-    CascadingMenuSurfaceStyle, IconButton, OverlaySurfaceKind, ProgressPill, ScrollArea, SplitPane,
-    SplitPaneAxis, SplitPaneEvent, SplitPaneResizeMode, SplitPaneState, TextButton, TextInput,
-    TextInputEvent, cascading_menu_checkbox_indicator, cascading_menu_move_left_to_primary,
-    cascading_menu_row, cascading_menu_surface, overlay_surface, set_open_cascading_menu,
+    CascadingMenuSurfaceStyle, IconButton, OverlaySurfaceKind, ProgressPill, ScrollArea,
+    ScrollbarStyle, SplitPane, SplitPaneAxis, SplitPaneEvent, SplitPaneResizeMode, SplitPaneState,
+    TextButton, TextInput, TextInputEvent, cascading_menu_checkbox_indicator,
+    cascading_menu_move_left_to_primary, cascading_menu_row, cascading_menu_surface,
+    overlay_surface, set_open_cascading_menu,
 };
 use redesmyn_ui::settings::ThemePreference;
 use redesmyn_ui::task_filters::{
@@ -58,10 +59,10 @@ use redesmyn_ui_graph::{GraphView, GraphViewEvent};
 
 use crate::app::SessionViewerFixtureEmitter;
 use crate::command_palette::{
-    CloseAgentSessionsPalette, CloseCommandPalette, CloseTaskPalette, SelectNextAgentSession,
-    SelectNextCommand, SelectNextTaskPaletteItem, SelectPreviousAgentSession,
-    SelectPreviousCommand, SelectPreviousTaskPaletteItem, ToggleAgentSessionsPalette,
-    ToggleCommandPalette, ToggleTaskPalette,
+    CloseAgentSessionsPalette, CloseCommandPalette, CloseTaskPalette, OpenEpicSelector,
+    SelectNextAgentSession, SelectNextCommand, SelectNextTaskPaletteItem,
+    SelectPreviousAgentSession, SelectPreviousCommand, SelectPreviousTaskPaletteItem,
+    ToggleAgentSessionsPalette, ToggleCommandPalette, ToggleTaskPalette,
 };
 use crate::control_plane_client::{ControlPlaneClient, ControlPlaneClientError};
 use crate::orchestration_config::{
@@ -167,6 +168,9 @@ pub struct RootView {
     command_palette: CommandPaletteOverlay,
     agent_sessions_palette: AgentSessionsPaletteOverlay,
     task_palette: TaskPaletteOverlay,
+    epic_menu_search_input: Entity<TextInput>,
+    epic_menu_filtered_indices: Vec<usize>,
+    epic_menu_active_index: usize,
     agent_sessions_palette_task: Option<Task<()>>,
     agent_sessions_palette_archive_task: Option<Task<()>>,
     task_palette_task: Option<Task<()>>,
@@ -230,6 +234,12 @@ impl RootView {
         let agent_sessions_palette_input = agent_sessions_palette.input_entity();
         let task_palette = TaskPaletteOverlay::new(focus_handle.clone(), cx);
         let task_palette_input = task_palette.input_entity();
+        let epic_menu_search_input = cx.new(|cx| {
+            TextInput::new(cx)
+                .placeholder("Search epics…")
+                .small()
+                .menu_search()
+        });
         let settings_dialog = SettingsDialog::new(focus_handle.clone(), cx);
         let settings_prelude_input = settings_dialog.prelude_input_entity();
         let settings_openai_api_key_input = settings_dialog.openai_api_key_input_entity();
@@ -272,6 +282,31 @@ impl RootView {
             }
             this.ui_updates.bump();
         }));
+        subscriptions.push(cx.subscribe(
+            &epic_menu_search_input,
+            |this, _, event, cx| match event {
+                TextInputEvent::Changed(_) => {
+                    this.refresh_epic_menu_filtered_indices(cx);
+                    this.clamp_epic_menu_active_index(cx);
+                    this.scroll_active_epic_into_view(cx);
+                    this.ui_updates.bump();
+                    cx.notify();
+                }
+                TextInputEvent::Submitted(_) => {
+                    if !matches!(this.chrome.panel, Some(ChromePanel::EpicMenu))
+                        || this.chrome.refresh.in_flight
+                    {
+                        return;
+                    }
+
+                    if let Some(epic_slug) = this.active_filtered_epic_slug(cx) {
+                        this.select_epic(epic_slug, cx);
+                    }
+                    this.ui_updates.bump();
+                }
+                TextInputEvent::PastedImages(_) => {}
+            },
+        ));
 
         subscriptions.push(cx.subscribe(&settings_prelude_input, |this, _, event, cx| {
             this.settings_dialog
@@ -295,6 +330,9 @@ impl RootView {
             command_palette,
             agent_sessions_palette,
             task_palette,
+            epic_menu_search_input,
+            epic_menu_filtered_indices: Vec::new(),
+            epic_menu_active_index: 0,
             agent_sessions_palette_task: None,
             agent_sessions_palette_archive_task: None,
             task_palette_task: None,
@@ -490,6 +528,172 @@ impl RootView {
             self.close_panel(cx);
             self.ui_updates.bump();
         }
+    }
+
+    fn epic_menu_query(&self, cx: &App) -> String {
+        self.epic_menu_search_input
+            .read(cx)
+            .text()
+            .trim()
+            .to_ascii_lowercase()
+    }
+
+    fn refresh_epic_menu_filtered_indices(&mut self, cx: &App) {
+        let query = self.epic_menu_query(cx);
+        self.epic_menu_filtered_indices = self
+            .chrome
+            .epics
+            .iter()
+            .enumerate()
+            .filter(|(_, epic)| epic_matches_query(&epic.slug, &epic.name, &query))
+            .map(|(index, _)| index)
+            .collect();
+    }
+
+    fn epic_menu_row_height() -> gpui::Pixels {
+        px(34.0)
+    }
+
+    fn clamp_epic_menu_active_index(&mut self, _cx: &App) {
+        let visible_count = self.epic_menu_filtered_indices.len();
+        if visible_count == 0 {
+            self.epic_menu_active_index = 0;
+            return;
+        }
+
+        if self.epic_menu_active_index >= visible_count {
+            self.epic_menu_active_index = visible_count.saturating_sub(1);
+        }
+    }
+
+    fn active_filtered_epic_slug(&self, _cx: &App) -> Option<String> {
+        let epic_index = *self
+            .epic_menu_filtered_indices
+            .get(self.epic_menu_active_index)?;
+        self.chrome
+            .epics
+            .get(epic_index)
+            .map(|epic| epic.slug.clone())
+    }
+
+    fn move_epic_menu_selection(&mut self, delta: isize, _cx: &App) {
+        let visible_count = self.epic_menu_filtered_indices.len();
+        if visible_count == 0 {
+            self.epic_menu_active_index = 0;
+            return;
+        }
+
+        let next = wrapped_index(self.epic_menu_active_index, delta, visible_count);
+        self.epic_menu_active_index = next;
+    }
+
+    fn scroll_active_epic_into_view(&mut self, _cx: &App) {
+        let visible_count = self.epic_menu_filtered_indices.len();
+        if visible_count == 0 {
+            return;
+        }
+
+        let index = self
+            .epic_menu_active_index
+            .min(visible_count.saturating_sub(1));
+        let viewport_height = self.chrome.epic_scroll.bounds().size.height;
+        if viewport_height <= px(0.0) {
+            return;
+        }
+
+        let current_offset = self.chrome.epic_scroll.offset();
+        let max_offset_y = self.chrome.epic_scroll.max_offset().height;
+        if max_offset_y <= px(0.0) {
+            return;
+        }
+
+        let row_height = Self::epic_menu_row_height();
+        let target_offset_y = scroll_offset_y_to_reveal_row(
+            current_offset.y,
+            max_offset_y,
+            viewport_height,
+            index,
+            row_height,
+        );
+        if target_offset_y != current_offset.y {
+            self.chrome
+                .epic_scroll
+                .set_offset(gpui::point(current_offset.x, target_offset_y));
+        }
+    }
+
+    fn open_epic_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.chrome.epics.is_empty() {
+            return;
+        }
+
+        self.chrome.panel = Some(ChromePanel::EpicMenu);
+        self.chrome.connections_menu_active = None;
+        self.epic_menu_search_input
+            .update(cx, |input, cx| input.set_text("", cx));
+        self.refresh_epic_menu_filtered_indices(cx);
+        self.epic_menu_active_index = self
+            .chrome
+            .selected_epic_slug
+            .as_ref()
+            .and_then(|selected| {
+                self.chrome
+                    .epics
+                    .iter()
+                    .position(|epic| &epic.slug == selected)
+            })
+            .unwrap_or(0);
+        self.clamp_epic_menu_active_index(cx);
+        self.scroll_active_epic_into_view(cx);
+        self.notify_ui_updated(cx);
+        window.focus(&self.epic_menu_search_input.focus_handle(cx));
+    }
+
+    fn toggle_epic_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.chrome.panel, Some(ChromePanel::EpicMenu)) {
+            self.close_panel(cx);
+            return;
+        }
+
+        self.open_epic_menu(window, cx);
+    }
+
+    fn epic_selector_shortcut_enabled(&self, window: &Window, cx: &App) -> bool {
+        let session_composer_focused = self
+            .session_pane
+            .read(cx)
+            .session_view
+            .read(cx)
+            .is_composer_focused(window, cx);
+        if session_composer_focused {
+            return false;
+        }
+
+        let task_session_composer_focused = self
+            .workspace_pane
+            .read(cx)
+            .task_session_view
+            .read(cx)
+            .is_composer_focused(window, cx);
+        !task_session_composer_focused
+    }
+
+    fn open_epic_selector(
+        &mut self,
+        _: &OpenEpicSelector,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.epic_selector_shortcut_enabled(window, cx) || self.chrome.epics.is_empty() {
+            return;
+        }
+
+        if matches!(self.chrome.panel, Some(ChromePanel::EpicMenu)) {
+            window.focus(&self.epic_menu_search_input.focus_handle(cx));
+            return;
+        }
+
+        self.open_epic_menu(window, cx);
     }
 
     fn select_previous_command(
@@ -3118,15 +3322,15 @@ impl Render for RootView {
 
         let epic_button =
             TextButton::new(("chrome_epic_selector", cx.entity_id()), epic_button_label)
-                .kind(ButtonKind::Ghost)
+                .kind(ButtonKind::GhostHover)
                 .compact()
                 .disabled(epic_button_disabled)
                 .disabled_reason(epic_button_disabled_reason)
                 .trailing(div().child("▾"))
                 .on_click({
                     let root = root.clone();
-                    move |_, _, cx| {
-                        root.update(cx, |this, cx| this.toggle_panel(ChromePanel::EpicMenu, cx));
+                    move |_, window, cx| {
+                        root.update(cx, |this, cx| this.toggle_epic_menu(window, cx));
                     }
                 });
 
@@ -3185,7 +3389,7 @@ impl Render for RootView {
             );
 
         let mut chrome_extras = div().flex().flex_col().gap(theme.spacing.sm);
-        let epic_menu_top = px(44.0) + theme.spacing.xs;
+        let epic_menu_top = px(44.0) - theme.spacing.sm + px(1.0);
         let epic_menu_left = theme.spacing.md + px(28.0) + theme.spacing.sm;
 
         if let Some(error) = self.chrome.refresh.error.clone() {
@@ -3553,71 +3757,115 @@ impl Render for RootView {
             };
 
         let epic_menu_overlay = if matches!(self.chrome.panel, Some(ChromePanel::EpicMenu)) {
-            let mut menu_body = div().flex().flex_col().gap(theme.spacing.sm).child(
-                div()
-                    .text_sm()
-                    .text_color(theme.colors.foreground)
-                    .child("Select an epic"),
-            );
+            self.refresh_epic_menu_filtered_indices(cx);
+            self.clamp_epic_menu_active_index(cx);
 
+            let row_style = CascadingMenuRowStyle {
+                height: Self::epic_menu_row_height(),
+                padding_x: theme.spacing.xs,
+                ..CascadingMenuRowStyle::compact(&theme)
+            };
+            let surface_style = CascadingMenuSurfaceStyle {
+                padding_x: px(0.0),
+                padding_y: px(0.0),
+            };
+            let in_flight = self.chrome.refresh.in_flight;
+            let filtered_epics = self.epic_menu_filtered_indices.clone();
+            let root_for_items = root.clone();
+            let entity_id = cx.entity_id();
+            let search_row_height = row_style.height;
+
+            let mut list_rows = div().flex().flex_col().w_full().gap(px(0.0));
             if self.chrome.epics.is_empty() {
-                menu_body = menu_body.child(
+                list_rows = list_rows.child(
                     div()
+                        .px(row_style.padding_x)
+                        .py(theme.spacing.xs)
                         .text_sm()
                         .text_color(theme.colors.foreground_muted)
                         .child("No epics available. Ensure the control plane can discover epics."),
                 );
+            } else if filtered_epics.is_empty() {
+                list_rows = list_rows.child(
+                    div()
+                        .px(row_style.padding_x)
+                        .py(theme.spacing.xs)
+                        .text_sm()
+                        .text_color(theme.colors.foreground_muted)
+                        .child("No matching epics."),
+                );
             } else {
-                let scroll = self.chrome.epic_scroll.clone();
-                let root_for_items = root.clone();
-                let selected_slug = self.chrome.selected_epic_slug.clone();
-                let in_flight = self.chrome.refresh.in_flight;
-                let entity_id = cx.entity_id();
+                for (display_index, epic_index) in filtered_epics.iter().copied().enumerate() {
+                    let Some(epic) = self.chrome.epics.get(epic_index).cloned() else {
+                        continue;
+                    };
+                    let epic_slug = epic.slug.clone();
+                    let active = self.epic_menu_active_index == display_index;
 
-                let list = ScrollArea::new(("chrome_epic_scroll", cx.entity_id()), scroll)
-                    .scrollbar_width(px(8.0))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .w_full()
-                            .gap(theme.spacing.xs)
-                            .children(self.chrome.epics.iter().cloned().map(|epic| {
-                                let epic_slug = epic.slug.clone();
-                                let epic_name = epic.name.clone();
-                                let selected = selected_slug.as_deref() == Some(epic_slug.as_str());
-                                let kind = if selected {
-                                    ButtonKind::Secondary
-                                } else {
-                                    ButtonKind::Ghost
-                                };
-                                let item_id = (
-                                    gpui::ElementId::from(("chrome_epic_item", entity_id)),
-                                    epic_slug.clone(),
-                                );
-                                TextButton::new(item_id, epic_slug.clone())
-                                    .menu_item()
-                                    .kind(kind)
-                                    .disabled(in_flight)
-                                    .disabled_reason("Refreshing…")
-                                    .tooltip(epic_name)
-                                    .on_click({
-                                        let root = root_for_items.clone();
-                                        let slug = epic_slug.clone();
-                                        move |_, window, cx| {
-                                            let focus = root.read(cx).focus_handle.clone();
-                                            root.update(cx, |this, cx| {
-                                                this.select_epic(slug.clone(), cx)
-                                            });
-                                            window.focus(&focus);
-                                        }
-                                    })
-                            })),
-                    );
+                    let mut row = cascading_menu_row(&theme, row_style, active, 0.0)
+                        .id((
+                            gpui::ElementId::from(("chrome_epic_item", entity_id)),
+                            epic_slug.clone(),
+                        ))
+                        .when(in_flight, |this| this.opacity(0.6))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .pl(theme.spacing.xs)
+                                .text_sm()
+                                .text_color(theme.colors.foreground)
+                                .truncate()
+                                .child(epic_slug.clone()),
+                        );
 
-                menu_body =
-                    menu_body.child(div().h(px(220.0)).w_full().overflow_hidden().child(list));
+                    if !in_flight {
+                        row = row
+                            .cursor_pointer()
+                            .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                                if this.epic_menu_active_index != display_index {
+                                    this.epic_menu_active_index = display_index;
+                                    cx.notify();
+                                }
+                            }))
+                            .on_mouse_down(gpui::MouseButton::Left, {
+                                let root = root_for_items.clone();
+                                move |_, _, cx| {
+                                    root.update(cx, |this, cx| {
+                                        this.select_epic(epic_slug.clone(), cx)
+                                    });
+                                }
+                            });
+                    }
+
+                    list_rows = list_rows.child(row);
+                }
             }
+
+            let list = ScrollArea::new(
+                ("chrome_epic_scroll", cx.entity_id()),
+                self.chrome.epic_scroll.clone(),
+            )
+            .scrollbar_width(px(0.0))
+            .scrollbar_style(ScrollbarStyle {
+                inset: theme.spacing.xs,
+                ..ScrollbarStyle::default()
+            })
+            .child(div().px(theme.spacing.xs).child(list_rows));
+
+            let menu_body = cascading_menu_surface(&theme, surface_style)
+                .w(px(360.0))
+                .overflow_hidden()
+                .child(
+                    div()
+                        .h(search_row_height)
+                        .flex()
+                        .items_center()
+                        .w_full()
+                        .px(row_style.padding_x)
+                        .child(self.epic_menu_search_input.clone()),
+                )
+                .child(div().h(px(220.0)).w_full().overflow_hidden().child(list));
 
             Some(
                 div()
@@ -3638,24 +3886,10 @@ impl Render for RootView {
                             .absolute()
                             .top(epic_menu_top)
                             .left(epic_menu_left)
-                            .child(
-                                div()
-                                    .w(px(360.0))
-                                    .rounded(theme.radius.md)
-                                    .shadow_md()
-                                    .occlude()
-                                    .child(
-                                        div()
-                                            .w_full()
-                                            .p(theme.spacing.md)
-                                            .rounded(theme.radius.md)
-                                            .bg(theme.colors.surface)
-                                            .border_1()
-                                            .border_color(theme.colors.border.opacity(0.5))
-                                            .overflow_hidden()
-                                            .child(menu_body),
-                                    ),
-                            ),
+                            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                cx.stop_propagation();
+                            })
+                            .child(menu_body.shadow_md().occlude()),
                     ),
             )
         } else {
@@ -3690,6 +3924,7 @@ impl Render for RootView {
             .on_action(cx.listener(Self::toggle_command_palette))
             .on_action(cx.listener(Self::toggle_agent_sessions_palette))
             .on_action(cx.listener(Self::toggle_task_palette))
+            .on_action(cx.listener(Self::open_epic_selector))
             .on_action(cx.listener(Self::close_command_palette))
             .on_action(cx.listener(Self::close_agent_sessions_palette))
             .on_action(cx.listener(Self::close_task_palette))
@@ -3748,34 +3983,69 @@ impl Render for RootView {
                             };
                         }
 
-                        if !this.agent_sessions_palette.is_open() {
+                        if this.agent_sessions_palette.is_open() {
+                            return match event.keystroke.key.as_str() {
+                                "escape" => {
+                                    this.agent_sessions_palette.handle_close_action(window, cx);
+                                    this.ui_updates.bump();
+                                    true
+                                }
+                                "up" => {
+                                    this.agent_sessions_palette.select_previous(cx);
+                                    this.ui_updates.bump();
+                                    true
+                                }
+                                "down" => {
+                                    this.agent_sessions_palette.select_next(cx);
+                                    this.ui_updates.bump();
+                                    true
+                                }
+                                "enter" => {
+                                    if let Some(selection) =
+                                        this.agent_sessions_palette.activate_selected_entry(cx)
+                                    {
+                                        this.activate_agent_session_palette_entry(selection, cx);
+                                    }
+                                    if !this.agent_sessions_palette.is_open() {
+                                        window.focus(&this.focus_handle);
+                                    }
+                                    this.ui_updates.bump();
+                                    true
+                                }
+                                _ => false,
+                            };
+                        }
+
+                        if !matches!(this.chrome.panel, Some(ChromePanel::EpicMenu)) {
                             return false;
                         }
 
                         match event.keystroke.key.as_str() {
                             "escape" => {
-                                this.agent_sessions_palette.handle_close_action(window, cx);
+                                this.close_panel(cx);
+                                window.focus(&this.focus_handle);
                                 this.ui_updates.bump();
                                 true
                             }
                             "up" => {
-                                this.agent_sessions_palette.select_previous(cx);
+                                this.move_epic_menu_selection(-1, cx);
+                                this.scroll_active_epic_into_view(cx);
                                 this.ui_updates.bump();
+                                cx.notify();
                                 true
                             }
                             "down" => {
-                                this.agent_sessions_palette.select_next(cx);
+                                this.move_epic_menu_selection(1, cx);
+                                this.scroll_active_epic_into_view(cx);
                                 this.ui_updates.bump();
+                                cx.notify();
                                 true
                             }
                             "enter" => {
-                                if let Some(selection) =
-                                    this.agent_sessions_palette.activate_selected_entry(cx)
-                                {
-                                    this.activate_agent_session_palette_entry(selection, cx);
-                                }
-                                if !this.agent_sessions_palette.is_open() {
-                                    window.focus(&this.focus_handle);
+                                if !this.chrome.refresh.in_flight {
+                                    if let Some(epic_slug) = this.active_filtered_epic_slug(cx) {
+                                        this.select_epic(epic_slug, cx);
+                                    }
                                 }
                                 this.ui_updates.bump();
                                 true
@@ -7613,6 +7883,41 @@ fn chat_session_is_active(session: &redesmyn_protocol::client::AgentSessionSumma
     )
 }
 
+fn epic_matches_query(slug: &str, name: &str, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+
+    slug.to_ascii_lowercase().contains(query) || name.to_ascii_lowercase().contains(query)
+}
+
+fn wrapped_index(current: usize, delta: isize, len: usize) -> usize {
+    debug_assert!(len > 0, "len must be > 0");
+    (current as isize + delta).rem_euclid(len as isize) as usize
+}
+
+fn scroll_offset_y_to_reveal_row(
+    current_offset_y: gpui::Pixels,
+    max_offset_y: gpui::Pixels,
+    viewport_height: gpui::Pixels,
+    row_index: usize,
+    row_height: gpui::Pixels,
+) -> gpui::Pixels {
+    let row_top = row_height * row_index as f32;
+    let row_bottom = row_top + row_height;
+    let visible_top = -current_offset_y;
+    let visible_bottom = visible_top + viewport_height;
+
+    let mut target_visible_top = visible_top;
+    if row_top < visible_top {
+        target_visible_top = row_top;
+    } else if row_bottom > visible_bottom {
+        target_visible_top = row_bottom - viewport_height;
+    }
+
+    (-target_visible_top).clamp(-max_offset_y, px(0.0))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RefreshReason {
     Startup,
@@ -7673,4 +7978,45 @@ struct ChromeNotice {
     title: SharedString,
     message: SharedString,
     kind: CalloutKind,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{epic_matches_query, scroll_offset_y_to_reveal_row, wrapped_index};
+    use gpui::px;
+
+    #[test]
+    fn epic_query_matches_slug_or_name_case_insensitive() {
+        assert!(epic_matches_query(
+            "github-integration",
+            "GitHub Integration",
+            "github"
+        ));
+        assert!(epic_matches_query("gpui", "GPUI + Rust Port", "rust"));
+        assert!(!epic_matches_query("backlog", "Backlog", "director"));
+    }
+
+    #[test]
+    fn scroll_offset_to_reveal_row_scrolls_down_when_row_below_view() {
+        let offset = scroll_offset_y_to_reveal_row(px(0.0), px(400.0), px(100.0), 4, px(34.0));
+        assert_eq!(offset, px(-70.0));
+    }
+
+    #[test]
+    fn scroll_offset_to_reveal_row_scrolls_up_when_row_above_view() {
+        let offset = scroll_offset_y_to_reveal_row(px(-120.0), px(400.0), px(100.0), 2, px(34.0));
+        assert_eq!(offset, px(-68.0));
+    }
+
+    #[test]
+    fn scroll_offset_to_reveal_row_clamps_to_max_offset() {
+        let offset = scroll_offset_y_to_reveal_row(px(0.0), px(40.0), px(100.0), 5, px(34.0));
+        assert_eq!(offset, px(-40.0));
+    }
+
+    #[test]
+    fn wrapped_index_wraps_in_both_directions() {
+        assert_eq!(wrapped_index(0, -1, 6), 5);
+        assert_eq!(wrapped_index(5, 1, 6), 0);
+    }
 }

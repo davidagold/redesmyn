@@ -3,6 +3,7 @@ use gpui::{App, KeyBinding, actions};
 actions!(
     redesmyn_desktop_command_palette,
     [
+        OpenEpicSelector,
         ToggleCommandPalette,
         ToggleAgentSessionsPalette,
         ToggleTaskPalette,
@@ -115,6 +116,7 @@ impl CommandRegistry {
 
 pub fn bind_command_palette_keys(cx: &mut App) {
     cx.bind_keys([
+        KeyBinding::new("e", OpenEpicSelector, Some("Desktop")),
         KeyBinding::new("cmd-k", ToggleCommandPalette, Some("Desktop")),
         KeyBinding::new("ctrl-k", ToggleCommandPalette, Some("Desktop")),
         KeyBinding::new("cmd-s", ToggleAgentSessionsPalette, Some("Desktop")),

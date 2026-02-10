@@ -10,6 +10,7 @@ pub enum ButtonKind {
     Primary,
     Secondary,
     Ghost,
+    GhostHover,
     Danger,
 }
 
@@ -141,6 +142,11 @@ impl RenderOnce for TextButton {
                 Some(theme.colors.border),
             ),
             ButtonKind::Ghost => (None, theme.colors.foreground, None),
+            ButtonKind::GhostHover => (
+                None,
+                theme.colors.foreground,
+                Some(theme.colors.border.opacity(0.0)),
+            ),
             ButtonKind::Danger => (
                 Some(theme.colors.danger),
                 theme.colors.background,
@@ -185,6 +191,11 @@ impl RenderOnce for TextButton {
         match self.layout {
             TextButtonLayout::Default => {
                 button = button.justify_center();
+                if !self.disabled && self.kind == ButtonKind::GhostHover {
+                    button = button
+                        .hover(|this| this.bg(theme.colors.accent.opacity(0.7)))
+                        .active(|this| this.bg(theme.colors.accent.opacity(0.82)));
+                }
             }
             TextButtonLayout::MenuItem => {
                 button = button.justify_start().w_full();
