@@ -395,6 +395,159 @@ async fn invalid_ack_is_rejected_without_advancing_cursor() {
 }
 
 #[tokio::test]
+async fn ack_not_in_payload_relevant_set_is_rejected_without_cursor_advance() {
+    let control_plane = ControlPlane::open_test().await.expect("control plane");
+    let (workspace_id, repo_id, epic_id, _task_id) = seed_epic_task(&control_plane).await;
+    let scope = repo_scope(workspace_id, repo_id);
+    let mut notifications = control_plane.director_wake().subscribe_notifications();
+
+    control_plane
+        .director_wake()
+        .start_epic(epic_id)
+        .await
+        .expect("start epic watcher");
+    control_plane
+        .director_wake()
+        .set_mode(epic_id, DirectorMode::Active)
+        .await
+        .expect("set active mode");
+
+    let unrelated_epic_id = EpicId::new();
+    let unrelated_event_id = control_plane
+        .event_log()
+        .append_event(
+            scope,
+            "epic.note",
+            serde_json::to_vec(&serde_json::json!({
+                "epic_id": unrelated_epic_id,
+                "note": "other epic event",
+            }))
+            .unwrap(),
+        )
+        .await
+        .expect("append unrelated epic event");
+
+    let trigger_event_id = control_plane
+        .event_log()
+        .append_event(
+            scope,
+            "command.succeeded",
+            serde_json::to_vec(&serde_json::json!({
+                "epic_id": epic_id,
+            }))
+            .unwrap(),
+        )
+        .await
+        .expect("append wake trigger event");
+    let wake = recv_wake(&mut notifications).await;
+    assert_eq!(wake.summary.high_water_event_id, trigger_event_id);
+
+    // Rationale: rowid alone is insufficient; ack must reference an event present in
+    // this wake's relevant payload window for the target epic.
+    let payload_ids: Vec<EventId> = wake
+        .chunks
+        .iter()
+        .flat_map(|chunk| chunk.events.iter().map(|event| event.event_id))
+        .collect();
+    assert_eq!(payload_ids, vec![trigger_event_id]);
+
+    let err = control_plane
+        .director_wake()
+        .ack_wake(epic_id, &wake.summary.wake_id, unrelated_event_id)
+        .await
+        .expect_err("ack of unrelated event should be rejected");
+    assert!(matches!(err, DirectorWakeError::InvalidAck { .. }));
+
+    let snapshot = control_plane
+        .director_wake()
+        .snapshot(epic_id)
+        .await
+        .expect("snapshot");
+    assert_eq!(snapshot.ack_cursor_event_id, None);
+    assert_eq!(
+        snapshot.in_flight_wake_id,
+        Some(wake.summary.wake_id.clone())
+    );
+
+    let rejected_count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM events
+        WHERE kind = 'director.wake.ack_rejected'
+        "#,
+    )
+    .fetch_one(control_plane.pool())
+    .await
+    .expect("count rejected events");
+    assert_eq!(rejected_count, 1);
+
+    control_plane.director_wake().stop_epic(epic_id).await;
+}
+
+#[tokio::test]
+async fn wake_id_mismatch_does_not_mutate_in_flight_state() {
+    let control_plane = ControlPlane::open_test().await.expect("control plane");
+    let (workspace_id, repo_id, epic_id, _task_id) = seed_epic_task(&control_plane).await;
+    let scope = repo_scope(workspace_id, repo_id);
+    let mut notifications = control_plane.director_wake().subscribe_notifications();
+
+    control_plane
+        .director_wake()
+        .start_epic(epic_id)
+        .await
+        .expect("start epic watcher");
+    control_plane
+        .director_wake()
+        .set_mode(epic_id, DirectorMode::Active)
+        .await
+        .expect("set active mode");
+
+    control_plane
+        .event_log()
+        .append_event(
+            scope,
+            "command.succeeded",
+            serde_json::to_vec(&serde_json::json!({
+                "epic_id": epic_id,
+            }))
+            .unwrap(),
+        )
+        .await
+        .expect("append initial trigger");
+    let wake = recv_wake(&mut notifications).await;
+
+    // Rationale: wake identity is part of deterministic replay; mismatches must not
+    // alter cursor or in-flight wake window.
+    let err = control_plane
+        .director_wake()
+        .ack_wake(
+            epic_id,
+            "wake-id-mismatch",
+            wake.summary.high_water_event_id,
+        )
+        .await
+        .expect_err("wake id mismatch should fail");
+    assert!(matches!(err, DirectorWakeError::WakeIdMismatch { .. }));
+
+    let snapshot = control_plane
+        .director_wake()
+        .snapshot(epic_id)
+        .await
+        .expect("snapshot");
+    assert_eq!(snapshot.ack_cursor_event_id, None);
+    assert_eq!(
+        snapshot.in_flight_wake_id,
+        Some(wake.summary.wake_id.clone())
+    );
+    assert_eq!(
+        snapshot.in_flight_high_water_event_id,
+        Some(wake.summary.high_water_event_id)
+    );
+
+    control_plane.director_wake().stop_epic(epic_id).await;
+}
+
+#[tokio::test]
 async fn resume_required_blocks_dispatch_until_resume() {
     let control_plane = ControlPlane::open_test().await.expect("control plane");
     let (workspace_id, repo_id, epic_id, _task_id) = seed_epic_task(&control_plane).await;

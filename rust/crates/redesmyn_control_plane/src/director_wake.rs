@@ -431,27 +431,15 @@ impl DirectorWakeController {
             });
         }
 
+        let event_scope = scope.as_event_scope();
         let high_water = row
             .in_flight_high_water_event_id
             .ok_or(DirectorWakeError::WakeNotInFlight { epic_id })?;
-        let high_water_rowid = self
-            .event_rowid_in_scope(scope.as_event_scope(), high_water)
-            .await?;
-        let ack_rowid = self
-            .event_rowid_in_scope(scope.as_event_scope(), ack_event_id)
-            .await?;
-        let cursor_rowid = if let Some(cursor) = row.ack_cursor_event_id {
-            Some(
-                self.event_rowid_in_scope(scope.as_event_scope(), cursor)
-                    .await?,
-            )
-        } else {
-            None
-        };
-
-        let valid =
-            cursor_rowid.is_none_or(|cursor| ack_rowid > cursor) && ack_rowid <= high_water_rowid;
-        if !valid {
+        let high_water_rowid = self.event_rowid_in_scope(event_scope, high_water).await?;
+        let Some((ack_rowid, ack_event_record)) = self
+            .event_rowid_and_record_in_scope(event_scope, ack_event_id)
+            .await?
+        else {
             let err = DirectorWakeError::InvalidAck {
                 epic_id,
                 wake_id: wake_id.to_owned(),
@@ -459,8 +447,30 @@ impl DirectorWakeController {
                 high_water_event_id: high_water,
                 received_ack: ack_event_id,
             };
-            self.append_invalid_ack_event(scope.as_event_scope(), &err)
-                .await;
+            self.append_invalid_ack_event(event_scope, &err).await;
+            return Err(err);
+        };
+        let cursor_rowid = if let Some(cursor) = row.ack_cursor_event_id {
+            Some(self.event_rowid_in_scope(event_scope, cursor).await?)
+        } else {
+            None
+        };
+
+        let valid_rowid_range =
+            cursor_rowid.is_none_or(|cursor| ack_rowid > cursor) && ack_rowid <= high_water_rowid;
+        let ack_payload = parse_json_payload(&ack_event_record.payload);
+        let ack_is_relevant = self
+            .event_matches_epic(epic_id, &ack_event_record, ack_payload.as_ref())
+            .await?;
+        if !valid_rowid_range || !ack_is_relevant {
+            let err = DirectorWakeError::InvalidAck {
+                epic_id,
+                wake_id: wake_id.to_owned(),
+                expected_cursor: row.ack_cursor_event_id,
+                high_water_event_id: high_water,
+                received_ack: ack_event_id,
+            };
+            self.append_invalid_ack_event(event_scope, &err).await;
             return Err(err);
         }
 
@@ -504,7 +514,7 @@ impl DirectorWakeController {
         let _ = self
             .inner
             .event_log
-            .append_event(scope.as_event_scope(), DIRECTOR_WAKE_ACKED_EVENT, payload)
+            .append_event(event_scope, DIRECTOR_WAKE_ACKED_EVENT, payload)
             .await;
 
         let replay_payload = if replay_suffix {
@@ -992,6 +1002,24 @@ impl DirectorWakeController {
             }));
         }
         Ok(rowid)
+    }
+
+    async fn event_rowid_and_record_in_scope(
+        &self,
+        expected_scope: EventScope,
+        event_id: EventId,
+    ) -> Result<Option<(i64, EventRecord)>, DirectorWakeError> {
+        let row =
+            redesmyn_storage::events::get_event_rowid_and_scope(&self.inner.pool, event_id).await?;
+        let Some((rowid, scope)) = row else {
+            return Ok(None);
+        };
+        if scope != expected_scope {
+            return Ok(None);
+        }
+
+        let record = redesmyn_storage::events::get_event(&self.inner.pool, event_id).await?;
+        Ok(record.map(|record| (rowid, record)))
     }
 
     async fn max_event_id_by_rowid(
