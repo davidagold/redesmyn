@@ -18,8 +18,8 @@ use redesmyn_ids::{RepoId, TaskId, WorkspaceId};
 use redesmyn_protocol::client::{
     AgentKind, AgentMessageConflictAction, CommandState, CreateCommandRequest, GetEpicGraphRequest,
     GetLatestTaskSessionRequest, GetSessionEventsRequest, ModelReasoningEffort, RequestPayload,
-    ResponseResult, SendTaskAgentMessageRequest, SessionEventCursor, SessionEventKindFilter,
-    SessionModelSelection, StartAgentRequest, StopAgentRequest,
+    ResponseResult, RestartAgentRequest, SendTaskAgentMessageRequest, SessionEventCursor,
+    SessionEventKindFilter, SessionModelSelection, StartAgentRequest, StopAgentRequest,
     TaskAgentMessageConversationContinuity, TaskAgentMessageDelivery, WaitForCommandRequest,
 };
 use redesmyn_protocol::prelude::BUILT_IN_PRELUDE_TEMPLATE;
@@ -230,6 +230,8 @@ struct SyncArgs {
 enum TaskCommands {
     /// Start a task agent session (same control-plane request path as the desktop UI).
     Start(TaskStartArgs),
+    /// Restart a task agent session through the control plane.
+    Restart(TaskRestartArgs),
     /// Stop active task agent sessions through the control plane.
     Stop(TaskStopArgs),
     /// Send a durable message to a task agent through the control plane.
@@ -257,6 +259,29 @@ struct TaskStartArgs {
     prompt: Option<String>,
 
     /// Timeout waiting for the start command to reach a terminal state.
+    #[arg(long, default_value_t = 30_000)]
+    timeout_ms: u64,
+}
+
+#[derive(Debug, Args)]
+struct TaskRestartArgs {
+    /// Epic slug (defaults only if exactly one local epic exists).
+    #[arg(long)]
+    epic: Option<String>,
+
+    /// Task slug within the epic (e.g. `T-3`).
+    #[arg(long)]
+    task: String,
+
+    /// Path within the repo to operate in (defaults to current directory).
+    #[arg(long)]
+    repo: Option<PathBuf>,
+
+    /// Optional initial prompt to seed the restarted session.
+    #[arg(long)]
+    prompt: Option<String>,
+
+    /// Timeout waiting for the restart command to reach a terminal state.
     #[arg(long, default_value_t = 30_000)]
     timeout_ms: u64,
 }
@@ -604,18 +629,9 @@ fn sync(args: SyncArgs, output: &Output) -> CommandOutcome {
         message: Option<String>,
     }
 
-    let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .enable_io()
-        .build()
-    {
+    let runtime = match build_current_thread_runtime() {
         Ok(runtime) => runtime,
-        Err(err) => {
-            return CommandOutcome::Failure(ErrorEnvelope::new(
-                ErrorCategory::Internal,
-                format!("failed to initialize async runtime: {err}"),
-            ));
-        }
+        Err(err) => return CommandOutcome::Failure(err),
     };
 
     let result = match runtime.block_on(sync_from_local_via_control_plane(
@@ -669,6 +685,7 @@ fn sync(args: SyncArgs, output: &Output) -> CommandOutcome {
 fn task(cmd: TaskCommands, output: &Output) -> CommandOutcome {
     match cmd {
         TaskCommands::Start(args) => task_start(args, output),
+        TaskCommands::Restart(args) => task_restart(args, output),
         TaskCommands::Stop(args) => task_stop(args, output),
         TaskCommands::Send(args) => task_send(args, output),
         TaskCommands::History(args) => task_history(args, output),
@@ -722,6 +739,37 @@ fn resolve_task_command_context(
     })
 }
 
+fn build_current_thread_runtime() -> Result<tokio::runtime::Runtime, ErrorEnvelope> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .enable_io()
+        .build()
+        .map_err(|err| {
+            ErrorEnvelope::new(
+                ErrorCategory::Internal,
+                format!("failed to initialize async runtime: {err}"),
+            )
+        })
+}
+
+fn build_task_initial_prompt(
+    defaults: &TaskStartDefaults,
+    prompt: Option<String>,
+) -> Option<String> {
+    let prelude_prompt = if defaults.send_prelude {
+        defaults
+            .prelude
+            .clone()
+            .or_else(|| Some(BUILT_IN_PRELUDE_TEMPLATE.to_string()))
+    } else {
+        None
+    };
+    let user_prompt = prompt
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    merge_task_start_prompts(prelude_prompt, user_prompt)
+}
+
 fn task_start(args: TaskStartArgs, output: &Output) -> CommandOutcome {
     let context = match resolve_task_command_context(args.repo.as_ref(), args.epic.as_deref()) {
         Ok(context) => context,
@@ -731,20 +779,7 @@ fn task_start(args: TaskStartArgs, output: &Output) -> CommandOutcome {
     let epic_slug = context.epic_slug;
 
     let defaults = load_effective_task_start_defaults(&repo_root);
-    let prelude_prompt = if defaults.send_prelude {
-        defaults
-            .prelude
-            .clone()
-            .or_else(|| Some(BUILT_IN_PRELUDE_TEMPLATE.to_string()))
-    } else {
-        None
-    };
-    let user_prompt = args
-        .prompt
-        .clone()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-    let initial_prompt = merge_task_start_prompts(prelude_prompt, user_prompt);
+    let initial_prompt = build_task_initial_prompt(&defaults, args.prompt.clone());
 
     let session_model_selection =
         if defaults.model_id.is_none() && defaults.reasoning_effort.is_none() {
@@ -768,18 +803,9 @@ fn task_start(args: TaskStartArgs, output: &Output) -> CommandOutcome {
         message: Option<String>,
     }
 
-    let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .enable_io()
-        .build()
-    {
+    let runtime = match build_current_thread_runtime() {
         Ok(runtime) => runtime,
-        Err(err) => {
-            return CommandOutcome::Failure(ErrorEnvelope::new(
-                ErrorCategory::Internal,
-                format!("failed to initialize async runtime: {err}"),
-            ));
-        }
+        Err(err) => return CommandOutcome::Failure(err),
     };
 
     let result = match runtime.block_on(start_task_agent_via_control_plane(
@@ -837,6 +863,86 @@ fn task_start(args: TaskStartArgs, output: &Output) -> CommandOutcome {
     }
 }
 
+fn task_restart(args: TaskRestartArgs, output: &Output) -> CommandOutcome {
+    let context = match resolve_task_command_context(args.repo.as_ref(), args.epic.as_deref()) {
+        Ok(context) => context,
+        Err(err) => return CommandOutcome::Failure(err),
+    };
+    let repo_root = context.repo_root;
+    let epic_slug = context.epic_slug;
+
+    let defaults = load_effective_task_start_defaults(&repo_root);
+    let initial_prompt = build_task_initial_prompt(&defaults, args.prompt.clone());
+
+    #[derive(Debug, Serialize)]
+    struct TaskRestartReport {
+        repo_root: String,
+        epic_slug: String,
+        task_slug: String,
+        session_id: String,
+        command_id: String,
+        state: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    }
+
+    let runtime = match build_current_thread_runtime() {
+        Ok(runtime) => runtime,
+        Err(err) => return CommandOutcome::Failure(err),
+    };
+
+    let result = match runtime.block_on(restart_task_agent_via_control_plane(
+        &epic_slug,
+        &args.task,
+        initial_prompt,
+        args.timeout_ms,
+    )) {
+        Ok(result) => result,
+        Err(err) => return CommandOutcome::Failure(err),
+    };
+
+    let report = TaskRestartReport {
+        repo_root: repo_root.display().to_string(),
+        epic_slug,
+        task_slug: result.task_slug,
+        session_id: result.session_id,
+        command_id: result.command_id,
+        state: result.state,
+        message: result.message.clone(),
+    };
+
+    match output.format {
+        OutputFormat::Human => {
+            if report.state == "succeeded" {
+                println!("restarted session: {}", report.session_id);
+            } else if let Some(message) = &report.message {
+                println!("{message}");
+            } else {
+                println!("restart failed: state={}", report.state);
+            }
+        }
+        OutputFormat::Json => {
+            if let Err(err) = output.print_json_stdout(&report) {
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    format!("failed to write output: {err}"),
+                ));
+            }
+        }
+    }
+
+    if report.state == "succeeded" {
+        CommandOutcome::Success
+    } else {
+        CommandOutcome::Failure(ErrorEnvelope::new(
+            ErrorCategory::Unavailable,
+            report.message.unwrap_or_else(|| {
+                format!("failed to restart task agent (state={})", report.state)
+            }),
+        ))
+    }
+}
+
 fn task_stop(args: TaskStopArgs, output: &Output) -> CommandOutcome {
     let context = match resolve_task_command_context(args.repo.as_ref(), args.epic.as_deref()) {
         Ok(context) => context,
@@ -857,18 +963,9 @@ fn task_stop(args: TaskStopArgs, output: &Output) -> CommandOutcome {
         message: Option<String>,
     }
 
-    let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .enable_io()
-        .build()
-    {
+    let runtime = match build_current_thread_runtime() {
         Ok(runtime) => runtime,
-        Err(err) => {
-            return CommandOutcome::Failure(ErrorEnvelope::new(
-                ErrorCategory::Internal,
-                format!("failed to initialize async runtime: {err}"),
-            ));
-        }
+        Err(err) => return CommandOutcome::Failure(err),
     };
 
     let result = match runtime.block_on(stop_task_agent_via_control_plane(
@@ -980,18 +1077,9 @@ fn task_send(args: TaskSendArgs, output: &Output) -> CommandOutcome {
         args.on_conflict.into()
     };
 
-    let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .enable_io()
-        .build()
-    {
+    let runtime = match build_current_thread_runtime() {
         Ok(runtime) => runtime,
-        Err(err) => {
-            return CommandOutcome::Failure(ErrorEnvelope::new(
-                ErrorCategory::Internal,
-                format!("failed to initialize async runtime: {err}"),
-            ));
-        }
+        Err(err) => return CommandOutcome::Failure(err),
     };
 
     let result = match runtime.block_on(send_task_agent_message_via_control_plane(
@@ -1076,18 +1164,9 @@ fn task_history(args: TaskHistoryArgs, output: &Output) -> CommandOutcome {
     let repo_root = context.repo_root;
     let epic_slug = context.epic_slug;
 
-    let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .enable_io()
-        .build()
-    {
+    let runtime = match build_current_thread_runtime() {
         Ok(runtime) => runtime,
-        Err(err) => {
-            return CommandOutcome::Failure(ErrorEnvelope::new(
-                ErrorCategory::Internal,
-                format!("failed to initialize async runtime: {err}"),
-            ));
-        }
+        Err(err) => return CommandOutcome::Failure(err),
     };
 
     let result = match runtime.block_on(load_task_history_via_control_plane(
@@ -1281,6 +1360,118 @@ struct TaskStopCommandResult {
     state: String,
     message: Option<String>,
     ended_session_ids: Vec<String>,
+}
+
+#[derive(Debug)]
+struct TaskRestartCommandResult {
+    task_slug: String,
+    session_id: String,
+    command_id: String,
+    state: String,
+    message: Option<String>,
+}
+
+async fn restart_task_agent_via_control_plane(
+    epic_slug: &str,
+    task_slug: &str,
+    initial_prompt: Option<String>,
+    timeout_ms: u64,
+) -> Result<TaskRestartCommandResult, ErrorEnvelope> {
+    #[cfg(not(unix))]
+    {
+        let _ = (epic_slug, task_slug, initial_prompt, timeout_ms);
+        return Err(ErrorEnvelope::new(
+            ErrorCategory::Unavailable,
+            "client API socket is only supported on unix platforms",
+        ));
+    }
+
+    #[cfg(unix)]
+    {
+        let socket_path = load_default_client_socket_path()?;
+        let options = UdsConnectOptions::new(socket_path);
+        let (client, task) = connect_uds(options, 64).await?;
+        tokio::spawn(task.run());
+
+        let graph = match client
+            .request(RequestPayload::GetEpicGraph(GetEpicGraphRequest {
+                epic_slug: epic_slug.to_string(),
+            }))
+            .await?
+        {
+            ResponseResult::GetEpicGraph(resp) => resp.graph,
+            ResponseResult::Error(err) => return Err(err),
+            _ => {
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    "unexpected response for GetEpicGraph",
+                ));
+            }
+        };
+
+        let resolved = resolve_task_target_from_epic_graph(&graph, epic_slug, task_slug)?;
+        let envelope = ProtocolEnvelope::new().with_scope(Scope::from(
+            redesmyn_protocol::RepoScope::new(resolved.workspace_id, resolved.repo_id),
+        ));
+
+        let restarted = match client
+            .request_with_envelope(
+                envelope.clone(),
+                RequestPayload::RestartAgent(RestartAgentRequest {
+                    task_id: resolved.task_id,
+                    agent_kind: AgentKind::Codex,
+                    initial_prompt,
+                    // Preserve sticky session settings across restarts by default.
+                    session_model_selection: None,
+                    codex_approval_policy: None,
+                    codex_sandbox_policy: None,
+                }),
+            )
+            .await?
+        {
+            ResponseResult::RestartAgent(resp) => resp,
+            ResponseResult::Error(err) => return Err(err),
+            _ => {
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    "unexpected response for RestartAgent",
+                ));
+            }
+        };
+
+        let waited = match client
+            .request_with_envelope(
+                envelope,
+                RequestPayload::WaitForCommand(WaitForCommandRequest {
+                    command_id: restarted.command.command_id,
+                    terminal_states: vec![
+                        CommandState::Succeeded,
+                        CommandState::Failed,
+                        CommandState::Canceled,
+                    ],
+                    timeout_ms,
+                }),
+            )
+            .await?
+        {
+            ResponseResult::WaitForCommand(resp) => resp.command,
+            ResponseResult::Error(err) => return Err(err),
+            _ => {
+                return Err(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    "unexpected response for WaitForCommand",
+                ));
+            }
+        };
+
+        Ok(TaskRestartCommandResult {
+            task_slug: resolved.task_slug,
+            session_id: restarted.session_id.to_string(),
+            command_id: waited.command_id.to_string(),
+            state: command_state_label(waited.state).to_string(),
+            message: waited.last_update.and_then(|update| update.message),
+        })
+    }
 }
 
 async fn stop_task_agent_via_control_plane(
