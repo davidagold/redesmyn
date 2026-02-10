@@ -9,6 +9,7 @@ use tokio::runtime::Handle;
 use crate::client_api::{ClientApiCodec, ClientApiServeError};
 use crate::command::Commands;
 use crate::daemon_router::DaemonRouter;
+use crate::director_wake::DirectorWakeController;
 use crate::event_log::{EventLog, EventLogConfig};
 use crate::session_events::{SessionEvents, SessionEventsConfig};
 use crate::task_manager::TaskManager;
@@ -89,6 +90,7 @@ pub struct ControlPlane {
     pool: SqlitePool,
     event_log: EventLog,
     session_events: SessionEvents,
+    director_wake: DirectorWakeController,
     commands: Commands,
     daemons: DaemonRouter,
 }
@@ -128,14 +130,19 @@ impl ControlPlane {
     #[must_use]
     pub fn new_with_event_log_config(pool: SqlitePool, config: EventLogConfig) -> Self {
         let event_log = EventLog::new_with_config(pool.clone(), config);
-        let session_events =
-            SessionEvents::new_with_config(pool.clone(), SessionEventsConfig::default());
+        let session_events = SessionEvents::new_with_config(
+            pool.clone(),
+            event_log.clone(),
+            SessionEventsConfig::default(),
+        );
+        let director_wake = DirectorWakeController::new(pool.clone(), event_log.clone());
         let commands = Commands::new(pool.clone(), event_log.clone());
         let daemons = DaemonRouter::new();
         Self {
             pool,
             event_log,
             session_events,
+            director_wake,
             commands,
             daemons,
         }
@@ -154,6 +161,11 @@ impl ControlPlane {
     #[must_use]
     pub fn session_events(&self) -> &SessionEvents {
         &self.session_events
+    }
+
+    #[must_use]
+    pub fn director_wake(&self) -> &DirectorWakeController {
+        &self.director_wake
     }
 
     #[must_use]

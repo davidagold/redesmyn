@@ -20,6 +20,10 @@ use redesmyn_storage::schema::{
     AgentSessionStatus as StorageAgentSessionStatus,
 };
 
+use crate::event_log::EventLog;
+
+pub const TASK_SESSION_TURN_COMPLETED_EVENT: &str = "session.task.turn.completed";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionEventsResyncReason {
     /// The subscriber's receiver fell behind the hub buffer.
@@ -76,6 +80,7 @@ impl Default for SessionEventsConfig {
 #[derive(Clone)]
 pub struct SessionEvents {
     pool: SqlitePool,
+    event_log: EventLog,
     hub: broadcast::Sender<SessionEvent>,
     live_hub: broadcast::Sender<SessionLiveEvent>,
     config: SessionEventsConfig,
@@ -83,11 +88,16 @@ pub struct SessionEvents {
 
 impl SessionEvents {
     #[must_use]
-    pub(crate) fn new_with_config(pool: SqlitePool, config: SessionEventsConfig) -> Self {
+    pub(crate) fn new_with_config(
+        pool: SqlitePool,
+        event_log: EventLog,
+        config: SessionEventsConfig,
+    ) -> Self {
         let (hub, _rx) = broadcast::channel(config.hub_buffer.max(1));
         let (live_hub, _rx) = broadcast::channel(config.live_hub_buffer.max(1));
         Self {
             pool,
+            event_log,
             hub,
             live_hub,
             config,
@@ -512,6 +522,36 @@ impl SessionEvents {
             &self.pool, event,
         )
         .await?;
+
+        if let (
+            SessionScope::Task { task_id },
+            SessionEventKind::TurnCompleted(turn_completed),
+            Some(workspace_id),
+            Some(repo_id),
+            Some(epic_id),
+        ) = (&event.scope, &event.kind, workspace_id, repo_id, epic_id)
+        {
+            let payload = serde_json::to_vec(&serde_json::json!({
+                "epic_id": epic_id,
+                "task_id": task_id,
+                "session_id": event.session_id,
+                "session_event_id": event.session_event_id,
+                "turn_id": event.turn_id,
+                "has_error": turn_completed.error.is_some(),
+            }))
+            .unwrap_or_default();
+            let _ = self
+                .event_log
+                .append_event(
+                    redesmyn_storage::events::EventScope::Repo {
+                        workspace_id,
+                        repo_id,
+                    },
+                    TASK_SESSION_TURN_COMPLETED_EVENT,
+                    payload,
+                )
+                .await;
+        }
 
         let _ = self.hub.send(event.clone());
         Ok(())

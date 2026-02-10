@@ -14,6 +14,7 @@ mod turn_state;
 
 pub mod client_api;
 pub mod demo;
+pub mod director_wake;
 pub mod error;
 pub mod event_log;
 pub mod session_events;
