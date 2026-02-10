@@ -150,6 +150,19 @@ async fn director_mode_lifecycle_transitions_are_explicit() {
         .expect("pause");
     assert_eq!(paused.lifecycle, DirectorModeLifecycle::Paused);
 
+    let activate_while_paused = transition_director_mode_state(
+        &pool,
+        epic_id,
+        &DirectorModeTransition::Activate {
+            director_session_id,
+        },
+    )
+    .await;
+    assert!(
+        activate_while_paused.is_err(),
+        "activate must be rejected while paused"
+    );
+
     let resume_required = transition_director_mode_state(
         &pool,
         epic_id,
@@ -169,6 +182,19 @@ async fn director_mode_lifecycle_transitions_are_explicit() {
     );
     assert!(resume_required.resume_required_at_ms.is_some());
 
+    let activate_while_resume_required = transition_director_mode_state(
+        &pool,
+        epic_id,
+        &DirectorModeTransition::Activate {
+            director_session_id,
+        },
+    )
+    .await;
+    assert!(
+        activate_while_resume_required.is_err(),
+        "activate must be rejected while resume_required"
+    );
+
     let resumed = transition_director_mode_state(&pool, epic_id, &DirectorModeTransition::Resume)
         .await
         .expect("resume");
@@ -176,12 +202,84 @@ async fn director_mode_lifecycle_transitions_are_explicit() {
     assert_eq!(resumed.resume_required_reason, None);
     assert_eq!(resumed.resume_required_at_ms, None);
 
+    let errored = transition_director_mode_state(
+        &pool,
+        epic_id,
+        &DirectorModeTransition::MarkError {
+            reason: Some("runtime failed".to_string()),
+        },
+    )
+    .await
+    .expect("mark error");
+    assert_eq!(errored.lifecycle, DirectorModeLifecycle::Error);
+    assert_eq!(errored.director_session_id, None);
+    assert_eq!(errored.error_reason.as_deref(), Some("runtime failed"));
+    assert!(errored.error_at_ms.is_some());
+    assert_eq!(errored.resume_required_reason, None);
+    assert_eq!(errored.resume_required_at_ms, None);
+
+    let activate_while_error = transition_director_mode_state(
+        &pool,
+        epic_id,
+        &DirectorModeTransition::Activate {
+            director_session_id,
+        },
+    )
+    .await;
+    assert!(
+        activate_while_error.is_err(),
+        "activate must be rejected while error"
+    );
+
     let deactivated =
         transition_director_mode_state(&pool, epic_id, &DirectorModeTransition::Deactivate)
             .await
             .expect("deactivate");
     assert_eq!(deactivated.lifecycle, DirectorModeLifecycle::Inactive);
     assert_eq!(deactivated.director_session_id, None);
+    assert_eq!(deactivated.activation_intent, None);
+    assert_eq!(deactivated.error_reason, None);
+    assert_eq!(deactivated.error_at_ms, None);
+
+    let reactivate_without_intent = transition_director_mode_state(
+        &pool,
+        epic_id,
+        &DirectorModeTransition::Activate {
+            director_session_id,
+        },
+    )
+    .await;
+    assert!(
+        reactivate_without_intent.is_err(),
+        "deactivate should clear activation intent"
+    );
+}
+
+#[tokio::test]
+async fn director_mode_rejects_invalid_pause_resume_and_error_transitions() {
+    let pool = open_test_sqlite_pool().await.expect("db");
+    let (_, _, epic_id) = seed_scope(&pool).await;
+
+    let pause_inactive =
+        transition_director_mode_state(&pool, epic_id, &DirectorModeTransition::Pause).await;
+    assert!(pause_inactive.is_err(), "pause from inactive must fail");
+
+    let resume_inactive =
+        transition_director_mode_state(&pool, epic_id, &DirectorModeTransition::Resume).await;
+    assert!(resume_inactive.is_err(), "resume from inactive must fail");
+
+    let error_inactive = transition_director_mode_state(
+        &pool,
+        epic_id,
+        &DirectorModeTransition::MarkError {
+            reason: Some("unexpected".to_string()),
+        },
+    )
+    .await;
+    assert!(
+        error_inactive.is_err(),
+        "mark error from inactive must fail"
+    );
 }
 
 #[tokio::test]

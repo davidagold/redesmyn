@@ -6,6 +6,8 @@ CREATE TABLE director_mode_state (
     activation_intent TEXT,
     resume_required_reason TEXT,
     resume_required_at_ms INTEGER,
+    error_reason TEXT,
+    error_at_ms INTEGER,
     FOREIGN KEY (epic_id) REFERENCES epics (id) ON DELETE CASCADE,
     FOREIGN KEY (director_session_id) REFERENCES agent_sessions (session_id) ON DELETE SET NULL,
     CHECK (
@@ -24,6 +26,17 @@ CREATE TABLE director_mode_state (
             lifecycle <> 'resume_required'
             AND resume_required_reason IS NULL
             AND resume_required_at_ms IS NULL
+        )
+    ),
+    CHECK (
+        (
+            lifecycle = 'error'
+            AND error_at_ms IS NOT NULL
+        )
+        OR (
+            lifecycle <> 'error'
+            AND error_reason IS NULL
+            AND error_at_ms IS NULL
         )
     )
 );

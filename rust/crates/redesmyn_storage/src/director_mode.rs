@@ -84,6 +84,8 @@ pub struct DirectorModeStateRecord {
     pub activation_intent: Option<DirectorActivationIntent>,
     pub resume_required_reason: Option<String>,
     pub resume_required_at_ms: Option<i64>,
+    pub error_reason: Option<String>,
+    pub error_at_ms: Option<i64>,
 }
 
 impl DirectorModeStateRecord {
@@ -97,6 +99,8 @@ impl DirectorModeStateRecord {
             activation_intent: None,
             resume_required_reason: None,
             resume_required_at_ms: None,
+            error_reason: None,
+            error_at_ms: None,
         }
     }
 }
@@ -146,7 +150,7 @@ pub fn apply_director_mode_transition(
                         .to_string(),
                 });
             }
-            if matches!(next.lifecycle, DirectorModeLifecycle::Active) {
+            if !matches!(next.lifecycle, DirectorModeLifecycle::Inactive) {
                 return Err(invalid_transition(next.lifecycle, transition));
             }
 
@@ -154,6 +158,8 @@ pub fn apply_director_mode_transition(
             next.director_session_id = Some(*director_session_id);
             next.resume_required_reason = None;
             next.resume_required_at_ms = None;
+            next.error_reason = None;
+            next.error_at_ms = None;
         }
         DirectorModeTransition::Pause => {
             if !matches!(next.lifecycle, DirectorModeLifecycle::Active) {
@@ -178,6 +184,8 @@ pub fn apply_director_mode_transition(
             next.lifecycle = DirectorModeLifecycle::Active;
             next.resume_required_reason = None;
             next.resume_required_at_ms = None;
+            next.error_reason = None;
+            next.error_at_ms = None;
         }
         DirectorModeTransition::RequireResume { reason } => {
             if !matches!(
@@ -193,17 +201,36 @@ pub fn apply_director_mode_transition(
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty());
             next.resume_required_at_ms = Some(now_ms);
+            next.error_reason = None;
+            next.error_at_ms = None;
         }
-        DirectorModeTransition::MarkError { reason: _ } => {
+        DirectorModeTransition::MarkError { reason } => {
+            if !matches!(
+                next.lifecycle,
+                DirectorModeLifecycle::Active
+                    | DirectorModeLifecycle::Paused
+                    | DirectorModeLifecycle::ResumeRequired
+            ) {
+                return Err(invalid_transition(next.lifecycle, transition));
+            }
             next.lifecycle = DirectorModeLifecycle::Error;
+            next.director_session_id = None;
             next.resume_required_reason = None;
             next.resume_required_at_ms = None;
+            next.error_reason = reason
+                .as_ref()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+            next.error_at_ms = Some(now_ms);
         }
         DirectorModeTransition::Deactivate => {
             next.lifecycle = DirectorModeLifecycle::Inactive;
             next.director_session_id = None;
+            next.activation_intent = None;
             next.resume_required_reason = None;
             next.resume_required_at_ms = None;
+            next.error_reason = None;
+            next.error_at_ms = None;
         }
     }
 
@@ -217,6 +244,8 @@ type DirectorModeStateRow = (
     Option<String>,
     Option<String>,
     Option<i64>,
+    Option<String>,
+    Option<i64>,
 );
 
 fn decode_director_mode_state_row(
@@ -228,6 +257,8 @@ fn decode_director_mode_state_row(
         activation_intent_raw,
         resume_required_reason,
         resume_required_at_ms,
+        error_reason,
+        error_at_ms,
     ): DirectorModeStateRow,
 ) -> Result<DirectorModeStateRecord, StorageError> {
     Ok(DirectorModeStateRecord {
@@ -241,6 +272,8 @@ fn decode_director_mode_state_row(
             .transpose()?,
         resume_required_reason,
         resume_required_at_ms,
+        error_reason,
+        error_at_ms,
     })
 }
 
@@ -259,7 +292,9 @@ where
             director_session_id,
             activation_intent,
             resume_required_reason,
-            resume_required_at_ms
+            resume_required_at_ms,
+            error_reason,
+            error_at_ms
         FROM director_mode_state
         WHERE epic_id = ?1
         "#,
@@ -289,16 +324,20 @@ where
             director_session_id,
             activation_intent,
             resume_required_reason,
-            resume_required_at_ms
+            resume_required_at_ms,
+            error_reason,
+            error_at_ms
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
         ON CONFLICT(epic_id) DO UPDATE SET
             updated_at_ms = excluded.updated_at_ms,
             lifecycle = excluded.lifecycle,
             director_session_id = excluded.director_session_id,
             activation_intent = excluded.activation_intent,
             resume_required_reason = excluded.resume_required_reason,
-            resume_required_at_ms = excluded.resume_required_at_ms
+            resume_required_at_ms = excluded.resume_required_at_ms,
+            error_reason = excluded.error_reason,
+            error_at_ms = excluded.error_at_ms
         "#,
     )
     .bind(state.epic_id)
@@ -312,6 +351,8 @@ where
     )
     .bind(&state.resume_required_reason)
     .bind(state.resume_required_at_ms)
+    .bind(&state.error_reason)
+    .bind(state.error_at_ms)
     .execute(executor)
     .await?;
 
