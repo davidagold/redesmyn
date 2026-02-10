@@ -777,6 +777,16 @@ def _merge_queue_action_response(row: MergeQueueAction) -> MergeQueueActionRespo
     return MergeQueueActionResponse.model_validate(row, from_attributes=True)
 
 
+def _validate_no_self_merge_queue_dependency(
+    *, item_id: int, depends_on_item_id: int
+) -> None:
+    if depends_on_item_id == item_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Merge queue items cannot depend on themselves.",
+        )
+
+
 async def _record_merge_queue_action(
     session: AsyncSession,
     *,
@@ -827,11 +837,10 @@ async def _add_merge_queue_dependencies(
 ) -> list[int]:
     added_dependency_ids: list[int] = []
     for depends_on_item_id in sorted(set(dependency_item_ids)):
-        if depends_on_item_id == item_id:
-            raise HTTPException(
-                status_code=400,
-                detail="Merge queue items cannot depend on themselves.",
-            )
+        _validate_no_self_merge_queue_dependency(
+            item_id=item_id,
+            depends_on_item_id=depends_on_item_id,
+        )
         await _validate_merge_queue_dependency_target(
             session, epic_id=epic_id, queue_item_id=depends_on_item_id
         )
@@ -1170,6 +1179,10 @@ async def add_merge_queue_dependency(
         if item is None:
             raise HTTPException(status_code=404, detail="Merge queue item not found")
 
+        _validate_no_self_merge_queue_dependency(
+            item_id=item.id,
+            depends_on_item_id=request.depends_on_item_id,
+        )
         await _validate_merge_queue_dependency_target(
             session,
             epic_id=item.epic_id,

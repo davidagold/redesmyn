@@ -272,3 +272,60 @@ async def test_merge_queue_conductor_actions_are_durable_and_explainable(
         (MergeQueueActionType.Requeue, "Policy updated"),
         (MergeQueueActionType.RequestChanges, "Need follow-up wiring commit"),
     ]
+
+
+@pytest.mark.integration
+async def test_merge_queue_rejects_direct_self_dependency_with_400(
+    scenario: Scenario,
+) -> None:
+    seeded = await seed_merged_parent(scenario)
+    item = await _enqueue_item(
+        scenario,
+        epic_id=seeded.epic_id,
+        task_id=seeded.child_task_id,
+        candidate_ref=f"refs/heads/{seeded.child_branch}",
+        order_index=0,
+    )
+
+    response = await scenario.app.client.post(
+        f"/v1/merge-queue/items/{item.id}/dependencies",
+        json={
+            "depends_on_item_id": item.id,
+            "kind": "hard",
+            "authority": "director",
+            "reason": "invalid self dependency",
+        },
+    )
+    assert response.status_code == 400, response.text
+    detail = response.json().get("detail")
+    assert isinstance(detail, str)
+    assert "cannot depend on themselves" in detail
+
+
+@pytest.mark.integration
+async def test_merge_queue_rejects_self_dependency_via_action_helper_with_400(
+    scenario: Scenario,
+) -> None:
+    seeded = await seed_merged_parent(scenario)
+    item = await _enqueue_item(
+        scenario,
+        epic_id=seeded.epic_id,
+        task_id=seeded.child_task_id,
+        candidate_ref=f"refs/heads/{seeded.child_branch}",
+        order_index=0,
+    )
+
+    response = await scenario.app.client.post(
+        f"/v1/merge-queue/items/{item.id}/actions",
+        json={
+            "authority": "director",
+            "action": "dependency_added",
+            "dependency_item_ids": [item.id],
+            "dependency_kind": "hard",
+            "reason": "invalid self dependency",
+        },
+    )
+    assert response.status_code == 400, response.text
+    detail = response.json().get("detail")
+    assert isinstance(detail, str)
+    assert "cannot depend on themselves" in detail
