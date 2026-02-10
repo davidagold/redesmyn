@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     env,
     ffi::OsString,
     fs,
@@ -15,12 +16,16 @@ use redesmyn_config::{
     discover_repo_root_from, global_config_path, legacy_db_path, repo_config_path, rust_db_path,
 };
 use redesmyn_ids::{RepoId, TaskId, WorkspaceId};
+use redesmyn_protocol::agent_commands::{
+    SESSION_AGENT_RESUME_BY_ID_TURN, TASK_AGENT_START, TASK_AGENT_STOP,
+};
 use redesmyn_protocol::client::{
     AgentKind, AgentMessageConflictAction, CommandState, CreateCommandRequest, GetEpicGraphRequest,
-    GetLatestTaskSessionRequest, GetSessionEventsRequest, ModelReasoningEffort, RequestPayload,
-    ResponseResult, RestartAgentRequest, SendTaskAgentMessageRequest, SessionEventCursor,
-    SessionEventKindFilter, SessionModelSelection, StartAgentRequest, StopAgentRequest,
-    TaskAgentMessageConversationContinuity, TaskAgentMessageDelivery, WaitForCommandRequest,
+    GetLatestTaskSessionRequest, GetSessionEventsRequest, MergeReadiness, ModelReasoningEffort,
+    RequestPayload, ResponseResult, RestartAgentRequest, SendTaskAgentMessageRequest,
+    SessionEventCursor, SessionEventKindFilter, SessionModelSelection, StartAgentRequest,
+    StopAgentRequest, TaskAgentMessageConversationContinuity, TaskAgentMessageDelivery, TaskState,
+    WaitForCommandRequest,
 };
 use redesmyn_protocol::prelude::BUILT_IN_PRELUDE_TEMPLATE;
 use redesmyn_protocol::sync_commands::{LOCAL_SYNC_FROM_DOCS_KIND, LocalSyncFromDocsCommand};
@@ -238,6 +243,8 @@ enum TaskCommands {
     Send(TaskSendArgs),
     /// Read durable task session history through the control plane.
     History(TaskHistoryArgs),
+    /// List tasks and their current graph/session-derived status for an epic.
+    List(TaskListArgs),
 }
 
 #[derive(Debug, Args)]
@@ -377,6 +384,17 @@ struct TaskHistoryArgs {
     /// Include all durable event kinds instead of transcript-only kinds.
     #[arg(long)]
     all: bool,
+
+    /// Path within the repo to operate in (defaults to current directory).
+    #[arg(long)]
+    repo: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct TaskListArgs {
+    /// Epic slug (defaults only if exactly one local epic exists).
+    #[arg(long)]
+    epic: Option<String>,
 
     /// Path within the repo to operate in (defaults to current directory).
     #[arg(long)]
@@ -689,6 +707,7 @@ fn task(cmd: TaskCommands, output: &Output) -> CommandOutcome {
         TaskCommands::Stop(args) => task_stop(args, output),
         TaskCommands::Send(args) => task_send(args, output),
         TaskCommands::History(args) => task_history(args, output),
+        TaskCommands::List(args) => task_list(args, output),
     }
 }
 
@@ -1244,6 +1263,286 @@ fn task_history(args: TaskHistoryArgs, output: &Output) -> CommandOutcome {
     CommandOutcome::Success
 }
 
+fn task_list(args: TaskListArgs, output: &Output) -> CommandOutcome {
+    let context = match resolve_task_command_context(args.repo.as_ref(), args.epic.as_deref()) {
+        Ok(context) => context,
+        Err(err) => return CommandOutcome::Failure(err),
+    };
+    let repo_root = context.repo_root;
+    let epic_slug = context.epic_slug;
+
+    let runtime = match build_current_thread_runtime() {
+        Ok(runtime) => runtime,
+        Err(err) => return CommandOutcome::Failure(err),
+    };
+
+    let graph = match runtime.block_on(load_epic_graph_via_control_plane(&epic_slug)) {
+        Ok(graph) => graph,
+        Err(err) => return CommandOutcome::Failure(err),
+    };
+
+    #[derive(Debug, Serialize)]
+    struct TaskListLatestCommandReport {
+        command_id: String,
+        kind: String,
+        state: String,
+        updated_at: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct TaskListLatestSessionReport {
+        session_id: String,
+        kind: String,
+        last_event_at: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        turn_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message_preview: Option<String>,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct TaskListTaskReport {
+        task_slug: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        task_id: Option<String>,
+        title: String,
+        state: String,
+        merge_readiness: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        branch_name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        parent_task_slug: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        child_task_slugs: Vec<String>,
+        agent_status: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        latest_agent_command: Option<TaskListLatestCommandReport>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        latest_session: Option<TaskListLatestSessionReport>,
+    }
+
+    #[derive(Debug, Serialize)]
+    struct TaskListReport {
+        repo_root: String,
+        epic_slug: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        epic_title: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        repo_slug: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        repo_title: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        as_of_event_id: Option<String>,
+        task_count: usize,
+        tasks: Vec<TaskListTaskReport>,
+    }
+
+    #[derive(Debug, Clone)]
+    struct LatestTaskLifecycleCommand {
+        command_id: String,
+        kind: String,
+        state: CommandState,
+        updated_at: redesmyn_protocol::Timestamp,
+        message: Option<String>,
+        agent_status: TaskAgentStatus,
+    }
+
+    let mut task_slug_by_id: BTreeMap<TaskId, String> = BTreeMap::new();
+    for node in &graph.nodes {
+        if let Some(task_id) = node.task_id {
+            task_slug_by_id.insert(task_id, node.task_slug.clone());
+        }
+    }
+
+    let mut parent_by_child_slug: BTreeMap<String, String> = BTreeMap::new();
+    let mut children_by_parent_slug: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for edge in &graph.edges {
+        parent_by_child_slug
+            .entry(edge.to_task_slug.clone())
+            .or_insert_with(|| edge.from_task_slug.clone());
+        children_by_parent_slug
+            .entry(edge.from_task_slug.clone())
+            .or_default()
+            .push(edge.to_task_slug.clone());
+    }
+    for children in children_by_parent_slug.values_mut() {
+        children.sort();
+        children.dedup();
+    }
+
+    let mut latest_lifecycle_command_by_task_id: BTreeMap<TaskId, LatestTaskLifecycleCommand> =
+        BTreeMap::new();
+    for summary in &graph.command_summaries {
+        let Some(task_id) = summary.target_task_id else {
+            continue;
+        };
+        let Some(agent_status) =
+            task_agent_status_from_command(summary.kind.as_str(), summary.state)
+        else {
+            continue;
+        };
+        let candidate = LatestTaskLifecycleCommand {
+            command_id: summary.command_id.to_string(),
+            kind: summary.kind.clone(),
+            state: summary.state,
+            updated_at: summary.updated_at,
+            message: summary
+                .last_update
+                .as_ref()
+                .and_then(|update| update.message.clone()),
+            agent_status,
+        };
+        latest_lifecycle_command_by_task_id
+            .entry(task_id)
+            .and_modify(|existing| {
+                if candidate.updated_at > existing.updated_at {
+                    *existing = candidate.clone();
+                }
+            })
+            .or_insert(candidate);
+    }
+
+    let mut latest_session_by_task_id: BTreeMap<TaskId, redesmyn_protocol::client::SessionSummary> =
+        BTreeMap::new();
+    for session in &graph.session_summaries {
+        latest_session_by_task_id
+            .entry(session.task_id)
+            .and_modify(|existing| {
+                if session.last_event_at > existing.last_event_at {
+                    *existing = session.clone();
+                }
+            })
+            .or_insert_with(|| session.clone());
+    }
+
+    let mut nodes = graph.nodes.clone();
+    nodes.sort_by(|a, b| a.task_slug.cmp(&b.task_slug));
+
+    let tasks: Vec<TaskListTaskReport> = nodes
+        .into_iter()
+        .map(|node| {
+            let parent_task_slug =
+                parent_by_child_slug
+                    .get(&node.task_slug)
+                    .cloned()
+                    .or_else(|| {
+                        node.parent_task_id.and_then(|parent_task_id| {
+                            task_slug_by_id.get(&parent_task_id).cloned()
+                        })
+                    });
+
+            let child_task_slugs = children_by_parent_slug
+                .get(&node.task_slug)
+                .cloned()
+                .unwrap_or_default();
+
+            let latest_lifecycle = node
+                .task_id
+                .and_then(|task_id| latest_lifecycle_command_by_task_id.get(&task_id).cloned());
+
+            let latest_session = node
+                .task_id
+                .and_then(|task_id| latest_session_by_task_id.get(&task_id).cloned());
+
+            TaskListTaskReport {
+                task_slug: node.task_slug,
+                task_id: node.task_id.map(|value| value.to_string()),
+                title: node.title,
+                state: task_state_label(node.state).to_string(),
+                merge_readiness: merge_readiness_label(node.merge_readiness).to_string(),
+                branch_name: node.branch_name,
+                parent_task_slug,
+                child_task_slugs,
+                agent_status: latest_lifecycle
+                    .as_ref()
+                    .map(|value| task_agent_status_label(value.agent_status).to_string())
+                    .unwrap_or_else(|| "unknown".to_string()),
+                latest_agent_command: latest_lifecycle.map(|value| TaskListLatestCommandReport {
+                    command_id: value.command_id,
+                    kind: value.kind,
+                    state: command_state_label(value.state).to_string(),
+                    updated_at: format_timestamp(value.updated_at),
+                    message: value.message,
+                }),
+                latest_session: latest_session.map(|value| TaskListLatestSessionReport {
+                    session_id: value.session_id.to_string(),
+                    kind: value.kind,
+                    last_event_at: format_timestamp(value.last_event_at),
+                    turn_id: value.turn_id,
+                    message_preview: value.message_preview,
+                }),
+            }
+        })
+        .collect();
+
+    let report = TaskListReport {
+        repo_root: repo_root.display().to_string(),
+        epic_slug: graph.epic_slug.clone(),
+        epic_title: graph.epic_title.clone(),
+        repo_slug: graph.repo_slug.clone(),
+        repo_title: graph.repo_title.clone(),
+        as_of_event_id: graph.as_of_event_id.map(|value| value.to_string()),
+        task_count: tasks.len(),
+        tasks,
+    };
+
+    match output.format {
+        OutputFormat::Human => {
+            println!(
+                "epic_slug={}\ttask_count={}\tas_of_event_id={}",
+                report.epic_slug,
+                report.task_count,
+                report.as_of_event_id.as_deref().unwrap_or("-")
+            );
+            println!(
+                "task_slug\tstate\tmerge_readiness\tagent_status\tparent_task\tchild_tasks\tbranch\tlatest_command\tlatest_session\ttitle"
+            );
+            for task in &report.tasks {
+                let child_tasks = if task.child_task_slugs.is_empty() {
+                    "-".to_string()
+                } else {
+                    task.child_task_slugs.join(",")
+                };
+                let latest_command = task
+                    .latest_agent_command
+                    .as_ref()
+                    .map(|value| format!("{}:{}", value.kind, value.state))
+                    .unwrap_or_else(|| "-".to_string());
+                let latest_session = task
+                    .latest_session
+                    .as_ref()
+                    .map(|value| value.session_id.clone())
+                    .unwrap_or_else(|| "-".to_string());
+                println!(
+                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                    task.task_slug,
+                    task.state,
+                    task.merge_readiness,
+                    task.agent_status,
+                    task.parent_task_slug.as_deref().unwrap_or("-"),
+                    child_tasks,
+                    task.branch_name.as_deref().unwrap_or("-"),
+                    latest_command,
+                    latest_session,
+                    sanitize_tsv_field(&task.title),
+                );
+            }
+        }
+        OutputFormat::Json => {
+            if let Err(err) = output.print_json_stdout(&report) {
+                return CommandOutcome::Failure(ErrorEnvelope::new(
+                    ErrorCategory::Internal,
+                    format!("failed to write output: {err}"),
+                ));
+            }
+        }
+    }
+
+    CommandOutcome::Success
+}
+
 fn normalize_task_message_intent(raw: &str) -> Option<String> {
     let normalized = raw.trim().to_ascii_lowercase().replace('-', "_");
     if normalized.is_empty() {
@@ -1687,6 +1986,41 @@ async fn send_task_agent_message_via_control_plane(
             conversation_continuity: sent.conversation_continuity,
             warnings: sent.warnings,
         })
+    }
+}
+
+async fn load_epic_graph_via_control_plane(
+    epic_slug: &str,
+) -> Result<redesmyn_protocol::client::EpicGraph, ErrorEnvelope> {
+    #[cfg(not(unix))]
+    {
+        let _ = epic_slug;
+        return Err(ErrorEnvelope::new(
+            ErrorCategory::Unavailable,
+            "client API socket is only supported on unix platforms",
+        ));
+    }
+
+    #[cfg(unix)]
+    {
+        let socket_path = load_default_client_socket_path()?;
+        let options = UdsConnectOptions::new(socket_path);
+        let (client, task) = connect_uds(options, 64).await?;
+        tokio::spawn(task.run());
+
+        match client
+            .request(RequestPayload::GetEpicGraph(GetEpicGraphRequest {
+                epic_slug: epic_slug.to_string(),
+            }))
+            .await?
+        {
+            ResponseResult::GetEpicGraph(resp) => Ok(resp.graph),
+            ResponseResult::Error(err) => Err(err),
+            _ => Err(ErrorEnvelope::new(
+                ErrorCategory::Internal,
+                "unexpected response for GetEpicGraph",
+            )),
+        }
     }
 }
 
@@ -2173,6 +2507,102 @@ fn command_state_label(state: CommandState) -> &'static str {
         CommandState::Canceled => "canceled",
         CommandState::Unknown => "unknown",
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TaskAgentLifecycleCommand {
+    Start,
+    Stop,
+    Resume,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TaskAgentStatus {
+    Unknown,
+    Running,
+    Blocked,
+    Stopped,
+    Error,
+}
+
+fn classify_task_agent_lifecycle_command(kind: &str) -> Option<TaskAgentLifecycleCommand> {
+    match kind.trim() {
+        TASK_AGENT_START => Some(TaskAgentLifecycleCommand::Start),
+        TASK_AGENT_STOP => Some(TaskAgentLifecycleCommand::Stop),
+        SESSION_AGENT_RESUME_BY_ID_TURN => Some(TaskAgentLifecycleCommand::Resume),
+        _ => None,
+    }
+}
+
+fn task_agent_status_from_command(kind: &str, state: CommandState) -> Option<TaskAgentStatus> {
+    let lifecycle = classify_task_agent_lifecycle_command(kind)?;
+
+    match lifecycle {
+        TaskAgentLifecycleCommand::Start => match state {
+            CommandState::Queued
+            | CommandState::Running
+            | CommandState::Accepted
+            | CommandState::Succeeded => Some(TaskAgentStatus::Running),
+            CommandState::Blocked | CommandState::Resumable => Some(TaskAgentStatus::Blocked),
+            CommandState::Failed => Some(TaskAgentStatus::Error),
+            CommandState::Canceled => Some(TaskAgentStatus::Stopped),
+            CommandState::Unknown => Some(TaskAgentStatus::Unknown),
+        },
+        TaskAgentLifecycleCommand::Stop => match state {
+            CommandState::Queued
+            | CommandState::Running
+            | CommandState::Accepted
+            | CommandState::Blocked
+            | CommandState::Resumable => Some(TaskAgentStatus::Running),
+            CommandState::Succeeded | CommandState::Canceled => Some(TaskAgentStatus::Stopped),
+            CommandState::Failed => Some(TaskAgentStatus::Error),
+            CommandState::Unknown => Some(TaskAgentStatus::Unknown),
+        },
+        TaskAgentLifecycleCommand::Resume => match state {
+            CommandState::Queued
+            | CommandState::Running
+            | CommandState::Accepted
+            | CommandState::Succeeded => Some(TaskAgentStatus::Running),
+            CommandState::Blocked | CommandState::Resumable => Some(TaskAgentStatus::Blocked),
+            CommandState::Failed => Some(TaskAgentStatus::Error),
+            CommandState::Canceled | CommandState::Unknown => None,
+        },
+    }
+}
+
+fn task_agent_status_label(status: TaskAgentStatus) -> &'static str {
+    match status {
+        TaskAgentStatus::Unknown => "unknown",
+        TaskAgentStatus::Running => "running",
+        TaskAgentStatus::Blocked => "blocked",
+        TaskAgentStatus::Stopped => "stopped",
+        TaskAgentStatus::Error => "error",
+    }
+}
+
+fn task_state_label(state: TaskState) -> &'static str {
+    match state {
+        TaskState::Unknown => "unknown",
+        TaskState::Todo => "todo",
+        TaskState::InProgress => "in_progress",
+        TaskState::Blocked => "blocked",
+        TaskState::Done => "done",
+    }
+}
+
+fn merge_readiness_label(value: MergeReadiness) -> &'static str {
+    match value {
+        MergeReadiness::Unknown => "unknown",
+        MergeReadiness::Ready => "ready",
+        MergeReadiness::Blocked => "blocked",
+    }
+}
+
+fn sanitize_tsv_field(value: &str) -> String {
+    value
+        .replace('\t', " ")
+        .replace('\n', " ")
+        .replace('\r', " ")
 }
 
 #[derive(Debug)]
