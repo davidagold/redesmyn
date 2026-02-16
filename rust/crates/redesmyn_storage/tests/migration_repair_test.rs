@@ -280,3 +280,102 @@ async fn upgrades_director_mode_state_from_pre_error_metadata_schema() {
     assert_eq!(upgraded_row.0, None);
     assert_eq!(upgraded_row.1, Some(12345));
 }
+
+#[tokio::test]
+async fn preserves_existing_director_mode_error_metadata_when_repairing_003000() {
+    let pool = open_test_sqlite_pool().await.expect("open sqlite pool");
+
+    let workspace_id = WorkspaceId::new();
+    let repo_id = RepoId::new();
+    let epic_id = EpicId::new();
+    sqlx::query(
+        r#"
+        INSERT INTO workspaces (id, created_at_ms, updated_at_ms, name)
+        VALUES (?1, 1, 1, 'w')
+        "#,
+    )
+    .bind(workspace_id)
+    .execute(&pool)
+    .await
+    .expect("insert workspace");
+    sqlx::query(
+        r#"
+        INSERT INTO repositories (id, workspace_id, created_at_ms, updated_at_ms, slug, title)
+        VALUES (?1, ?2, 1, 1, 'r', 'r')
+        "#,
+    )
+    .bind(repo_id)
+    .bind(workspace_id)
+    .execute(&pool)
+    .await
+    .expect("insert repo");
+    sqlx::query(
+        r#"
+        INSERT INTO epics (id, repo_id, created_at_ms, updated_at_ms, slug, title)
+        VALUES (?1, ?2, 1, 1, 'e', 'e')
+        "#,
+    )
+    .bind(epic_id)
+    .bind(repo_id)
+    .execute(&pool)
+    .await
+    .expect("insert epic");
+
+    sqlx::query(
+        r#"
+        INSERT INTO director_mode_state (
+            epic_id,
+            updated_at_ms,
+            lifecycle,
+            director_session_id,
+            activation_intent,
+            resume_required_reason,
+            resume_required_at_ms,
+            error_reason,
+            error_at_ms
+        )
+        VALUES (?1, 99999, 'error', NULL, NULL, NULL, NULL, 'preserve me', 77777)
+        "#,
+    )
+    .bind(epic_id)
+    .execute(&pool)
+    .await
+    .expect("insert director_mode_state row with error metadata");
+
+    sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 20260210003000")
+        .execute(&pool)
+        .await
+        .expect("delete migration row");
+
+    apply_migrations(&pool)
+        .await
+        .expect("expected 003000 repair to succeed");
+
+    let found: Option<i64> = sqlx::query_scalar(
+        r#"
+        SELECT 1
+        FROM _sqlx_migrations
+        WHERE version = 20260210003000 AND success = 1
+        LIMIT 1
+        "#,
+    )
+    .fetch_optional(&pool)
+    .await
+    .expect("query repaired migration row");
+    assert_eq!(found, Some(1));
+
+    let preserved: (Option<String>, Option<i64>) = sqlx::query_as(
+        r#"
+        SELECT error_reason, error_at_ms
+        FROM director_mode_state
+        WHERE epic_id = ?1
+        "#,
+    )
+    .bind(epic_id)
+    .fetch_one(&pool)
+    .await
+    .expect("query preserved row");
+
+    assert_eq!(preserved.0.as_deref(), Some("preserve me"));
+    assert_eq!(preserved.1, Some(77777));
+}

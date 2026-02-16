@@ -128,6 +128,9 @@ async fn try_repair_migrate_error(
     if *version == AGENT_SESSIONS_EPIC_ID_MIGRATION_VERSION {
         return try_repair_agent_sessions_epic_id_migration(pool, source).await;
     }
+    if *version == DIRECTOR_MODE_ERROR_FIELDS_MIGRATION_VERSION {
+        return try_repair_director_mode_error_fields_migration(pool, source).await;
+    }
 
     Ok(false)
 }
@@ -222,6 +225,40 @@ async fn try_repair_agent_sessions_epic_id_migration(
         pool,
         AGENT_SESSIONS_EPIC_ID_MIGRATION_VERSION,
         "agent_sessions.epic_id schema already present",
+    )
+    .await
+}
+
+async fn try_repair_director_mode_error_fields_migration(
+    pool: &SqlitePool,
+    source: &sqlx::Error,
+) -> Result<bool, StorageError> {
+    if !sqlite_error_is_duplicate_column(source, "error_reason")
+        && !sqlite_error_is_duplicate_column(source, "error_at_ms")
+    {
+        return Ok(false);
+    }
+
+    if !sqlite_table_has_column(pool, "director_mode_state", "error_reason").await?
+        || !sqlite_table_has_column(pool, "director_mode_state", "error_at_ms").await?
+    {
+        return Ok(false);
+    }
+
+    sqlx::query(
+        r#"
+        UPDATE director_mode_state
+        SET error_at_ms = updated_at_ms
+        WHERE lifecycle = 'error' AND error_at_ms IS NULL
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    record_embedded_migration_as_applied(
+        pool,
+        DIRECTOR_MODE_ERROR_FIELDS_MIGRATION_VERSION,
+        "director_mode_state error metadata columns already present",
     )
     .await
 }
