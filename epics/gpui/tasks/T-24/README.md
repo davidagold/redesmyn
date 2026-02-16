@@ -26,6 +26,11 @@ Without a clear repo registry and attachment model, we risk:
 - brittle “it works only on the dev machine” behavior,
 - and unclear semantics when multiple repos exist.
 
+This ticket also defines the core safety invariant for git execution:
+
+- repo-instance exclusivity lock is the hard gate for mutating operations,
+- and lease/primary state (T-25) is not required for repo-instance-local mutations.
+
 ## Goal
 
 Implement a daemon-side repo registry and repo attachment state machine that is:
@@ -81,8 +86,21 @@ Notes:
 - This enables a lease-less v0 deployment model where multiple daemons can operate in parallel as long as each
   operates on its *own* repo instance (separate clones/worktrees on separate hosts).
 
+This lock is the authoritative writer gate for:
+
+- worktree mutation,
+- task-session startup preconditions that materialize worktrees,
+- and other repo-instance-local git commands.
+
 Attach failure due to lock contention must return a structured, actionable error (e.g. `repo_instance_busy`)
 that includes enough detail for UI/CLI guidance (lock path and, if available, the last known owner identity).
+
+### 2.2) Primary/lease interaction boundary
+
+Attachment + instance lock semantics in this ticket are sufficient for local safety.
+
+- Daemons must not require repo-scope primary/lease to execute repo-instance-local mutations.
+- If a command kind later opts into repo-scope singleton semantics, that is layered on top via T-25.
 
 ### 3) Registration flow
 
@@ -122,6 +140,7 @@ Provide tests that:
 - Identity mismatch is detected and produces a structured, actionable error.
 - Attach/detach is idempotent and safe.
 - Repo instance exclusivity is enforced: a second daemon cannot attach the same repo instance concurrently.
+- Repo-instance-local mutating operations are gated by this lock and do not require lease/primary state.
 - Tests are deterministic and cheap to run.
 
 - Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
@@ -130,6 +149,7 @@ Provide tests that:
 
 - Depends on daemon runtime skeleton (T-23).
 - Informs observation/worktrees/git subsystems (T-27, T-28) which require an attached repo root.
+- Defines the safety boundary that T-25 must not duplicate.
 
 ## Reference implementation (today; repo identity/attach orientation only)
 

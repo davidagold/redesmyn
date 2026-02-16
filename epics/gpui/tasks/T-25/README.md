@@ -12,11 +12,7 @@ rn:
 
 ## Problem
 
-We must avoid “two writers” executing git mutations against the same **repo instance** (shared working tree /
-`.git` directory):
-
-- multiple daemons/processes could exist (two laptops, stale processes, containers sharing a volume, etc.),
-- only one must be allowed to mutate a given repo instance at a time.
+T-24 already protects repo-local safety by enforcing one writer per **repo instance** via attach lock.
 
 Additionally, some operations are **repo-scope global** (e.g. “the” merge-queue/trunk executor) and need a
 single-writer policy even when multiple repo instances exist across different hosts.
@@ -26,6 +22,9 @@ We already have a conceptual lease/primary model. In the Rust port, this must be
 - explicit in the protocol,
 - enforced in the daemon,
 - and observable for UI/CLI (no confusing failures).
+
+If a deployment has only one active executor for a repo scope (for example a single embedded local daemon), this
+lease layer can be trivial or dormant; it must not block normal repo-instance-local operations.
 
 ## Goal
 
@@ -54,8 +53,10 @@ Rules:
 
 - Leases are for **repo-scope global** operations (where “only one primary” is a product decision).
 - Leases are **not** a substitute for repo instance exclusivity (T-24).
+- Command kinds must explicitly declare whether they require repo-scope primary (`requires_repo_primary`).
+- Default policy is `requires_repo_primary = false` unless explicitly documented otherwise.
 
-### 1) Lease model
+### 1) Lease model (for repo-scope singleton ops)
 
 Define a lease model that includes:
 
@@ -68,7 +69,9 @@ Daemon must track:
 
 - whether it is primary for each attached repo scope,
 - when it must renew,
-- and when it must stop executing mutating operations.
+- and when it must stop executing `requires_repo_primary = true` operations.
+
+When no active command kinds require repo-scope primary, lease maintenance may be a no-op.
 
 Note: `lease_expires_at` alone is not sufficient to prevent “two writers” (clock skew + renew races). A
 control-plane-issued fencing token (monotonic generation) allows deterministic rejection of stale primaries and
@@ -107,7 +110,8 @@ For repo-instance-local mutations that do **not** require a repo-scope primary:
 - but still require repo attachment + instance exclusivity (T-24),
 - and fence execution via command-level preconditions (expected ref/sha “CAS-style fencing”) where applicable.
 
-Additionally, for any mutating command that includes a `lease_fencing_token` in its request metadata:
+Additionally, for any mutating command with `requires_repo_primary = true` that includes a
+`lease_fencing_token` in request metadata:
 
 - if the token does not match the daemon’s current lease token, the daemon must reject with a clear “lost
   lease / stale lease” error (include expected vs received tokens).
@@ -116,10 +120,12 @@ Additionally, for any mutating command that includes a `lease_fencing_token` in 
 
 If the daemon loses primary while executing:
 
-- it must stop accepting new mutating commands immediately,
+- it must stop accepting new `requires_repo_primary = true` mutating commands immediately,
 - and for in-flight operations:
   - finish the current safe boundary if possible, or
   - fail the command with a clear “lost lease” error.
+
+Repo-instance-local commands that do not require primary are not canceled solely due to lease loss.
 
 ### 5) Observability
 
@@ -129,12 +135,20 @@ Emit status updates that allow UI/CLI to display:
 - lease freshness/expiry horizon,
 - and whether the daemon is eligible to execute.
 
+Status should distinguish:
+
+- `primary_not_required` (for command kinds that do not require it),
+- `primary_unknown`,
+- `primary_owned`,
+- `primary_other`.
+
 ## Acceptance criteria
 
 - Daemon enforces primary requirements correctly for commands that require a repo-scope primary.
 - Repo-instance-local mutations are not blocked by a global “primary” concept.
 - Lease renewal logic is robust and testable.
 - UI/CLI can surface “who is primary” and “why my command was rejected” without guesswork.
+- Command kinds without `requires_repo_primary` execute under T-24 attachment/lock semantics even when no lease exists.
 
 - Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
 
@@ -142,6 +156,7 @@ Emit status updates that allow UI/CLI to display:
 
 - Depends on daemon skeleton (T-23) and daemon protocol contract (T-11).
 - Coordinated with Domain 2 command routing (T-19) once implemented.
+- Required before enabling any command kind with `requires_repo_primary = true`.
 
 ## Reference implementation (today; lease orientation only)
 

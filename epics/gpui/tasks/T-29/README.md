@@ -40,6 +40,7 @@ This ticket does not execute git mutations; it only plans.
 Define typed plan structures:
 
 - `MergePlan` / `RestackPlan`
+- plan-level policy metadata including `requires_repo_primary: bool`
 - list of steps with:
   - step index
   - kind (`rebase`, `merge_ff`, etc.)
@@ -72,6 +73,7 @@ Define and document:
 
 - `scope=spine` vs `scope=descendants`
 - ordering rules (why a step is in the plan)
+- how `requires_repo_primary` is derived from command kind/policy (default false).
 
 ### 4) Blocker representation
 
@@ -81,7 +83,7 @@ Planner must surface blockers without executing:
 - “dirty worktree”
 - “git operation already in progress”
 - “repo instance busy” (another daemon holds the attach lock; see T-24)
-- “not primary executor” (only when the requested operation requires a repo-scope primary; see T-25)
+- “not primary executor” (only when `requires_repo_primary=true`; see T-25)
 
 These should be representable as structured errors suitable for UI callouts.
 
@@ -103,7 +105,7 @@ Planner tests use temp repos and small task graphs.
 ## Dependencies / sequencing
 
 - Depends on git backend (T-26), worktree service (T-27), and repo attachment/exclusivity (T-24).
-- Lease/primary (T-25) applies only to operations that require a repo-scope primary.
+- Lease/primary (T-25) applies only when `requires_repo_primary=true`.
 - Execution is implemented in T-30.
 
 ## Reference implementation (today; planning orientation only)

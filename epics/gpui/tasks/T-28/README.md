@@ -58,7 +58,18 @@ Emit compact, typed events (no blobs), such as:
 - `worktree.health` (worktree status changes)
 - `repo.executor_status` (attachment + repo instance exclusivity status; lease/primary when applicable)
 
+`repo.executor_status` must include enough typed state to avoid misleading defaults:
+
+- repo attachment state,
+- repo-instance lock status (`held` / `busy` / `unknown`) with owner metadata when available,
+- primary status as an explicit enum (`not_required` / `unknown` / `owned` / `other`) rather than inferred defaults.
+
 For unknown/new event types, include an `UnknownEvent` fallback (T-11/T-14).
+
+### 2.1) Projection truthfulness
+
+If lock/primary state is not yet confirmed, publish `unknown` rather than synthesizing a default.
+Consumers should be able to render "Loading..." / "Unknown" without guessing.
 
 ### 3) Snapshots
 
@@ -92,6 +103,7 @@ Provide deterministic tests that:
 - Observation loop emits correct events and snapshots for basic repo changes.
 - Resync behavior works (on request and on backlog/overflow).
 - Implementation is efficient and structured for future expansion (more projections, more event types).
+- Executor status projections cleanly distinguish lock contention, primary-not-required, and unknown state.
 
 - Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
 

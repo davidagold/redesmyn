@@ -61,7 +61,18 @@ Enforce:
 - branch exists and points to expected ref when required,
 - no destructive actions without explicit command intent.
 
-#### 2.1) Branch materialization (stack correctness)
+#### 2.1) Task session start contract (worktree-first startup)
+
+Task session startup must consume the worktree service directly:
+
+- `StartTaskSession` must call `ensure_task_worktree(...)` before launching an agent runtime.
+- The resolved task worktree path is passed through the agent-driver start API as required
+  `working_directory`.
+- Driver implementations must fail fast with a structured error if `working_directory` is missing,
+  inaccessible, or not a git worktree path.
+- Implement this for Codex driver first; keep the same driver interface contract for Claude Code.
+
+#### 2.2) Branch materialization (stack correctness)
 
 When creating a task worktree, the daemon is responsible for ensuring the task’s **git branch backing**
 exists and is based on the correct “stack” base ref.
@@ -107,6 +118,7 @@ Provide structured “worktree health” data for the observation loop (T-28) an
 - The daemon can deterministically create and validate task worktrees.
 - Worktree invariants are enforced with actionable errors.
 - Higher-level code can rely on a small, typed API (no ad-hoc worktree shelling out).
+- Starting a task session guarantees the runtime starts in that task's worktree (`working_directory` is explicit, not implicit).
 
 - Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
 
@@ -114,6 +126,7 @@ Provide structured “worktree health” data for the observation loop (T-28) an
 
 - Depends on git backend abstraction (T-26) and repo attachment/exclusivity (T-24) for mutating ops.
 - Used later by agent runtime (Domain 4) and merge/restack execution (T-30).
+- Provides startup preconditions for task-session initialization and agent-driver cwd routing.
 
 ## Reference implementation (today; worktree orientation only)
 

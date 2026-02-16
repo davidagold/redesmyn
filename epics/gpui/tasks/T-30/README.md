@@ -61,9 +61,14 @@ Resume behavior:
 Before each step:
 
 - verify repo attachment + repo instance exclusivity lock (T-24),
-- if the requested operation requires a repo-scope primary, verify primary lease (T-25),
+- if `plan.requires_repo_primary=true`, verify primary lease (T-25),
 - verify no in-progress git operations,
 - verify worktree health and branch correctness.
+
+For plans with `requires_repo_primary=false`:
+
+- do not fail solely because lease/primary metadata is missing,
+- rely on attachment + repo-instance lock + worktree/git preconditions as the safety gates.
 
 ### 4) Integration with control plane command engine
 
@@ -87,13 +92,14 @@ No sleeps for correctness; drive execution deterministically.
 - Merge/restack commands execute stepwise with visible progress updates.
 - Blocked/resumable flows work and are observable to clients.
 - Execution is safe (repo instance lock + worktree + in-progress checks; primary lease when required) and failure modes are actionable.
+- Plans that do not require repo-scope primary execute without lease coupling.
 
 - Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
 
 ## Dependencies / sequencing
 
 - Depends on planning (T-29), worktrees (T-27), repo attachment/exclusivity (T-24), and daemon/control-plane command protocol (T-11/T-19).
-- Lease/primary (T-25) applies only to operations that require a repo-scope primary.
+- Lease/primary (T-25) applies only when `plan.requires_repo_primary=true`.
 
 ## Reference implementation (today; execution/resume orientation only)
 
