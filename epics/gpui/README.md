@@ -226,6 +226,7 @@ Sequencing intent:
 - `epics/gpui/tasks/T-20/README.md`: Client API server over UDS (requests + subscriptions).
 - `epics/gpui/tasks/T-21/README.md`: Epic graph query model + projection.
 - `epics/gpui/tasks/T-22/README.md`: Control plane integration test harness (mock daemon + real repo modes).
+- `epics/gpui/tasks/T-86/README.md`: Task completion semantics + manual attestation (`MarkTaskDone`, `rn task done`).
 - `epics/gpui/tasks/T-67/README.md`: Legacy DB → Rust DB import + cutover tooling.
 
 Sequencing intent:
@@ -234,6 +235,7 @@ Sequencing intent:
 - Build the event pipeline and command engine next (T-18, T-19).
 - Expose the client API over UDS and validate with integration tests (T-20, T-22).
 - Implement and tune the EpicGraph read model as the primary UI/CLI query (T-21).
+- Land explicit completion semantics after merge execution and read model foundations are in place (T-86 after T-21/T-30).
 
 ## 9) Domain 3: Task map (Daemon / repo executor core)
 

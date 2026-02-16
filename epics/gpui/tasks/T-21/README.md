@@ -46,6 +46,10 @@ Define a typed response that includes (at minimum):
   - ids, titles, state, branch backing
   - parent linkage
   - merge-ready status
+  - completion metadata:
+    - `completed_at` (nullable)
+    - `completion_source` (nullable enum; e.g. `merge_command`, `manual_attestation`)
+    - completion command/run reference fields where available
 - `command_summaries` relevant to the epic (in-flight + recent)
 - `daemon/executor` status relevant to the repo scope (presence + freshness)
 - `session summaries` (enough to show “agent running/blocked” in the graph)
@@ -54,6 +58,7 @@ Rules:
 
 - Keep it compact; do not embed large content.
 - Include stable identifiers and “human refs” where helpful (e.g., local task ref).
+- `state=done` must be read from durable task lifecycle state, not inferred solely from git branch ancestry.
 - Prefer DB-level constraints that prevent cross-epic parent pointers (T-17), so graph traversal can
   treat `parent_task_id` as a safe in-epic edge.
 
@@ -78,6 +83,7 @@ Define how the control plane keeps this view fresh:
 The EpicGraph query must make it easy for tests to assert outcomes:
 
 - expose command states and key fields that reflect user-visible progress,
+- expose explicit completion fields so tests can assert completion semantics without parsing git output,
 - avoid requiring tests to parse freeform strings.
 
 ## Acceptance criteria

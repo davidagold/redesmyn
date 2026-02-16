@@ -77,13 +77,31 @@ Execution must integrate with Domain 2 command lifecycle:
 - command dispatch from control plane triggers execution.
 - daemon reports updates on the daemon stream (T-11), which the control plane persists and publishes.
 
-### 5) Testability
+### 5) Completion semantics for merge commands
+
+Merge execution must produce explicit task completion semantics:
+
+- On successful `/merge`, mark affected task(s) as `done` in durable control-plane state.
+  - At minimum, mark the requested target task `done`.
+  - If the execution model integrates additional task branches in the same run, mark those tasks
+    `done` as well.
+- Persist completion metadata for each task update:
+  - `completed_at`
+  - `completion_source=merge_command`
+  - command/run linkage needed for auditability.
+- `/restack` does not mark tasks `done`.
+- Non-terminal merge states (`blocked`, `failed`, `canceled`) must not mark tasks `done`.
+- Completion updates must be idempotent and produce observable updates/events for UI + CLI.
+
+### 6) Testability
 
 Provide end-to-end daemon tests using temp repos that validate:
 
 - successful execution (no conflicts),
 - blocked state simulation (e.g., inject a conflict or fake “running agents” blocker),
 - resume and cancel behavior.
+- successful merge marks expected task(s) `done` with completion metadata,
+- and non-success outcomes do not mutate task completion state.
 
 No sleeps for correctness; drive execution deterministically.
 
@@ -93,6 +111,7 @@ No sleeps for correctness; drive execution deterministically.
 - Blocked/resumable flows work and are observable to clients.
 - Execution is safe (repo instance lock + worktree + in-progress checks; primary lease when required) and failure modes are actionable.
 - Plans that do not require repo-scope primary execute without lease coupling.
+- Successful merge commands durably mark expected task(s) `done`; restack and non-success outcomes do not.
 
 - Observability: new code paths include deliberate `tracing` spans/logs via `redesmyn_logging` (key lifecycle + errors; avoid noisy per-request/per-tick spam).
 
