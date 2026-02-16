@@ -4180,7 +4180,7 @@ fn collapsed_task_quick_action_hit_size(zoom: f32) -> gpui::Pixels {
 }
 
 fn collapsed_task_quick_action_glyph_size(rem_size: gpui::Pixels, zoom: f32) -> gpui::Pixels {
-    quantized_zoom_text_size(rem_size, 0.84, zoom)
+    quantized_zoom_text_size(rem_size, 1.0, zoom)
 }
 
 fn agent_status_dot_from_key(
