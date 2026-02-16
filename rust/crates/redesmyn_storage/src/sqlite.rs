@@ -26,7 +26,8 @@ const LEGACY_ID_MAP_MIGRATION_VERSION: i64 = 20260120001000;
 const ARCHIVED_AT_RENAME_MIGRATION_VERSION: i64 = 20260210000000;
 const AGENT_SESSIONS_EPIC_ID_MIGRATION_VERSION: i64 = 20260210001000;
 const DIRECTOR_MODE_ERROR_FIELDS_MIGRATION_VERSION: i64 = 20260210003000;
-const LATEST_MIGRATION_VERSION: i64 = DIRECTOR_MODE_ERROR_FIELDS_MIGRATION_VERSION;
+const DIRECTOR_MODE_ERROR_CONSTRAINTS_MIGRATION_VERSION: i64 = 20260210004000;
+const LATEST_MIGRATION_VERSION: i64 = DIRECTOR_MODE_ERROR_CONSTRAINTS_MIGRATION_VERSION;
 
 pub async fn open_sqlite_pool(db_path: impl AsRef<Path>) -> Result<SqlitePool, StorageError> {
     let db_path = db_path.as_ref().to_path_buf();
@@ -239,10 +240,35 @@ async fn try_repair_director_mode_error_fields_migration(
         return Ok(false);
     }
 
-    if !sqlite_table_has_column(pool, "director_mode_state", "error_reason").await?
-        || !sqlite_table_has_column(pool, "director_mode_state", "error_at_ms").await?
-    {
+    let has_error_reason =
+        sqlite_table_has_column(pool, "director_mode_state", "error_reason").await?;
+    let has_error_at_ms =
+        sqlite_table_has_column(pool, "director_mode_state", "error_at_ms").await?;
+
+    if !has_error_reason && !has_error_at_ms {
         return Ok(false);
+    }
+
+    if !has_error_reason {
+        sqlx::query(
+            r#"
+            ALTER TABLE director_mode_state
+            ADD COLUMN error_reason TEXT
+            "#,
+        )
+        .execute(pool)
+        .await?;
+    }
+
+    if !has_error_at_ms {
+        sqlx::query(
+            r#"
+            ALTER TABLE director_mode_state
+            ADD COLUMN error_at_ms INTEGER
+            "#,
+        )
+        .execute(pool)
+        .await?;
     }
 
     sqlx::query(
