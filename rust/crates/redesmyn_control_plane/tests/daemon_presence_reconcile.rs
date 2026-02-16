@@ -258,6 +258,7 @@ async fn task_agent_start_dispatch_assigns_runner_ownership() {
         session_id,
         task_id,
         task_branch_name: Some("rn/gpui/T-1".to_string()),
+        task_base_branch_name: None,
         agent_kind: redesmyn_protocol::client::AgentKind::Codex,
         initial_prompt: None,
         policy_snapshot: None,

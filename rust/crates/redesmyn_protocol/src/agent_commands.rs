@@ -60,6 +60,8 @@ pub struct StartAgentSessionCommand {
     pub task_id: Option<TaskId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_branch_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_base_branch_name: Option<String>,
     pub agent_kind: AgentKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_prompt: Option<String>,
@@ -78,6 +80,8 @@ pub struct StartTaskAgentSessionCommand {
     pub task_id: TaskId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_branch_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_base_branch_name: Option<String>,
     pub agent_kind: AgentKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_prompt: Option<String>,

@@ -231,6 +231,7 @@ async fn handle_task_agent_start(
         session_id: cmd.session_id,
         task_id: Some(cmd.task_id),
         task_branch_name: cmd.task_branch_name,
+        task_base_branch_name: cmd.task_base_branch_name,
         agent_kind: cmd.agent_kind,
         initial_prompt: cmd.initial_prompt,
         image_attachments: Vec::new(),
@@ -366,12 +367,18 @@ async fn handle_agent_start(
             .await;
             return;
         };
+        let base_branch_name = cmd
+            .task_base_branch_name
+            .clone()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
 
         match ensure_task_worktree(
             &router.git_backend,
             &repo_root,
             &router.worktree_root,
             &branch_name,
+            base_branch_name.as_deref(),
         )
         .await
         {
@@ -1083,6 +1090,7 @@ async fn ensure_task_worktree(
     repo_root: &std::path::Path,
     worktree_root: &std::path::Path,
     branch_name: &str,
+    base_branch_name: Option<&str>,
 ) -> Result<PathBuf, ErrorEnvelope> {
     let _branch = GitRefName::new(branch_name.to_string()).map_err(|err| {
         ErrorEnvelope::new(ErrorCategory::InvalidRequest, "Invalid task branch name.")
@@ -1151,11 +1159,24 @@ async fn ensure_task_worktree(
         .await;
 
     if let Err(primary_err) = create_from_existing {
+        let fallback_target = if let Some(base_branch_name) = base_branch_name {
+            let base_revision = GitRevision::new(base_branch_name.to_string()).map_err(|err| {
+                ErrorEnvelope::new(
+                    ErrorCategory::InvalidRequest,
+                    "Invalid task base branch revision.",
+                )
+                .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
+            })?;
+            GitWorktreeTarget::Revision(base_revision)
+        } else {
+            GitWorktreeTarget::Head
+        };
+
         let fallback = git_backend
             .worktree_add(
                 repo_root,
                 &worktree_path,
-                &GitWorktreeTarget::Head,
+                &fallback_target,
                 GitWorktreeAddOptions {
                     new_branch: Some(branch_name.to_string()),
                     ..GitWorktreeAddOptions::default()
@@ -1177,6 +1198,10 @@ async fn ensure_task_worktree(
                 ),
                 ("primary_error".to_string(), primary_err.to_string()),
                 ("fallback_error".to_string(), fallback_err.to_string()),
+                (
+                    "base_branch_name".to_string(),
+                    base_branch_name.unwrap_or("-").to_string(),
+                ),
             ])));
         }
     }
@@ -1298,11 +1323,14 @@ async fn send_command_update(
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsStr;
+    use std::path::Path;
     use std::path::PathBuf;
+    use std::process::Command;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    use super::{CommandRouter, handle_dispatch, worktree_branch_matches};
+    use super::{CommandRouter, ensure_task_worktree, handle_dispatch, worktree_branch_matches};
     use crate::agent_driver::{AgentDriver, DriverFuture, ResumeByIdTurnSpec, StartSessionSpec};
     use crate::repo::UnconfiguredRepoRegistry;
     use redesmyn_git::GitCliBackend;
@@ -1315,6 +1343,7 @@ mod tests {
         CodexApprovalPolicy, CodexSandboxPolicy, PermissionDecision, PermissionsMode,
     };
     use redesmyn_protocol::{ErrorCategory, ErrorEnvelope, RepoScope};
+    use tempfile::tempdir;
     use tokio::sync::mpsc;
 
     #[test]
@@ -1332,6 +1361,83 @@ mod tests {
             &full,
             "rn/director-v0/T-1-director-run-semantics"
         ));
+    }
+
+    fn run_git(repo_root: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo_root.as_os_str())
+            .args(args.iter().map(OsStr::new))
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git failed: args={args:?} stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn rev_parse(repo_root: &Path, rev: &str) -> String {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo_root.as_os_str())
+            .arg("rev-parse")
+            .arg(rev)
+            .output()
+            .expect("rev-parse");
+        assert!(
+            output.status.success(),
+            "rev-parse failed: rev={rev} stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    #[tokio::test]
+    async fn ensure_task_worktree_uses_explicit_base_branch_for_new_child_branch() {
+        let temp = tempdir().expect("tempdir");
+        let repo_root = temp.path().join("repo");
+        let worktree_root = temp.path().join("worktrees");
+        std::fs::create_dir_all(&repo_root).expect("mkdir repo");
+        std::fs::create_dir_all(&worktree_root).expect("mkdir worktrees");
+
+        run_git(&repo_root, &["init", "-b", "main"]);
+        run_git(&repo_root, &["config", "user.email", "test@example.com"]);
+        run_git(&repo_root, &["config", "user.name", "Test"]);
+
+        std::fs::write(repo_root.join("README.md"), "root\n").expect("write root");
+        run_git(&repo_root, &["add", "README.md"]);
+        run_git(&repo_root, &["commit", "-m", "root"]);
+
+        run_git(
+            &repo_root,
+            &["checkout", "-b", "rn/gpui/T-29-merge-restack-planner"],
+        );
+        std::fs::write(repo_root.join("parent.txt"), "parent\n").expect("write parent");
+        run_git(&repo_root, &["add", "parent.txt"]);
+        run_git(&repo_root, &["commit", "-m", "parent"]);
+        let parent_oid = rev_parse(&repo_root, "HEAD");
+        run_git(&repo_root, &["checkout", "main"]);
+
+        let backend: Arc<dyn redesmyn_git::GitBackend> = Arc::new(GitCliBackend::new());
+        let child_branch = "rn/gpui/T-30-merge-restack-executor";
+        let worktree_path = ensure_task_worktree(
+            &backend,
+            &repo_root,
+            &worktree_root,
+            child_branch,
+            Some("rn/gpui/T-29-merge-restack-planner"),
+        )
+        .await
+        .expect("ensure task worktree");
+
+        assert!(
+            worktree_path.starts_with(&worktree_root),
+            "worktree should be created under configured root"
+        );
+        let child_oid = rev_parse(&repo_root, child_branch);
+        assert_eq!(child_oid, parent_oid, "child branch should start at parent");
     }
 
     #[derive(Clone)]

@@ -31,6 +31,7 @@ use crate::ControlPlane;
 
 use super::payloads;
 use super::planner::{NewSessionPlan, StructuredResumePlan};
+use super::task_start_context::load_task_start_branch_context;
 
 type StorageAgentKind = redesmyn_storage::schema::AgentKind;
 type StorageAgentSessionScopeKind = redesmyn_storage::schema::AgentSessionScopeKind;
@@ -96,44 +97,6 @@ async fn insert_task_session(
     })?;
 
     Ok(session_id)
-}
-
-async fn load_task_branch_name(
-    pool: &SqlitePool,
-    task_id: TaskId,
-) -> Result<String, ErrorEnvelope> {
-    let branch_name: Option<String> = sqlx::query_scalar(
-        r#"
-        SELECT branch_name
-        FROM tasks
-        WHERE id = ?1
-        LIMIT 1
-        "#,
-    )
-    .bind(task_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|err| {
-        ErrorEnvelope::new(ErrorCategory::Internal, "Failed to load task branch.")
-            .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
-    })?
-    .flatten();
-
-    let branch_name = branch_name
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| {
-            ErrorEnvelope::new(
-                ErrorCategory::InvalidRequest,
-                "Task branch is required to start an agent session.",
-            )
-            .with_detail(ErrorDetail::from([(
-                "task_id".to_string(),
-                task_id.to_string(),
-            )]))
-        })?;
-
-    Ok(branch_name)
 }
 
 #[derive(Debug, Clone)]
@@ -707,6 +670,7 @@ pub(super) async fn execute_start_agent(
         workspace_id,
         repo_id,
     } = repo;
+    let task_branch_context = load_task_start_branch_context(control_plane.pool(), task_id).await?;
 
     if !stop_session_ids.is_empty() {
         end_sessions(control_plane.pool(), &stop_session_ids).await?;
@@ -780,12 +744,11 @@ pub(super) async fn execute_start_agent(
         )
         .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
     })?;
-    let task_branch_name = load_task_branch_name(control_plane.pool(), task_id).await?;
-
     let json_payload = payloads::start_task_session(
         session_id,
         task_id,
-        Some(task_branch_name),
+        Some(task_branch_context.task_branch_name.clone()),
+        task_branch_context.task_base_branch_name.clone(),
         agent_kind,
         initial_prompt.clone(),
         Some(policy_snapshot),
@@ -999,6 +962,7 @@ pub(super) async fn execute_new_session_send(
         workspace_id,
         repo_id,
     } = repo;
+    let task_branch_context = load_task_start_branch_context(control_plane.pool(), task_id).await?;
 
     if !plan.stop_session_ids.is_empty() {
         end_sessions(control_plane.pool(), &plan.stop_session_ids).await?;
@@ -1031,12 +995,11 @@ pub(super) async fn execute_new_session_send(
         )
         .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
     })?;
-    let task_branch_name = load_task_branch_name(control_plane.pool(), task_id).await?;
-
     let json_payload = payloads::start_task_session(
         session_id,
         task_id,
-        Some(task_branch_name),
+        Some(task_branch_context.task_branch_name),
+        task_branch_context.task_base_branch_name,
         agent_kind,
         Some(message.to_string()),
         Some(policy_snapshot),

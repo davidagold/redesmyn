@@ -7,6 +7,7 @@ use crate::ControlPlane;
 use crate::agent_orchestration::conflicts::{
     CONFLICT_CODE_KEY, CONFLICT_CODE_SESSION_CONFLICT, CONFLICT_CODE_TURN_IN_PROGRESS,
 };
+use crate::agent_orchestration::task_start_context::load_task_start_branch_context;
 use crate::error::ControlPlaneError;
 use crate::session_events::{
     SessionEventsResync, SessionEventsResyncReason, SessionEventsSubscriptionItem,
@@ -1047,58 +1048,23 @@ async fn handle_request_result(
 
                 (SESSION_AGENT_RESUME_BY_ID_TURN.to_string(), json_payload)
             } else {
-                let task_branch_name = if let Some(task_id) = task_id {
-                    let branch_name: Option<String> = match sqlx::query_scalar(
-                        r#"
-                        SELECT branch_name
-                        FROM tasks
-                        WHERE id = ?1
-                        LIMIT 1
-                        "#,
-                    )
-                    .bind(task_id)
-                    .fetch_optional(control_plane.pool())
-                    .await
-                    {
-                        Ok(row) => row.flatten(),
-                        Err(err) => {
-                            return Ok(ResponseResult::Error(
-                                ErrorEnvelope::new(
-                                    ErrorCategory::Internal,
-                                    "Failed to load task branch.",
-                                )
-                                .with_detail(ErrorDetail::from([
-                                    ("error".to_string(), err.to_string()),
-                                ])),
-                            ));
-                        }
-                    };
-
-                    match branch_name
-                        .map(|value| value.trim().to_string())
-                        .filter(|value| !value.is_empty())
-                    {
-                        Some(branch_name) => Some(branch_name),
-                        None => {
-                            let detail =
-                                ErrorDetail::from([("task_id".to_string(), task_id.to_string())]);
-                            return Ok(ResponseResult::Error(
-                                ErrorEnvelope::new(
-                                    ErrorCategory::InvalidRequest,
-                                    "Task branch is required to start a task session.",
-                                )
-                                .with_detail(detail),
-                            ));
-                        }
+                let (task_branch_name, task_base_branch_name) = if let Some(task_id) = task_id {
+                    match load_task_start_branch_context(control_plane.pool(), task_id).await {
+                        Ok(context) => (
+                            Some(context.task_branch_name),
+                            context.task_base_branch_name,
+                        ),
+                        Err(err) => return Ok(ResponseResult::Error(err)),
                     }
                 } else {
-                    None
+                    (None, None)
                 };
 
                 let json_payload = match encode_agent_command_payload(&StartAgentSessionCommand {
                     session_id,
                     task_id,
                     task_branch_name,
+                    task_base_branch_name,
                     agent_kind,
                     initial_prompt: has_text.then(|| text.to_string()),
                     image_attachments: send.image_attachments.clone(),
