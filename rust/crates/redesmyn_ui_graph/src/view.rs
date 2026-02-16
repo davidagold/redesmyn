@@ -2898,6 +2898,7 @@ impl Render for GraphView {
                     let preview_text_size = quantized_zoom_text_size(rem_size, 0.66, zoom);
                     let quick_action_hit_size = collapsed_task_quick_action_hit_size(zoom);
                     let quick_action_icon_gap = collapsed_task_icon_gap(zoom);
+                    let status_dot_gap = collapsed_task_status_dot_gap(zoom);
                     let quick_actions_slot_width =
                         quick_action_hit_size * 2.0 + quick_action_icon_gap;
                     let quick_actions_slot_height = quick_action_hit_size;
@@ -2976,7 +2977,7 @@ impl Render for GraphView {
                                         .flex()
                                         .flex_row()
                                         .items_center()
-                                        .gap(quick_action_icon_gap)
+                                        .gap(status_dot_gap)
                                         .child(
                                             div()
                                                 .relative()
@@ -4167,7 +4168,11 @@ fn collapsed_task_icon_size(zoom: f32) -> gpui::Pixels {
 }
 
 fn collapsed_task_icon_gap(zoom: f32) -> gpui::Pixels {
-    px(10.0 * zoom)
+    px(8.0 * zoom)
+}
+
+fn collapsed_task_status_dot_gap(zoom: f32) -> gpui::Pixels {
+    px(12.0 * zoom)
 }
 
 fn collapsed_task_quick_action_hit_size(zoom: f32) -> gpui::Pixels {
