@@ -430,6 +430,10 @@ impl RootView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.palette_shortcuts_enabled(window, cx) {
+            return;
+        }
+
         let opening = !self.task_palette.is_open();
         let has_selected_epic = self
             .chrome
@@ -658,7 +662,7 @@ impl RootView {
         self.open_epic_menu(window, cx);
     }
 
-    fn epic_selector_shortcut_enabled(&self, window: &Window, cx: &App) -> bool {
+    fn palette_shortcuts_enabled(&self, window: &Window, cx: &App) -> bool {
         let session_composer_focused = self
             .session_pane
             .read(cx)
@@ -684,7 +688,7 @@ impl RootView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.epic_selector_shortcut_enabled(window, cx) || self.chrome.epics.is_empty() {
+        if !self.palette_shortcuts_enabled(window, cx) || self.chrome.epics.is_empty() {
             return;
         }
 
