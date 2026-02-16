@@ -11,6 +11,7 @@ mod control_plane;
 mod host_identity;
 mod repo;
 mod runtime;
+mod state_dir;
 
 pub use crate::control_plane::{ConnectionState, ControlPlaneConnector};
 pub use crate::host_identity::HostIdentity;

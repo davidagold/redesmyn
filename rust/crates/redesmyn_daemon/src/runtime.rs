@@ -20,6 +20,7 @@ use crate::host_identity::{HostIdentity, load_or_create_host_id};
 use crate::repo::{
     RepoAttachError, RepoAttachmentManager, RepoDetachError, RepoRegistry, UnconfiguredRepoRegistry,
 };
+use crate::state_dir::daemon_state_dir_from_repo_registry_dir;
 
 #[derive(Debug, Clone)]
 pub struct BackoffConfig {
@@ -102,12 +103,9 @@ impl Daemon {
             watch::channel(ConnectionState::Disconnected);
 
         let host_identity = config.host_identity.unwrap_or_else(|| {
-            let state_dir = config
-                .daemon
-                .repo_registry_dir
-                .parent()
-                .unwrap_or(&config.daemon.repo_registry_dir);
-            match load_or_create_host_id(state_dir) {
+            let state_dir =
+                daemon_state_dir_from_repo_registry_dir(&config.daemon.repo_registry_dir);
+            match load_or_create_host_id(&state_dir) {
                 Ok(host_id) => HostIdentity::new(host_id),
                 Err(err) => {
                     tracing::error!(error = %err, "failed to load host identity; using ephemeral id");

@@ -38,6 +38,7 @@ use tokio::task::JoinSet;
 use crate::agent_driver::{AgentDriver, CodexDriver, ResumeByIdTurnSpec, StartSessionSpec};
 use crate::host_identity::HostIdentity;
 use crate::repo::{RepoRegistry, RepoRegistryError};
+use crate::state_dir::daemon_state_dir_from_repo_registry_dir;
 
 #[derive(Clone)]
 struct CommandRouter {
@@ -61,7 +62,7 @@ pub async fn run_command_router(
     redesmyn_logging::span::record_host_instance_id(&span, identity.host_instance_id);
     let _enter = span.enter();
 
-    let artifact_root = daemon_state_dir(&daemon);
+    let artifact_root = daemon_state_dir_from_repo_registry_dir(&daemon.repo_registry_dir);
     let artifact_store = LocalArtifactStore::new(artifact_root);
 
     let app_server = match AppServerSupervisor::new(
@@ -73,7 +74,9 @@ pub async fn run_command_router(
     {
         Ok(supervisor) => Arc::new(supervisor),
         Err(err) => {
+            let reason = format!("Daemon app-server supervisor is unavailable: {err}");
             tracing::error!(error = %err, "failed to initialize app-server supervisor; session exec disabled");
+            run_unavailable_command_router(rx, frames_tx, shutdown_rx, reason).await;
             return;
         }
     };
@@ -108,6 +111,36 @@ pub async fn run_command_router(
                 tasks.spawn(async move {
                     handle_dispatch(router, frames_tx, dispatch).await;
                 });
+            }
+        }
+    }
+}
+
+async fn run_unavailable_command_router(
+    mut rx: mpsc::Receiver<CommandDispatch>,
+    frames_tx: mpsc::Sender<DaemonFrame>,
+    mut shutdown_rx: watch::Receiver<bool>,
+    reason: String,
+) {
+    loop {
+        if *shutdown_rx.borrow() {
+            return;
+        }
+
+        tokio::select! {
+            _ = shutdown_rx.changed() => {}
+            dispatch = rx.recv() => {
+                let Some(dispatch) = dispatch else { return; };
+                reject_command(
+                    &frames_tx,
+                    dispatch,
+                    ErrorEnvelope::new(
+                        ErrorCategory::Unavailable,
+                        "Daemon command router is unavailable.",
+                    )
+                    .with_detail(ErrorDetail::from([("reason".to_string(), reason.clone())])),
+                )
+                .await;
             }
         }
     }
@@ -998,14 +1031,6 @@ fn session_scope(task_id: Option<redesmyn_ids::TaskId>) -> SessionScope {
         Some(task_id) => SessionScope::Task { task_id },
         None => SessionScope::Chat,
     }
-}
-
-fn daemon_state_dir(daemon: &DaemonConfig) -> PathBuf {
-    daemon
-        .repo_registry_dir
-        .parent()
-        .unwrap_or(&daemon.repo_registry_dir)
-        .to_path_buf()
 }
 
 fn resolve_repo_root(

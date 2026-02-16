@@ -1609,14 +1609,22 @@ impl GraphView {
         let show_stop = matches!(agent_status, AgentStatus::Running | AgentStatus::Blocked);
         let show_restart = has_session || show_stop;
         let show_start = !show_restart;
-        let quick_action_icon_size = collapsed_task_icon_size(zoom);
+        let quick_action_hit_size = collapsed_task_quick_action_hit_size(zoom);
         let quick_action_icon_gap = collapsed_task_icon_gap(zoom);
+        let neutral_icon_fg = theme.colors.foreground_muted;
+        let hover_icon_fg = theme.colors.foreground;
+        let neutral_hover_bg = theme.colors.foreground.opacity(0.16);
+        let neutral_active_bg = theme.colors.foreground.opacity(0.24);
+        let stop_icon_fg = theme.colors.danger.opacity(0.80);
+        let stop_hover_bg = theme.colors.danger.opacity(0.30);
+        let stop_active_bg = theme.colors.danger.opacity(0.40);
 
         let button = |kind: TaskQuickActionKind,
                       label: &'static str,
                       tooltip: &'static str,
                       fg: gpui::Hsla,
                       hover_bg: gpui::Hsla,
+                      active_bg: gpui::Hsla,
                       disabled: bool| {
             let base_id = match kind {
                 TaskQuickActionKind::Start => "task_quick_action_start",
@@ -1633,9 +1641,9 @@ impl GraphView {
                 .flex()
                 .items_center()
                 .justify_center()
-                .size(quick_action_icon_size)
+                .size(quick_action_hit_size)
                 .rounded(px(f32::from(theme.radius.md) * zoom))
-                .text_size(quantized_zoom_text_size(rem_size, 0.70, zoom))
+                .text_size(collapsed_task_quick_action_glyph_size(rem_size, zoom))
                 .text_color(fg)
                 .child(label);
 
@@ -1643,12 +1651,17 @@ impl GraphView {
                 button = button
                     .cursor_pointer()
                     .focusable()
-                    .hover(move |this| this.bg(hover_bg))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                        cx.stop_propagation();
+                    })
                     .tooltip(move |_, cx| cx.new(|_| Tooltip::new(tooltip)).into());
 
                 if disabled {
                     button = button.opacity(0.55).cursor_not_allowed();
                 } else {
+                    button = button
+                        .hover(move |this| this.bg(hover_bg).text_color(hover_icon_fg))
+                        .active(move |this| this.bg(active_bg).text_color(hover_icon_fg));
                     let graph = graph.clone();
                     button = button.on_click(move |event, _window, cx| {
                         if event.standard_click() {
@@ -1678,8 +1691,9 @@ impl GraphView {
                 TaskQuickActionKind::Start,
                 "▶",
                 "Start agent",
-                theme.colors.foreground_muted,
-                theme.colors.accent.opacity(0.65),
+                neutral_icon_fg,
+                neutral_hover_bg,
+                neutral_active_bg,
                 start_disabled,
             ));
         }
@@ -1689,8 +1703,9 @@ impl GraphView {
                 TaskQuickActionKind::Restart,
                 "↻",
                 "Restart agent",
-                theme.colors.foreground_muted,
-                theme.colors.accent.opacity(0.65),
+                neutral_icon_fg,
+                neutral_hover_bg,
+                neutral_active_bg,
                 restart_disabled,
             ));
         }
@@ -1700,8 +1715,9 @@ impl GraphView {
                 TaskQuickActionKind::Stop,
                 "■",
                 "Stop agent",
-                theme.colors.danger,
-                theme.colors.danger.opacity(0.10),
+                stop_icon_fg,
+                stop_hover_bg,
+                stop_active_bg,
                 stop_disabled,
             ));
         }
@@ -2880,11 +2896,11 @@ impl Render for GraphView {
 
                     let branch_slug_text_size = quantized_zoom_text_size(rem_size, 0.60, zoom);
                     let preview_text_size = quantized_zoom_text_size(rem_size, 0.66, zoom);
-                    let quick_action_icon_size = collapsed_task_icon_size(zoom);
+                    let quick_action_hit_size = collapsed_task_quick_action_hit_size(zoom);
                     let quick_action_icon_gap = collapsed_task_icon_gap(zoom);
                     let quick_actions_slot_width =
-                        quick_action_icon_size * 2.0 + quick_action_icon_gap;
-                    let quick_actions_slot_height = quick_action_icon_size;
+                        quick_action_hit_size * 2.0 + quick_action_icon_gap;
+                    let quick_actions_slot_height = quick_action_hit_size;
 
                     let preview_content = latest_session.as_ref().and_then(|session| {
                         let preview = session.message_preview.as_ref()?;
@@ -4151,7 +4167,15 @@ fn collapsed_task_icon_size(zoom: f32) -> gpui::Pixels {
 }
 
 fn collapsed_task_icon_gap(zoom: f32) -> gpui::Pixels {
-    px(4.0 * zoom)
+    px(10.0 * zoom)
+}
+
+fn collapsed_task_quick_action_hit_size(zoom: f32) -> gpui::Pixels {
+    px(18.0 * zoom)
+}
+
+fn collapsed_task_quick_action_glyph_size(rem_size: gpui::Pixels, zoom: f32) -> gpui::Pixels {
+    quantized_zoom_text_size(rem_size, 0.84, zoom)
 }
 
 fn agent_status_dot_from_key(
