@@ -37,12 +37,12 @@ use tokio::task::JoinSet;
 
 use crate::agent_driver::{AgentDriver, CodexDriver, ResumeByIdTurnSpec, StartSessionSpec};
 use crate::host_identity::HostIdentity;
-use crate::repo::{RepoRegistry, RepoRegistryError};
+use crate::repo::AttachedRepoRoots;
 use crate::state_dir::daemon_state_dir_from_repo_registry_dir;
 
 #[derive(Clone)]
 struct CommandRouter {
-    repo_registry: Arc<dyn RepoRegistry>,
+    attached_repos: AttachedRepoRoots,
     git_backend: Arc<dyn GitBackend>,
     worktree_root: PathBuf,
     codex_driver: Arc<dyn AgentDriver>,
@@ -51,7 +51,7 @@ struct CommandRouter {
 pub async fn run_command_router(
     identity: HostIdentity,
     daemon: DaemonConfig,
-    repo_registry: Arc<dyn RepoRegistry>,
+    attached_repos: AttachedRepoRoots,
     git_backend: Arc<dyn GitBackend>,
     mut rx: mpsc::Receiver<CommandDispatch>,
     frames_tx: mpsc::Sender<DaemonFrame>,
@@ -84,7 +84,7 @@ pub async fn run_command_router(
     let codex_driver = Arc::new(CodexDriver::new(app_server));
 
     let router = CommandRouter {
-        repo_registry,
+        attached_repos,
         git_backend,
         worktree_root: daemon.worktree_root.clone(),
         codex_driver,
@@ -342,7 +342,7 @@ async fn handle_agent_start(
     }
 
     let scope = session_scope(cmd.task_id);
-    let repo_root = match resolve_repo_root(&router.repo_registry, dispatch.scope) {
+    let repo_root = match resolve_repo_root(&router.attached_repos, dispatch.scope) {
         Ok(path) => path,
         Err(err) => {
             fail_command(frames_tx, dispatch, err).await;
@@ -452,7 +452,7 @@ async fn handle_session_agent_resume_by_id_turn(
     }
 
     let scope = session_scope(cmd.task_id);
-    let repo_root = match resolve_repo_root(&router.repo_registry, dispatch.scope) {
+    let repo_root = match resolve_repo_root(&router.attached_repos, dispatch.scope) {
         Ok(path) => path,
         Err(err) => {
             fail_command(frames_tx, dispatch, err).await;
@@ -572,7 +572,7 @@ async fn handle_session_agent_set_permissions_mode(
         tracing::warn!(error = ?err, "failed to send accepted command update");
     }
 
-    let repo_root = match resolve_repo_root(&router.repo_registry, dispatch.scope) {
+    let repo_root = match resolve_repo_root(&router.attached_repos, dispatch.scope) {
         Ok(path) => path,
         Err(err) => {
             fail_command(frames_tx, dispatch, err).await;
@@ -630,7 +630,7 @@ async fn handle_session_agent_set_codex_approval_policy(
         tracing::warn!(error = ?err, "failed to send accepted command update");
     }
 
-    let repo_root = match resolve_repo_root(&router.repo_registry, dispatch.scope) {
+    let repo_root = match resolve_repo_root(&router.attached_repos, dispatch.scope) {
         Ok(path) => path,
         Err(err) => {
             fail_command(frames_tx, dispatch, err).await;
@@ -688,7 +688,7 @@ async fn handle_session_agent_set_codex_sandbox_policy(
         tracing::warn!(error = ?err, "failed to send accepted command update");
     }
 
-    let repo_root = match resolve_repo_root(&router.repo_registry, dispatch.scope) {
+    let repo_root = match resolve_repo_root(&router.attached_repos, dispatch.scope) {
         Ok(path) => path,
         Err(err) => {
             fail_command(frames_tx, dispatch, err).await;
@@ -746,7 +746,7 @@ async fn handle_session_agent_set_model(
         tracing::warn!(error = ?err, "failed to send accepted command update");
     }
 
-    let repo_root = match resolve_repo_root(&router.repo_registry, dispatch.scope) {
+    let repo_root = match resolve_repo_root(&router.attached_repos, dispatch.scope) {
         Ok(path) => path,
         Err(err) => {
             fail_command(frames_tx, dispatch, err).await;
@@ -812,7 +812,7 @@ async fn handle_session_agent_list_models(
         tracing::warn!(error = ?err, "failed to send accepted command update");
     }
 
-    let repo_root = match resolve_repo_root(&router.repo_registry, dispatch.scope) {
+    let repo_root = match resolve_repo_root(&router.attached_repos, dispatch.scope) {
         Ok(path) => path,
         Err(err) => {
             fail_command(frames_tx, dispatch, err).await;
@@ -885,7 +885,7 @@ async fn handle_agent_list_models(
         tracing::warn!(error = ?err, "failed to send accepted command update");
     }
 
-    let repo_root = match resolve_repo_root(&router.repo_registry, dispatch.scope) {
+    let repo_root = match resolve_repo_root(&router.attached_repos, dispatch.scope) {
         Ok(path) => path,
         Err(err) => {
             fail_command(frames_tx, dispatch, err).await;
@@ -1041,19 +1041,19 @@ fn session_scope(task_id: Option<redesmyn_ids::TaskId>) -> SessionScope {
 }
 
 fn resolve_repo_root(
-    registry: &Arc<dyn RepoRegistry>,
+    attached_repos: &AttachedRepoRoots,
     scope: RepoScope,
 ) -> Result<PathBuf, ErrorEnvelope> {
-    match registry.resolve_repo_root(scope) {
-        Ok(path) => Ok(path),
-        Err(RepoRegistryError::Unconfigured) => std::env::current_dir().map_err(|err| {
-            ErrorEnvelope::new(
-                ErrorCategory::Unavailable,
-                "Repo registry is not configured.",
-            )
-            .with_detail(ErrorDetail::from([("error".to_string(), err.to_string())]))
-        }),
-    }
+    attached_repos.resolve(scope).ok_or_else(|| {
+        ErrorEnvelope::new(
+            ErrorCategory::Unavailable,
+            "Repo is not attached on this daemon.",
+        )
+        .with_detail(ErrorDetail::from([
+            ("workspace_id".to_string(), scope.workspace_id.to_string()),
+            ("repo_id".to_string(), scope.repo_id.to_string()),
+        ]))
+    })
 }
 
 fn default_worktree_path(worktree_root: &std::path::Path, branch_name: &str) -> PathBuf {
@@ -1332,7 +1332,7 @@ mod tests {
 
     use super::{CommandRouter, ensure_task_worktree, handle_dispatch, worktree_branch_matches};
     use crate::agent_driver::{AgentDriver, DriverFuture, ResumeByIdTurnSpec, StartSessionSpec};
-    use crate::repo::UnconfiguredRepoRegistry;
+    use crate::repo::AttachedRepoRoots;
     use redesmyn_git::GitCliBackend;
     use redesmyn_git::GitRefName;
     use redesmyn_ids::{CommandId, RepoId, SessionId, TaskId, WorkspaceId};
@@ -1647,7 +1647,7 @@ mod tests {
         let stopped_sessions = Arc::clone(&driver.stopped_sessions);
         let stopped_tasks = Arc::clone(&driver.stopped_tasks);
         let router = CommandRouter {
-            repo_registry: Arc::new(UnconfiguredRepoRegistry),
+            attached_repos: AttachedRepoRoots::default(),
             git_backend: Arc::new(GitCliBackend::new()),
             worktree_root: PathBuf::from("/tmp"),
             codex_driver: Arc::new(driver),
@@ -1694,7 +1694,7 @@ mod tests {
         let stopped_sessions = Arc::clone(&driver.stopped_sessions);
         let stopped_tasks = Arc::clone(&driver.stopped_tasks);
         let router = CommandRouter {
-            repo_registry: Arc::new(UnconfiguredRepoRegistry),
+            attached_repos: AttachedRepoRoots::default(),
             git_backend: Arc::new(GitCliBackend::new()),
             worktree_root: PathBuf::from("/tmp"),
             codex_driver: Arc::new(driver),

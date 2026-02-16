@@ -6,7 +6,10 @@ use redesmyn_git::{GitBackend, GitCliBackend};
 use redesmyn_logging::tracing;
 use redesmyn_protocol::ProtocolVersion;
 use redesmyn_protocol::RepoScope;
-use redesmyn_protocol::daemon::{CommandDispatch, DaemonFrame};
+use redesmyn_protocol::daemon::{
+    CommandDispatch, DaemonFrame, DaemonMessage, RepoAttach, RepoDetach,
+};
+use redesmyn_protocol::{ProtocolEnvelope, Scope};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
@@ -18,7 +21,8 @@ use crate::control_plane::{
 };
 use crate::host_identity::{HostIdentity, load_or_create_host_id};
 use crate::repo::{
-    RepoAttachError, RepoAttachmentManager, RepoDetachError, RepoRegistry, UnconfiguredRepoRegistry,
+    AttachedRepoRoots, FileRepoRegistry, RepoAttachError, RepoAttachmentManager, RepoDetachError,
+    RepoRegisterError, RepoRegistrationRequest, RepoRegistry,
 };
 use crate::state_dir::daemon_state_dir_from_repo_registry_dir;
 
@@ -53,6 +57,7 @@ pub struct DaemonRuntimeConfig {
 impl DaemonRuntimeConfig {
     #[must_use]
     pub fn new(daemon: DaemonConfig) -> Self {
+        let repo_registry = Arc::new(FileRepoRegistry::new(daemon.repo_registry_dir.clone()));
         Self {
             daemon,
             host_identity: None,
@@ -66,7 +71,7 @@ impl DaemonRuntimeConfig {
             },
             supported_protocol: ProtocolVersion::CURRENT,
             backoff: BackoffConfig::default(),
-            repo_registry: Arc::new(UnconfiguredRepoRegistry),
+            repo_registry,
             git_backend: Arc::new(GitCliBackend::new()),
         }
     }
@@ -116,6 +121,7 @@ impl Daemon {
 
         let (command_dispatch_tx, command_dispatch_rx) = mpsc::channel::<CommandDispatch>(32);
         let (frames_tx, frames_rx) = mpsc::channel::<DaemonFrame>(256);
+        let attached_roots = AttachedRepoRoots::default();
 
         let control_plane_task = tokio::spawn(run_control_plane_connection_manager(
             connector,
@@ -137,10 +143,10 @@ impl Daemon {
         let command_router_task = tokio::spawn(run_command_router(
             host_identity,
             config.daemon.clone(),
-            config.repo_registry.clone(),
+            attached_roots.clone(),
             config.git_backend.clone(),
             command_dispatch_rx,
-            frames_tx,
+            frames_tx.clone(),
             shutdown_rx.clone(),
         ));
 
@@ -148,7 +154,8 @@ impl Daemon {
         let repo_manager_task = tokio::spawn(run_repo_manager(
             host_identity,
             config.repo_registry,
-            config.git_backend,
+            attached_roots,
+            frames_tx,
             repo_cmd_rx,
             shutdown_rx,
         ));
@@ -172,6 +179,18 @@ pub struct DaemonHandle {
 impl DaemonHandle {
     pub fn connection_state(&self) -> watch::Receiver<ConnectionState> {
         self.connection_state_rx.clone()
+    }
+
+    pub async fn register_repo(
+        &self,
+        request: RepoRegistrationRequest,
+    ) -> Result<(), RepoRegisterError> {
+        let (tx, rx) = oneshot::channel();
+        self.repo_cmd_tx
+            .send(RepoCommand::Register { request, reply: tx })
+            .await
+            .map_err(|_| RepoRegisterError::DaemonUnavailable)?;
+        rx.await.map_err(|_| RepoRegisterError::DaemonUnavailable)?
     }
 
     pub async fn attach_repo(&self, scope: RepoScope) -> Result<(), RepoAttachError> {
@@ -201,6 +220,10 @@ impl DaemonHandle {
 }
 
 enum RepoCommand {
+    Register {
+        request: RepoRegistrationRequest,
+        reply: oneshot::Sender<Result<(), RepoRegisterError>>,
+    },
     Attach {
         scope: RepoScope,
         reply: oneshot::Sender<Result<(), RepoAttachError>>,
@@ -214,7 +237,8 @@ enum RepoCommand {
 async fn run_repo_manager(
     identity: HostIdentity,
     registry: Arc<dyn RepoRegistry>,
-    git_backend: Arc<dyn GitBackend>,
+    attached_roots: AttachedRepoRoots,
+    frames_tx: mpsc::Sender<DaemonFrame>,
     mut rx: mpsc::Receiver<RepoCommand>,
     mut shutdown_rx: watch::Receiver<bool>,
 ) {
@@ -223,7 +247,7 @@ async fn run_repo_manager(
     redesmyn_logging::span::record_host_instance_id(&span, identity.host_instance_id);
     let _enter = span.enter();
 
-    let mut manager = RepoAttachmentManager::new(registry, git_backend);
+    let mut manager = RepoAttachmentManager::new(identity, registry, attached_roots);
 
     loop {
         if *shutdown_rx.borrow() {
@@ -235,16 +259,56 @@ async fn run_repo_manager(
             cmd = rx.recv() => {
                 let Some(cmd) = cmd else { return; };
                 match cmd {
+                    RepoCommand::Register { request, reply } => {
+                        let result = manager.register_repo(request);
+                        let _ = reply.send(result);
+                    }
                     RepoCommand::Attach { scope, reply } => {
                         let result = manager.attach(scope, shutdown_rx.clone());
+                        if result.is_ok() {
+                            send_repo_attach_frame(&frames_tx, scope).await;
+                        }
                         let _ = reply.send(result);
                     }
                     RepoCommand::Detach { scope, reply } => {
                         let result = manager.detach(scope);
+                        send_repo_detach_frame(&frames_tx, scope).await;
                         let _ = reply.send(result);
                     }
                 }
             }
         }
+    }
+}
+
+async fn send_repo_attach_frame(frames_tx: &mpsc::Sender<DaemonFrame>, scope: RepoScope) {
+    let mut envelope = ProtocolEnvelope::new();
+    envelope.scope = Some(Scope::Repo { repo: scope });
+
+    let frame = DaemonFrame::new(
+        envelope,
+        DaemonMessage::RepoAttach(RepoAttach {
+            repo_scope: scope,
+            repo_root_hint: None,
+        }),
+    );
+    if let Err(err) = frames_tx.send(frame).await {
+        tracing::warn!(error = %err, "failed to send repo attach frame");
+    }
+}
+
+async fn send_repo_detach_frame(frames_tx: &mpsc::Sender<DaemonFrame>, scope: RepoScope) {
+    let mut envelope = ProtocolEnvelope::new();
+    envelope.scope = Some(Scope::Repo { repo: scope });
+
+    let frame = DaemonFrame::new(
+        envelope,
+        DaemonMessage::RepoDetach(RepoDetach {
+            repo_scope: scope,
+            reason: None,
+        }),
+    );
+    if let Err(err) = frames_tx.send(frame).await {
+        tracing::warn!(error = %err, "failed to send repo detach frame");
     }
 }

@@ -15,6 +15,9 @@ mod state_dir;
 
 pub use crate::control_plane::{ConnectionState, ControlPlaneConnector};
 pub use crate::host_identity::HostIdentity;
-pub use crate::repo::{RepoAttachError, RepoDetachError, RepoRegistry, RepoRegistryError};
+pub use crate::repo::{
+    AttachedRepoRoots, FileRepoRegistry, RepoAttachError, RepoDetachError, RepoRegisterError,
+    RepoRegistrationRequest, RepoRegistry, RepoRegistryError,
+};
 pub use crate::runtime::{Daemon, DaemonHandle, DaemonRuntimeConfig};
 pub use redesmyn_protocol::daemon::DaemonCapabilities;
