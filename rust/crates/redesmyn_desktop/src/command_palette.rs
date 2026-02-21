@@ -116,12 +116,20 @@ impl CommandRegistry {
 
 pub fn bind_command_palette_keys(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("e", OpenEpicSelector, Some("Desktop")),
+        KeyBinding::new(
+            "e",
+            OpenEpicSelector,
+            Some("Desktop && !TextInput && !TextArea"),
+        ),
         KeyBinding::new("cmd-k", ToggleCommandPalette, Some("Desktop")),
         KeyBinding::new("ctrl-k", ToggleCommandPalette, Some("Desktop")),
         KeyBinding::new("cmd-s", ToggleAgentSessionsPalette, Some("Desktop")),
         KeyBinding::new("ctrl-s", ToggleAgentSessionsPalette, Some("Desktop")),
-        KeyBinding::new("t", ToggleTaskPalette, Some("Desktop")),
+        KeyBinding::new(
+            "t",
+            ToggleTaskPalette,
+            Some("Desktop && !TextInput && !TextArea"),
+        ),
         KeyBinding::new("escape", CloseCommandPalette, Some("CommandPalette")),
         KeyBinding::new(
             "escape",
