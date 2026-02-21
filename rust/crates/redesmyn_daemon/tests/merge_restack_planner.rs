@@ -408,23 +408,81 @@ async fn restack_plan_spine_scope_is_deterministic() {
     let fixture = setup_fixture();
     let planner = MergeRestackPlanner::new(Arc::new(GitCliBackend::new()));
 
-    let plan = planner
-        .build_restack_plan(RestackPlanRequest {
-            context: fixture.context(fixture.task_b, PlanScope::Spine),
-            policy: PlanPolicyInput {
-                command_kind: MergeRestackCommandKind::Restack,
-                requires_repo_primary: None,
-            },
-        })
-        .await
-        .expect("restack plan");
+    let request = RestackPlanRequest {
+        context: fixture.context(fixture.task_b, PlanScope::Spine),
+        policy: PlanPolicyInput {
+            command_kind: MergeRestackCommandKind::Restack,
+            requires_repo_primary: None,
+        },
+    };
 
-    assert_eq!(plan.affected_task_ids.len(), 2);
+    let first = planner
+        .build_restack_plan(request.clone())
+        .await
+        .expect("first restack plan");
+    let second = planner
+        .build_restack_plan(request)
+        .await
+        .expect("second restack plan");
+
+    assert_eq!(first, second);
+
+    let plan = first;
+    assert!(!plan.policy.requires_repo_primary);
     assert_eq!(
         plan.steps
             .iter()
-            .map(|step| (step.kind, step.task_branch.as_str()))
+            .map(|step| step.step_index)
             .collect::<Vec<_>>(),
+        vec![0, 1]
+    );
+
+    assert_eq!(plan.affected_task_ids.len(), 2);
+    assert_eq!(plan.affected_task_ids, vec![fixture.task_a, fixture.task_b]);
+    assert_eq!(plan.spine_task_ids, vec![fixture.task_a, fixture.task_b]);
+    assert_eq!(
+        plan.steps
+            .iter()
+            .map(|step| step.upstream_ref.clone())
+            .collect::<Vec<_>>(),
+        vec![Some("main".to_string()), Some(fixture.branch_a.clone())]
+    );
+    assert_eq!(
+        plan.steps
+            .iter()
+            .map(|step| step.target_worktree_path.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            fixture
+                .worktrees_by_branch
+                .get(&fixture.branch_a)
+                .expect("task a worktree")
+                .clone(),
+            fixture
+                .worktrees_by_branch
+                .get(&fixture.branch_b)
+                .expect("task b worktree")
+                .clone(),
+        ]
+    );
+    assert_eq!(
+        plan.steps
+            .iter()
+            .map(|step| step.order_reason.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "topological_depth_then_branch",
+            "topological_depth_then_branch"
+        ]
+    );
+
+    let step_kinds_and_branches: Vec<_> = plan
+        .steps
+        .iter()
+        .map(|step| (step.kind, step.task_branch.as_str()))
+        .collect();
+    assert_eq!(
+        step_kinds_and_branches,
         vec![
             (
                 redesmyn_daemon::PlanStepKind::Rebase,

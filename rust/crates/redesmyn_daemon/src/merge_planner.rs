@@ -262,6 +262,14 @@ pub struct MergeRestackPlanner {
     git_backend: Arc<dyn GitBackend>,
 }
 
+struct PreparedPlanInputs {
+    topology: TaskTopology,
+    ordered_task_ids: Vec<TaskId>,
+    spine_task_ids: Vec<TaskId>,
+    worktrees_by_branch: BTreeMap<String, WorktreeHealth>,
+    requires_repo_primary: bool,
+}
+
 impl MergeRestackPlanner {
     #[must_use]
     pub fn new(git_backend: Arc<dyn GitBackend>) -> Self {
@@ -300,13 +308,13 @@ impl MergeRestackPlanner {
         redesmyn_logging::span::record_task_id(&span, request.context.target_task_id);
         let _enter = span.enter();
 
-        let topology = TaskTopology::from_graph(&request.context.graph)?;
-        let scope_task_ids =
-            topology.scope_task_ids(request.context.target_task_id, request.context.scope)?;
-        let ordered_task_ids = topology.ordered_task_ids(&scope_task_ids)?;
-        let spine_task_ids = topology.spine_task_ids(request.context.target_task_id)?;
-        let worktrees_by_branch = build_worktree_index(&request.context.worktrees)?;
-        let requires_repo_primary = request.policy.resolved_requires_repo_primary();
+        let PreparedPlanInputs {
+            topology,
+            ordered_task_ids,
+            spine_task_ids,
+            worktrees_by_branch,
+            requires_repo_primary,
+        } = self.prepare_plan_inputs(&request.context, &request.policy)?;
 
         let blockers = self
             .collect_blockers(
@@ -325,30 +333,12 @@ impl MergeRestackPlanner {
             return Err(PlanError::blocked(blockers));
         }
 
-        let mut steps = Vec::new();
-        for task_id in &ordered_task_ids {
-            let node = topology.task(*task_id)?;
-            let task_branch = node.branch_name.clone().ok_or_else(|| {
-                PlanError::InvalidInput("task branch unexpectedly missing".to_string())
-            })?;
-            let worktree = worktrees_by_branch.get(&task_branch).ok_or_else(|| {
-                PlanError::InvalidInput(
-                    "worktree unexpectedly missing after validation".to_string(),
-                )
-            })?;
-            let upstream_ref =
-                topology.upstream_ref(*task_id, &request.context.graph.root_branch)?;
-            steps.push(PlanStep {
-                step_index: steps.len(),
-                kind: PlanStepKind::Rebase,
-                task_id: *task_id,
-                task_branch,
-                target_worktree_path: worktree.worktree_path.clone(),
-                upstream_ref: Some(upstream_ref),
-                base_ref: None,
-                order_reason: "topological_depth_then_branch".to_string(),
-            });
-        }
+        let mut steps = self.build_rebase_steps(
+            &request.context,
+            &topology,
+            &ordered_task_ids,
+            &worktrees_by_branch,
+        )?;
 
         let base_worktree = worktrees_by_branch
             .get(&request.context.graph.root_branch)
@@ -408,13 +398,13 @@ impl MergeRestackPlanner {
         redesmyn_logging::span::record_task_id(&span, request.context.target_task_id);
         let _enter = span.enter();
 
-        let topology = TaskTopology::from_graph(&request.context.graph)?;
-        let scope_task_ids =
-            topology.scope_task_ids(request.context.target_task_id, request.context.scope)?;
-        let ordered_task_ids = topology.ordered_task_ids(&scope_task_ids)?;
-        let spine_task_ids = topology.spine_task_ids(request.context.target_task_id)?;
-        let worktrees_by_branch = build_worktree_index(&request.context.worktrees)?;
-        let requires_repo_primary = request.policy.resolved_requires_repo_primary();
+        let PreparedPlanInputs {
+            topology,
+            ordered_task_ids,
+            spine_task_ids,
+            worktrees_by_branch,
+            requires_repo_primary,
+        } = self.prepare_plan_inputs(&request.context, &request.policy)?;
 
         let blockers = self
             .collect_blockers(
@@ -433,30 +423,12 @@ impl MergeRestackPlanner {
             return Err(PlanError::blocked(blockers));
         }
 
-        let mut steps = Vec::new();
-        for task_id in &ordered_task_ids {
-            let node = topology.task(*task_id)?;
-            let task_branch = node.branch_name.clone().ok_or_else(|| {
-                PlanError::InvalidInput("task branch unexpectedly missing".to_string())
-            })?;
-            let worktree = worktrees_by_branch.get(&task_branch).ok_or_else(|| {
-                PlanError::InvalidInput(
-                    "worktree unexpectedly missing after validation".to_string(),
-                )
-            })?;
-            let upstream_ref =
-                topology.upstream_ref(*task_id, &request.context.graph.root_branch)?;
-            steps.push(PlanStep {
-                step_index: steps.len(),
-                kind: PlanStepKind::Rebase,
-                task_id: *task_id,
-                task_branch,
-                target_worktree_path: worktree.worktree_path.clone(),
-                upstream_ref: Some(upstream_ref),
-                base_ref: None,
-                order_reason: "topological_depth_then_branch".to_string(),
-            });
-        }
+        let steps = self.build_rebase_steps(
+            &request.context,
+            &topology,
+            &ordered_task_ids,
+            &worktrees_by_branch,
+        )?;
 
         tracing::info!(
             scope = ?request.context.scope,
@@ -481,6 +453,59 @@ impl MergeRestackPlanner {
         })
     }
 
+    fn prepare_plan_inputs(
+        &self,
+        context: &PlannerContext,
+        policy: &PlanPolicyInput,
+    ) -> Result<PreparedPlanInputs, PlanError> {
+        let topology = TaskTopology::from_graph(&context.graph)?;
+        let scope_task_ids = topology.scope_task_ids(context.target_task_id, context.scope)?;
+        let ordered_task_ids = topology.ordered_task_ids(&scope_task_ids)?;
+        let spine_task_ids = topology.spine_task_ids(context.target_task_id)?;
+        let worktrees_by_branch = build_worktree_index(&context.worktrees)?;
+        let requires_repo_primary = policy.resolved_requires_repo_primary();
+        Ok(PreparedPlanInputs {
+            topology,
+            ordered_task_ids,
+            spine_task_ids,
+            worktrees_by_branch,
+            requires_repo_primary,
+        })
+    }
+
+    fn build_rebase_steps(
+        &self,
+        context: &PlannerContext,
+        topology: &TaskTopology,
+        ordered_task_ids: &[TaskId],
+        worktrees_by_branch: &BTreeMap<String, WorktreeHealth>,
+    ) -> Result<Vec<PlanStep>, PlanError> {
+        let mut steps = Vec::new();
+        for task_id in ordered_task_ids {
+            let node = topology.task(*task_id)?;
+            let task_branch = node.branch_name.clone().ok_or_else(|| {
+                PlanError::InvalidInput("task branch unexpectedly missing".to_string())
+            })?;
+            let worktree = worktrees_by_branch.get(&task_branch).ok_or_else(|| {
+                PlanError::InvalidInput(
+                    "worktree unexpectedly missing after validation".to_string(),
+                )
+            })?;
+            let upstream_ref = topology.upstream_ref(*task_id, &context.graph.root_branch)?;
+            steps.push(PlanStep {
+                step_index: steps.len(),
+                kind: PlanStepKind::Rebase,
+                task_id: *task_id,
+                task_branch,
+                target_worktree_path: worktree.worktree_path.clone(),
+                upstream_ref: Some(upstream_ref),
+                base_ref: None,
+                order_reason: "topological_depth_then_branch".to_string(),
+            });
+        }
+        Ok(steps)
+    }
+
     async fn collect_blockers(
         &self,
         context: &PlannerContext,
@@ -493,7 +518,38 @@ impl MergeRestackPlanner {
         enforce_merge_ready: bool,
     ) -> Result<Vec<PlanBlocker>, PlanError> {
         let mut blockers = Vec::new();
+        self.validate_repo_instance_gate(context, &mut blockers);
+        self.validate_primary_policy(context, requires_repo_primary, &mut blockers);
+        if enforce_merge_ready {
+            self.validate_merge_ready(topology, spine_task_ids, &mut blockers)?;
+        }
+        let resolved_by_ref = self
+            .validate_refs_exist(
+                context,
+                topology,
+                ordered_task_ids,
+                spine_task_ids,
+                &mut blockers,
+            )
+            .await?;
+        self.validate_task_worktrees(
+            topology,
+            ordered_task_ids,
+            worktrees_by_branch,
+            &resolved_by_ref,
+            &mut blockers,
+        )?;
+        if require_base_worktree {
+            self.validate_base_worktree(context, worktrees_by_branch, &mut blockers);
+        }
+        Ok(blockers)
+    }
 
+    fn validate_repo_instance_gate(
+        &self,
+        context: &PlannerContext,
+        blockers: &mut Vec<PlanBlocker>,
+    ) {
         if let RepoInstanceStatus::Busy {
             lock_path,
             owner_host_instance_id,
@@ -513,53 +569,76 @@ impl MergeRestackPlanner {
                 detail: Some(detail),
             });
         }
+    }
 
-        if requires_repo_primary {
-            match &context.repo_primary_status {
-                RepoPrimaryStatus::Primary => {}
-                RepoPrimaryStatus::Other { host_instance_id } => {
-                    blockers.push(PlanBlocker {
-                        code: PlanBlockerCode::NotPrimaryExecutor,
-                        message: "Not primary executor for repo scope.".to_string(),
-                        task_id: None,
-                        branch_name: None,
-                        worktree_path: None,
-                        detail: Some(ErrorDetail::from([(
-                            "primary_host_instance_id".to_string(),
-                            host_instance_id.to_string(),
-                        )])),
-                    });
-                }
-                RepoPrimaryStatus::Unknown => {
-                    blockers.push(PlanBlocker {
-                        code: PlanBlockerCode::NotPrimaryExecutor,
-                        message: "Primary executor is unknown for repo scope.".to_string(),
-                        task_id: None,
-                        branch_name: None,
-                        worktree_path: None,
-                        detail: None,
-                    });
-                }
-            }
+    fn validate_primary_policy(
+        &self,
+        context: &PlannerContext,
+        requires_repo_primary: bool,
+        blockers: &mut Vec<PlanBlocker>,
+    ) {
+        if !requires_repo_primary {
+            return;
         }
-
-        if enforce_merge_ready {
-            for task_id in spine_task_ids {
-                let task = topology.task(*task_id)?;
-                if task.merge_ready {
-                    continue;
-                }
+        match &context.repo_primary_status {
+            RepoPrimaryStatus::Primary => {}
+            RepoPrimaryStatus::Other { host_instance_id } => {
                 blockers.push(PlanBlocker {
-                    code: PlanBlockerCode::MergeNotReady,
-                    message: "Task on merge spine is not merge-ready.".to_string(),
-                    task_id: Some(*task_id),
-                    branch_name: task.branch_name.clone(),
+                    code: PlanBlockerCode::NotPrimaryExecutor,
+                    message: "Not primary executor for repo scope.".to_string(),
+                    task_id: None,
+                    branch_name: None,
+                    worktree_path: None,
+                    detail: Some(ErrorDetail::from([(
+                        "primary_host_instance_id".to_string(),
+                        host_instance_id.to_string(),
+                    )])),
+                });
+            }
+            RepoPrimaryStatus::Unknown => {
+                blockers.push(PlanBlocker {
+                    code: PlanBlockerCode::NotPrimaryExecutor,
+                    message: "Primary executor is unknown for repo scope.".to_string(),
+                    task_id: None,
+                    branch_name: None,
                     worktree_path: None,
                     detail: None,
                 });
             }
         }
+    }
 
+    fn validate_merge_ready(
+        &self,
+        topology: &TaskTopology,
+        spine_task_ids: &[TaskId],
+        blockers: &mut Vec<PlanBlocker>,
+    ) -> Result<(), PlanError> {
+        for task_id in spine_task_ids {
+            let task = topology.task(*task_id)?;
+            if task.merge_ready {
+                continue;
+            }
+            blockers.push(PlanBlocker {
+                code: PlanBlockerCode::MergeNotReady,
+                message: "Task on merge spine is not merge-ready.".to_string(),
+                task_id: Some(*task_id),
+                branch_name: task.branch_name.clone(),
+                worktree_path: None,
+                detail: None,
+            });
+        }
+        Ok(())
+    }
+
+    async fn validate_refs_exist(
+        &self,
+        context: &PlannerContext,
+        topology: &TaskTopology,
+        ordered_task_ids: &[TaskId],
+        spine_task_ids: &[TaskId],
+        blockers: &mut Vec<PlanBlocker>,
+    ) -> Result<BTreeMap<String, bool>, PlanError> {
         let mut refs_to_check = BTreeSet::new();
         refs_to_check.insert(context.graph.root_branch.clone());
         for task_id in ordered_task_ids {
@@ -591,6 +670,7 @@ impl MergeRestackPlanner {
         for (rev, oid) in refs_to_check.iter().zip(resolved.into_iter()) {
             resolved_by_ref.insert(rev.clone(), oid.is_some());
         }
+
         let root_branch_exists = resolved_by_ref
             .get(&context.graph.root_branch)
             .copied()
@@ -629,6 +709,26 @@ impl MergeRestackPlanner {
                     worktree_path: None,
                     detail: None,
                 });
+            }
+        }
+
+        Ok(resolved_by_ref)
+    }
+
+    fn validate_task_worktrees(
+        &self,
+        topology: &TaskTopology,
+        ordered_task_ids: &[TaskId],
+        worktrees_by_branch: &BTreeMap<String, WorktreeHealth>,
+        resolved_by_ref: &BTreeMap<String, bool>,
+        blockers: &mut Vec<PlanBlocker>,
+    ) -> Result<(), PlanError> {
+        for task_id in ordered_task_ids {
+            let task = topology.task(*task_id)?;
+            let Some(branch_name) = &task.branch_name else {
+                continue;
+            };
+            if !resolved_by_ref.get(branch_name).copied().unwrap_or(false) {
                 continue;
             }
 
@@ -682,43 +782,47 @@ impl MergeRestackPlanner {
                 });
             }
         }
+        Ok(())
+    }
 
-        if require_base_worktree {
-            let Some(base_worktree) = worktrees_by_branch.get(&context.graph.root_branch) else {
-                blockers.push(PlanBlocker {
-                    code: PlanBlockerCode::WorktreeMissing,
-                    message: "Base branch worktree is missing.".to_string(),
-                    task_id: None,
-                    branch_name: Some(context.graph.root_branch.clone()),
-                    worktree_path: None,
-                    detail: None,
-                });
-                return Ok(blockers);
-            };
+    fn validate_base_worktree(
+        &self,
+        context: &PlannerContext,
+        worktrees_by_branch: &BTreeMap<String, WorktreeHealth>,
+        blockers: &mut Vec<PlanBlocker>,
+    ) {
+        let Some(base_worktree) = worktrees_by_branch.get(&context.graph.root_branch) else {
+            blockers.push(PlanBlocker {
+                code: PlanBlockerCode::WorktreeMissing,
+                message: "Base branch worktree is missing.".to_string(),
+                task_id: None,
+                branch_name: Some(context.graph.root_branch.clone()),
+                worktree_path: None,
+                detail: None,
+            });
+            return;
+        };
 
-            if base_worktree.dirty {
-                blockers.push(PlanBlocker {
-                    code: PlanBlockerCode::DirtyWorktree,
-                    message: "Base branch worktree has uncommitted changes.".to_string(),
-                    task_id: None,
-                    branch_name: Some(context.graph.root_branch.clone()),
-                    worktree_path: Some(base_worktree.worktree_path.clone()),
-                    detail: None,
-                });
-            }
-            if base_worktree.git_operation_in_progress {
-                blockers.push(PlanBlocker {
-                    code: PlanBlockerCode::GitOperationInProgress,
-                    message: "Base branch worktree has an in-progress git operation.".to_string(),
-                    task_id: None,
-                    branch_name: Some(context.graph.root_branch.clone()),
-                    worktree_path: Some(base_worktree.worktree_path.clone()),
-                    detail: None,
-                });
-            }
+        if base_worktree.dirty {
+            blockers.push(PlanBlocker {
+                code: PlanBlockerCode::DirtyWorktree,
+                message: "Base branch worktree has uncommitted changes.".to_string(),
+                task_id: None,
+                branch_name: Some(context.graph.root_branch.clone()),
+                worktree_path: Some(base_worktree.worktree_path.clone()),
+                detail: None,
+            });
         }
-
-        Ok(blockers)
+        if base_worktree.git_operation_in_progress {
+            blockers.push(PlanBlocker {
+                code: PlanBlockerCode::GitOperationInProgress,
+                message: "Base branch worktree has an in-progress git operation.".to_string(),
+                task_id: None,
+                branch_name: Some(context.graph.root_branch.clone()),
+                worktree_path: Some(base_worktree.worktree_path.clone()),
+                detail: None,
+            });
+        }
     }
 }
 
@@ -743,6 +847,7 @@ fn build_worktree_index(
 struct TaskTopology {
     tasks: BTreeMap<TaskId, PlannerTaskNode>,
     children: BTreeMap<Option<TaskId>, Vec<TaskId>>,
+    depth_by_task: BTreeMap<TaskId, usize>,
 }
 
 impl TaskTopology {
@@ -775,7 +880,16 @@ impl TaskTopology {
         for child_list in children.values_mut() {
             child_list.sort();
         }
-        Ok(Self { tasks, children })
+        let mut depth_by_task = BTreeMap::new();
+        for task_id in tasks.keys().copied() {
+            Self::compute_depth_for_task(task_id, &tasks, &mut depth_by_task)?;
+        }
+
+        Ok(Self {
+            tasks,
+            children,
+            depth_by_task,
+        })
     }
 
     fn task(&self, task_id: TaskId) -> Result<&PlannerTaskNode, PlanError> {
@@ -834,7 +948,9 @@ impl TaskTopology {
     fn ordered_task_ids(&self, task_ids: &BTreeSet<TaskId>) -> Result<Vec<TaskId>, PlanError> {
         let mut with_keys = Vec::new();
         for task_id in task_ids {
-            let depth = self.depth(*task_id)?;
+            let depth = self.depth_by_task.get(task_id).copied().ok_or_else(|| {
+                PlanError::InvalidInput(format!("missing task depth for planner task {}", task_id))
+            })?;
             let branch_name = self
                 .tasks
                 .get(task_id)
@@ -846,28 +962,54 @@ impl TaskTopology {
         Ok(with_keys.into_iter().map(|(_, _, id)| id).collect())
     }
 
-    fn depth(&self, task_id: TaskId) -> Result<usize, PlanError> {
-        let mut depth = 0_usize;
-        let mut seen = BTreeSet::new();
-        seen.insert(task_id);
-        let mut cursor = self
-            .tasks
-            .get(&task_id)
-            .and_then(|task| task.parent_task_id);
-        while let Some(parent_id) = cursor {
-            if !seen.insert(parent_id) {
+    fn compute_depth_for_task(
+        task_id: TaskId,
+        tasks: &BTreeMap<TaskId, PlannerTaskNode>,
+        depth_by_task: &mut BTreeMap<TaskId, usize>,
+    ) -> Result<usize, PlanError> {
+        if let Some(depth) = depth_by_task.get(&task_id).copied() {
+            return Ok(depth);
+        }
+
+        let mut path = BTreeSet::new();
+        let mut stack = Vec::new();
+        let mut cursor = Some(task_id);
+        while let Some(current_id) = cursor {
+            if let Some(depth) = depth_by_task.get(&current_id).copied() {
+                let mut computed = depth;
+                while let Some(path_id) = stack.pop() {
+                    computed = computed.saturating_add(1);
+                    depth_by_task.insert(path_id, computed);
+                }
+                return depth_by_task.get(&task_id).copied().ok_or_else(|| {
+                    PlanError::InvalidInput(format!(
+                        "missing computed depth for planner task {}",
+                        task_id
+                    ))
+                });
+            }
+
+            if !path.insert(current_id) {
                 return Err(PlanError::InvalidInput(format!(
                     "cycle detected while computing depth for task {}",
                     task_id
                 )));
             }
-            depth = depth.saturating_add(1);
-            cursor = self
-                .tasks
-                .get(&parent_id)
-                .and_then(|task| task.parent_task_id);
+            stack.push(current_id);
+            cursor = tasks.get(&current_id).and_then(|task| task.parent_task_id);
         }
-        Ok(depth)
+
+        let mut computed = 0_usize;
+        while let Some(path_id) = stack.pop() {
+            depth_by_task.insert(path_id, computed);
+            computed = computed.saturating_add(1);
+        }
+        depth_by_task.get(&task_id).copied().ok_or_else(|| {
+            PlanError::InvalidInput(format!(
+                "missing computed depth for planner task {}",
+                task_id
+            ))
+        })
     }
 
     fn upstream_ref(&self, task_id: TaskId, root_branch: &str) -> Result<String, PlanError> {
