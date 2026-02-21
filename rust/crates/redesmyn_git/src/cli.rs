@@ -9,7 +9,7 @@ use tokio::process::Command;
 use crate::backend::{GitRunOptions, GitWorktreeAddOptions};
 use crate::error::GitError;
 use crate::types::{GitOid, GitRefName, GitRevision, GitWorktree, GitWorktreeTarget};
-use crate::{BoxFuture, GitBackend};
+use crate::{BoxFuture, GitBackend, GitRemoteUrl};
 
 #[derive(Debug, Clone)]
 pub struct GitCliBackend {
@@ -308,6 +308,36 @@ fn parse_worktree_list(stdout: &[u8]) -> Result<Vec<GitWorktree>, GitError> {
     Ok(out)
 }
 
+fn parse_remote_urls(stdout: &[u8]) -> Result<Vec<GitRemoteUrl>, GitError> {
+    let s = std::str::from_utf8(stdout).map_err(|err| GitError::Parse {
+        op: "remote_urls",
+        reason: format!("stdout is not utf-8: {err}"),
+    })?;
+
+    let mut remotes = Vec::new();
+    for line in s.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let mut parts = line.split_whitespace();
+        let Some(name) = parts.next() else {
+            continue;
+        };
+        let Some(url) = parts.next() else {
+            continue;
+        };
+
+        remotes.push(GitRemoteUrl {
+            name: name.to_string(),
+            url: url.to_string(),
+        });
+    }
+
+    Ok(remotes)
+}
+
 fn flush_worktree(
     out: &mut Vec<GitWorktree>,
     current_path: &mut Option<PathBuf>,
@@ -341,6 +371,108 @@ fn flush_worktree(
 }
 
 impl GitBackend for GitCliBackend {
+    fn absolute_git_dir<'a>(
+        &'a self,
+        repo_root: &'a Path,
+        options: GitRunOptions,
+    ) -> BoxFuture<'a, Result<PathBuf, GitError>> {
+        Box::pin(async move {
+            let output = self
+                .run_git(
+                    "absolute_git_dir",
+                    repo_root,
+                    &["rev-parse", "--absolute-git-dir"],
+                    None,
+                    options,
+                )
+                .await?;
+
+            if !output.status.success() {
+                return Err(GitError::NotAGitRepository {
+                    repo_root: repo_root.to_path_buf(),
+                });
+            }
+
+            let git_dir = std::str::from_utf8(&output.stdout).map_err(|err| GitError::Parse {
+                op: "absolute_git_dir",
+                reason: format!("stdout is not utf-8: {err}"),
+            })?;
+            let git_dir = git_dir.trim();
+            if git_dir.is_empty() {
+                return Err(GitError::Parse {
+                    op: "absolute_git_dir",
+                    reason: "empty --absolute-git-dir output".to_owned(),
+                });
+            }
+
+            Ok(PathBuf::from(git_dir))
+        })
+    }
+
+    fn config_get<'a>(
+        &'a self,
+        repo_root: &'a Path,
+        key: &'a str,
+        options: GitRunOptions,
+    ) -> BoxFuture<'a, Result<Option<String>, GitError>> {
+        Box::pin(async move {
+            let output = self
+                .run_git(
+                    "config_get",
+                    repo_root,
+                    &["config", "--get", key],
+                    None,
+                    options,
+                )
+                .await?;
+
+            match output.status.code().unwrap_or(-1) {
+                0 => {
+                    let value =
+                        std::str::from_utf8(&output.stdout).map_err(|err| GitError::Parse {
+                            op: "config_get",
+                            reason: format!("stdout is not utf-8: {err}"),
+                        })?;
+                    let value = value.trim();
+                    if value.is_empty() {
+                        Ok(None)
+                    } else {
+                        Ok(Some(value.to_string()))
+                    }
+                }
+                1 => Ok(None),
+                exit_code => Err(GitError::CommandFailed {
+                    op: "config_get",
+                    exit_code,
+                    stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                }),
+            }
+        })
+    }
+
+    fn remote_urls<'a>(
+        &'a self,
+        repo_root: &'a Path,
+        options: GitRunOptions,
+    ) -> BoxFuture<'a, Result<Vec<GitRemoteUrl>, GitError>> {
+        Box::pin(async move {
+            let output = self
+                .run_git("remote_urls", repo_root, &["remote", "-v"], None, options)
+                .await?;
+
+            if !output.status.success() {
+                let exit_code = output.status.code().unwrap_or(-1);
+                return Err(GitError::CommandFailed {
+                    op: "remote_urls",
+                    exit_code,
+                    stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                });
+            }
+
+            parse_remote_urls(&output.stdout)
+        })
+    }
+
     fn resolve_commits<'a>(
         &'a self,
         repo_root: &'a Path,

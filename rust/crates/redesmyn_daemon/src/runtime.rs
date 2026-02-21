@@ -21,8 +21,9 @@ use crate::control_plane::{
 };
 use crate::host_identity::{HostIdentity, load_or_create_host_id};
 use crate::repo::{
-    AttachedRepoRoots, FileRepoRegistry, RepoAttachError, RepoAttachmentManager, RepoDetachError,
-    RepoRegisterError, RepoRegistrationRequest, RepoRegistry,
+    AttachedRepoRoots, FileRepoRegistry, GitRepoIdentityResolver, RepoAttachError,
+    RepoAttachmentManager, RepoDetachError, RepoRegisterError, RepoRegistrationRequest,
+    RepoRegistry,
 };
 use crate::state_dir::daemon_state_dir_from_repo_registry_dir;
 
@@ -155,6 +156,7 @@ impl Daemon {
             host_identity,
             config.repo_registry,
             attached_roots,
+            config.git_backend,
             frames_tx,
             repo_cmd_rx,
             shutdown_rx,
@@ -208,7 +210,8 @@ impl DaemonHandle {
             .send(RepoCommand::Detach { scope, reply: tx })
             .await
             .map_err(|_| RepoDetachError::DaemonUnavailable)?;
-        rx.await.map_err(|_| RepoDetachError::DaemonUnavailable)?
+        let _did_detach = rx.await.map_err(|_| RepoDetachError::DaemonUnavailable)??;
+        Ok(())
     }
 
     pub async fn shutdown(self) {
@@ -230,7 +233,7 @@ enum RepoCommand {
     },
     Detach {
         scope: RepoScope,
-        reply: oneshot::Sender<Result<(), RepoDetachError>>,
+        reply: oneshot::Sender<Result<bool, RepoDetachError>>,
     },
 }
 
@@ -238,6 +241,7 @@ async fn run_repo_manager(
     identity: HostIdentity,
     registry: Arc<dyn RepoRegistry>,
     attached_roots: AttachedRepoRoots,
+    git_backend: Arc<dyn GitBackend>,
     frames_tx: mpsc::Sender<DaemonFrame>,
     mut rx: mpsc::Receiver<RepoCommand>,
     mut shutdown_rx: watch::Receiver<bool>,
@@ -247,7 +251,9 @@ async fn run_repo_manager(
     redesmyn_logging::span::record_host_instance_id(&span, identity.host_instance_id);
     let _enter = span.enter();
 
-    let mut manager = RepoAttachmentManager::new(identity, registry, attached_roots);
+    let identity_resolver = Arc::new(GitRepoIdentityResolver::new(git_backend));
+    let mut manager =
+        RepoAttachmentManager::new(identity, registry, identity_resolver, attached_roots);
 
     loop {
         if *shutdown_rx.borrow() {
@@ -260,11 +266,11 @@ async fn run_repo_manager(
                 let Some(cmd) = cmd else { return; };
                 match cmd {
                     RepoCommand::Register { request, reply } => {
-                        let result = manager.register_repo(request);
+                        let result = manager.register_repo(request).await;
                         let _ = reply.send(result);
                     }
                     RepoCommand::Attach { scope, reply } => {
-                        let result = manager.attach(scope, shutdown_rx.clone());
+                        let result = manager.attach(scope, shutdown_rx.clone()).await;
                         if result.is_ok() {
                             send_repo_attach_frame(&frames_tx, scope).await;
                         }
@@ -272,7 +278,9 @@ async fn run_repo_manager(
                     }
                     RepoCommand::Detach { scope, reply } => {
                         let result = manager.detach(scope);
-                        send_repo_detach_frame(&frames_tx, scope).await;
+                        if let Ok(true) = result {
+                            send_repo_detach_frame(&frames_tx, scope).await;
+                        }
                         let _ = reply.send(result);
                     }
                 }
@@ -310,5 +318,75 @@ async fn send_repo_detach_frame(frames_tx: &mpsc::Sender<DaemonFrame>, scope: Re
     );
     if let Err(err) = frames_tx.send(frame).await {
         tracing::warn!(error = %err, "failed to send repo detach frame");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use redesmyn_ids::{HostId, RepoId, WorkspaceId};
+    use redesmyn_protocol::RepoScope;
+    use tokio::sync::{mpsc, oneshot, watch};
+
+    use super::{RepoCommand, run_repo_manager};
+    use crate::host_identity::HostIdentity;
+    use crate::repo::{AttachedRepoRoots, RepoRegistry, RepoRegistryError};
+
+    #[derive(Debug)]
+    struct NoopRegistry;
+
+    impl RepoRegistry for NoopRegistry {
+        fn resolve_repo_root(
+            &self,
+            _scope: RepoScope,
+        ) -> Result<std::path::PathBuf, RepoRegistryError> {
+            Err(RepoRegistryError::Unconfigured)
+        }
+    }
+
+    #[tokio::test]
+    async fn detach_without_attachment_does_not_emit_detach_frame() {
+        let (frames_tx, mut frames_rx) = mpsc::channel(8);
+        let (repo_cmd_tx, repo_cmd_rx) = mpsc::channel(8);
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+        let task = tokio::spawn(run_repo_manager(
+            HostIdentity::new(HostId::new()),
+            Arc::new(NoopRegistry),
+            AttachedRepoRoots::default(),
+            Arc::new(redesmyn_git::GitCliBackend::new()),
+            frames_tx,
+            repo_cmd_rx,
+            shutdown_rx,
+        ));
+
+        let scope = RepoScope::new(WorkspaceId::new(), RepoId::new());
+        let (reply_tx, reply_rx) = oneshot::channel();
+        repo_cmd_tx
+            .send(RepoCommand::Detach {
+                scope,
+                reply: reply_tx,
+            })
+            .await
+            .expect("send detach command");
+
+        let did_detach = reply_rx
+            .await
+            .expect("detach reply channel")
+            .expect("detach result");
+        assert!(
+            !did_detach,
+            "detaching an unattached scope should be a no-op"
+        );
+
+        assert!(
+            frames_rx.try_recv().is_err(),
+            "detach should not emit frame when scope was not attached"
+        );
+
+        let _ = shutdown_tx.send(true);
+        drop(repo_cmd_tx);
+        task.await.expect("repo manager task");
     }
 }

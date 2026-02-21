@@ -14,7 +14,7 @@ mod cli;
 mod error;
 mod types;
 
-pub use backend::{GitBackend, GitRunOptions, GitWorktreeAddOptions};
+pub use backend::{GitBackend, GitRemoteUrl, GitRunOptions, GitWorktreeAddOptions};
 pub use cli::GitCliBackend;
 pub use error::GitError;
 pub use types::{

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tokio::sync::watch;
@@ -36,6 +36,12 @@ pub struct GitWorktreeAddOptions {
     pub reset_branch: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitRemoteUrl {
+    pub name: String,
+    pub url: String,
+}
+
 impl Default for GitWorktreeAddOptions {
     fn default() -> Self {
         Self {
@@ -54,6 +60,28 @@ impl Default for GitWorktreeAddOptions {
 /// commands") so we can later swap implementations (e.g. a Rust-native backend)
 /// without rewriting higher-level logic.
 pub trait GitBackend: Send + Sync + 'static {
+    /// Resolve the repository's absolute `.git` directory path.
+    fn absolute_git_dir<'a>(
+        &'a self,
+        repo_root: &'a Path,
+        options: GitRunOptions,
+    ) -> BoxFuture<'a, Result<PathBuf, GitError>>;
+
+    /// Read a git config value by key, returning `None` when the key is unset.
+    fn config_get<'a>(
+        &'a self,
+        repo_root: &'a Path,
+        key: &'a str,
+        options: GitRunOptions,
+    ) -> BoxFuture<'a, Result<Option<String>, GitError>>;
+
+    /// List configured remotes in command output order.
+    fn remote_urls<'a>(
+        &'a self,
+        repo_root: &'a Path,
+        options: GitRunOptions,
+    ) -> BoxFuture<'a, Result<Vec<GitRemoteUrl>, GitError>>;
+
     /// Resolve each rev to a commit id, returning `None` for revs that do not resolve.
     ///
     /// Implementations should prefer batching (one process invocation, or one
